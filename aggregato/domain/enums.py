@@ -190,20 +190,21 @@ class IngestStage(StrEnum):
     WRITE = "write"
 
 
-def check_constraint(column: str, enum: type[StrEnum]) -> CheckConstraint:
+def check_constraint(table: str, column: str, enum: type[StrEnum]) -> CheckConstraint:
     """Build the ``CHECK`` constraint that pins a text column to one vocabulary.
 
     Emitting these from the enum rather than writing the value lists into the schema by hand is
     what keeps a widened vocabulary from silently passing the database while failing the API.
 
     Args:
+        table: Name of the table the column belongs to, so the constraint name is unambiguous.
         column: Name of the text column to constrain.
         enum: The vocabulary it must hold.
 
     Returns:
-        A named ``CheckConstraint`` for use in a ``Table`` definition. Naming it means Alembic can
-        drop and recreate it when a vocabulary widens, which is the whole point of not using a
-        native database enum.
+        A named ``CheckConstraint`` for use in a ``Table`` definition. Naming it explicitly is what
+        lets Alembic drop and recreate it when a vocabulary widens — including under SQLite's
+        batch mode, which rebuilds the table and needs to know what to put back.
     """
     values = ", ".join(f"'{member.value}'" for member in enum)
-    return CheckConstraint(f"{column} IN ({values})", name=f"ck_{column}_{enum.__name__.lower()}")
+    return CheckConstraint(f"{column} IN ({values})", name=f"ck_{table}_{column}")
