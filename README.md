@@ -26,7 +26,7 @@ missing or invalid *platform* configuration never blocks startup: that platform 
 
 ## Develop it
 
-Python 3.13 and [uv](https://docs.astral.sh/uv/); Node 20+ only if you are changing the frontend.
+Python 3.13 and [uv](https://docs.astral.sh/uv/); Node 22+ only if you are changing the frontend.
 
 ```bash
 uv sync --all-extras --dev
