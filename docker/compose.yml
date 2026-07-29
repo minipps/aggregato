@@ -1,0 +1,31 @@
+# One service, one volume, one command (FR-048). No database server and no broker: the schedule is
+# a table (research.md R1) and the default store is SQLite in the volume below.
+services:
+  aggregato:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: aggregato:local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # The only fatal configuration error (FR-032). Generate: openssl rand -hex 32
+      AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
+      AGGREGATO_DATA: /data
+      # Optional: point at Postgres past roughly 1M entries.
+      # AGGREGATO_DATABASE_URL: postgresql+asyncpg://aggregato:secret@db/aggregato
+    volumes:
+      - aggregato-data:/data
+    healthcheck:
+      # Every endpoint requires auth (FR-032), so there is no URL to probe without holding the
+      # token. Accepting the listening socket as the liveness signal is the honest check here;
+      # per-provider health is what GET /health is for, and that is an operator question.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  aggregato-data:

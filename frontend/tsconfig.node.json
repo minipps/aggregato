@@ -1,0 +1,14 @@
+{
+  "extends": "@tsconfig/node20/tsconfig.json",
+  "include": ["vite.config.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    // A composite project must emit. Send it somewhere disposable so `npm run type-check` does
+    // not drop a vite.config.js next to the vite.config.ts it just checked.
+    "outDir": "./node_modules/.tmp/node",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"]
+  }
+}

@@ -1,0 +1,85 @@
+/* Design tokens and a minimal reset. Typography-first: most logged items have no cover art, and a
+   layout that assumes one looks broken for books, podcasts, and tracks (T140 refines this). */
+
+:root {
+  color-scheme: light dark;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius: 6px;
+  --measure: 68ch;
+
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --border: #dcdcd8;
+  --text: #1c1c1a;
+  --text-muted: #62625d;
+  --accent: #3a5a9b;
+  --ok: #2f6f43;
+  --warn: #8a5a12;
+  --danger: #9b2f2f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --surface: #1e2024;
+    --border: #33363c;
+    --text: #e8e8e4;
+    --text-muted: #9b9da3;
+    --accent: #8fabe0;
+    --ok: #7fc39a;
+    --warn: #d9ae63;
+    --danger: #e08d8d;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  margin: 0 0 var(--space-3);
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Keyboard reachability is a requirement, not polish (Constitution III), so the focus ring is
+   never removed — only made consistent. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

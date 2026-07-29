@@ -1,0 +1,25 @@
+.git/
+.github/
+.claude/
+.specify/
+specs/
+docs/
+tests/
+
+**/node_modules/
+frontend/dist/
+
+**/__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# The operator's archive must never end up baked into an image.
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+config.yaml
