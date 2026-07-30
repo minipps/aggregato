@@ -13,6 +13,7 @@ from aggregato.domain.enums import CreatorKind, FetchMode, Role, ScaleKind
 from aggregato.domain.models import RawRecord
 from aggregato.providers.anilist import AniListProvider
 from aggregato.providers.base import ProviderContext
+from aggregato.sync.child import _politeness_policy
 
 
 def test_anilist_fixture_has_season_staff_studio_and_ordinal_rating() -> None:
@@ -61,3 +62,8 @@ async def test_anilist_fetches_anime_and_manga_collections_separately() -> None:
 
     assert requests == [{"name": "mini", "type": "ANIME"}, {"name": "mini", "type": "MANGA"}]
     assert [record.native_id for record in records] == ["ANIME", "MANGA"]
+
+
+def test_anilist_schedule_interval_is_not_an_http_request_delay() -> None:
+    """An hourly poll still needs its Anime and Manga requests to run back-to-back."""
+    assert _politeness_policy(AniListProvider()).effective_interval_seconds == 0.1

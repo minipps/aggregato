@@ -42,6 +42,11 @@ from aggregato.sync.protocol import (
 log = logging.getLogger("aggregato.sync.child")
 
 
+def _politeness_policy(provider: Any) -> PolitenessPolicy:
+    """Build request pacing independently from the provider's scheduler cadence."""
+    return PolitenessPolicy(acquisition=provider.acquisition)
+
+
 def emit(message: ChildMessage) -> None:
     """Write one protocol message to stdout and flush.
 
@@ -79,12 +84,11 @@ async def run(
         A process exit code: 0 if the run completed, 1 if it ended on a classified error.
     """
     provider = load_provider(provider_id, provider_dir)
-    client = PoliteClient(
-        PolitenessPolicy(
-            acquisition=provider.acquisition,
-            declared_interval_seconds=provider.default_poll_interval.total_seconds(),
-        )
-    )
+    # ``default_poll_interval`` is the scheduler cadence (usually hours), not an HTTP rate limit.
+    # Feeding it to the request limiter made a provider with two requests per run sleep for an hour
+    # after its first request.  Providers without an explicit request-rate declaration use the
+    # host-owned acquisition floor.
+    client = PoliteClient(_politeness_policy(provider))
     ctx = ProviderContext(
         http=client,  # type: ignore[arg-type]  # PoliteClient is the wrapper the contract promises
         config=provider.config_model.model_validate(config),
