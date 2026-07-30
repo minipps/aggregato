@@ -28,9 +28,11 @@ from aggregato.api.routes import (
     creators,
     entries,
     health,
+    identity,
     images,
     opinions,
     providers,
+    resolution,
     runs,
     works,
 )
@@ -98,6 +100,8 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
     app.include_router(works.router, prefix=API_PREFIX)
     app.include_router(opinions.router, prefix=API_PREFIX)
     app.include_router(creators.router, prefix=API_PREFIX)
+    app.include_router(identity.router, prefix=API_PREFIX)
+    app.include_router(resolution.router, prefix=API_PREFIX)
     app.include_router(images.router, prefix=API_PREFIX)
     app.include_router(providers.router, prefix=API_PREFIX)
     app.include_router(runs.router, prefix=API_PREFIX)

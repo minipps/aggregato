@@ -32,14 +32,8 @@ CONTRACT = (
 #: Contract paths with no implementation yet, each with the task that adds it. Every entry is a
 #: promise rather than an exemption — T144's final gate check expects this dict empty.
 NOT_YET_IMPLEMENTED: dict[str, str] = {
-    "/works/{id}/merge": "T105",
-    "/creators/{id}/merge": "T105",
-    "/creators/{id}/split": "T105",
     "/providers/{id}/config-schema": "T122",
     "/providers/{id}/import": "T113",
-    "/resolution-queue": "T106",
-    "/resolution-queue/{id}/decide": "T106",
-    "/merge-log/{id}/undo": "T104",
     "/stats/summary": "T136",
     "/stats/top": "T136",
     "/export": "T131",
