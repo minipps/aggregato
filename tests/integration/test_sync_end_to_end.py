@@ -199,16 +199,24 @@ async def test_worker_startup_recovers_an_interrupted_sync(engine: AsyncEngine) 
     assert recovered == ["fixture"]
     async with transaction(engine) as conn:
         run = (
-            await conn.execute(select(sync_runs).where(sync_runs.c.provider_id == "fixture"))
-        ).mappings().one()
+            (await conn.execute(select(sync_runs).where(sync_runs.c.provider_id == "fixture")))
+            .mappings()
+            .one()
+        )
         provider = (
-            await conn.execute(select(providers).where(providers.c.id == "fixture"))
-        ).mappings().one()
+            (await conn.execute(select(providers).where(providers.c.id == "fixture")))
+            .mappings()
+            .one()
+        )
         state = (
-            await conn.execute(
-                select(provider_state).where(provider_state.c.provider_id == "fixture")
+            (
+                await conn.execute(
+                    select(provider_state).where(provider_state.c.provider_id == "fixture")
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert run["status"] == str(RunStatus.FAILED)
     assert run["error_class"] == str(ErrorClass.INTERNAL)
     assert "will be retried" in run["error_message"]
