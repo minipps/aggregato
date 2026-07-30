@@ -230,11 +230,8 @@ def _config(ctx: ProviderContext) -> AniListConfig:
 
 
 def _headers(config: AniListConfig) -> dict[str, str]:
-    return (
-        {}
-        if config.token is None
-        else {"Authorization": f"Bearer {config.token.get_secret_value()}"}
-    )
+    token = config.token.get_secret_value() if config.token is not None else ""
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _role(raw: str) -> Role:

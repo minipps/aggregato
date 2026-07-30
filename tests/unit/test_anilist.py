@@ -11,7 +11,7 @@ import httpx
 
 from aggregato.domain.enums import CreatorKind, FetchMode, Role, ScaleKind
 from aggregato.domain.models import RawRecord
-from aggregato.providers.anilist import AniListProvider
+from aggregato.providers.anilist import AniListConfig, AniListProvider, _headers
 from aggregato.providers.base import ProviderContext
 from aggregato.sync.child import _politeness_policy
 
@@ -67,3 +67,7 @@ async def test_anilist_fetches_anime_and_manga_collections_separately() -> None:
 def test_anilist_schedule_interval_is_not_an_http_request_delay() -> None:
     """An hourly poll still needs its Anime and Manga requests to run back-to-back."""
     assert _politeness_policy(AniListProvider()).effective_interval_seconds == 0.1
+
+
+def test_anilist_omits_an_empty_optional_token_header() -> None:
+    assert _headers(AniListConfig(username="mini", token="")) == {}
