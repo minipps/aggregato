@@ -34,7 +34,7 @@ from aggregato.config import Config
 from aggregato.db.engine import transaction
 from aggregato.db.schema import import_jobs, provider_state, providers, sync_runs
 from aggregato.domain.enums import Acquisition, Capability, ErrorClass, MediaType, ProviderStatus
-from aggregato.providers.registry import ProviderInfo, discover_providers
+from aggregato.providers.registry import ProviderInfo, discover_providers, load_provider
 
 router = APIRouter(tags=["providers"])
 
@@ -134,6 +134,18 @@ async def disable_provider(request: Request, id: str) -> ProviderView:
     Nothing is deleted — disabling is not a way to lose history (FR-024).
     """
     return await _set_enabled(request, id, enabled=False)
+
+
+@router.get("/providers/{id}/config-schema", response_model=dict[str, Any])
+async def provider_config_schema(id: str) -> dict[str, Any]:
+    """Return the provider's declarative settings schema, never its configured values.
+
+    Pydantic produces the schema from the provider's own ``config_model``.  This keeps the API and
+    the schema-driven UI independent of provider-specific fields; ``SecretStr`` fields and explicit
+    ``writeOnly`` extras survive in the resulting JSON Schema without a host-maintained secret list.
+    """
+    _require_installed(id)
+    return load_provider(id).config_model.model_json_schema()
 
 
 @router.post("/providers/{id}/sync", status_code=202, response_model=SyncQueued)

@@ -95,6 +95,24 @@ async def test_bundled_providers_are_marked_reviewed(client: httpx.AsyncClient) 
     assert all(p["reviewed"] is True for p in body)
 
 
+async def test_provider_config_schema_is_declared_by_the_provider(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/v1/providers/anilist/config-schema")
+    assert response.status_code == 200
+    schema = response.json()
+    assert schema["properties"]["username"]["description"]
+    assert schema["properties"]["token"]["writeOnly"] is True
+
+
+async def test_config_schema_of_an_unknown_provider_is_a_404_problem(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/v1/providers/not-a-provider/config-schema")
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/problem+json"
+
+
 # --- Enable and disable -------------------------------------------------------------------------
 
 
