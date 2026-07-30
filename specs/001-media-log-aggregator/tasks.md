@@ -265,18 +265,18 @@ in the unified log.
 
 ### Tests for User Story 5 (MANDATORY - Constitution Principle II) ⚠️
 
-- [ ] T110 [P] [US5] Integration test for file import in `tests/integration/test_us5_file_import.py` — ingests, re-upload adds nothing, unrelated file rejected with the archive unchanged
-- [ ] T111 [P] [US5] Integration test for title-and-year-only matching against Letterboxd fixtures in `tests/integration/test_weak_matching.py` (the weakest case under FR-011)
+- [X] T110 [P] [US5] Integration test for file import in `tests/integration/test_us5_file_import.py` — ingests, re-upload adds nothing, unrelated file rejected with the archive unchanged
+- [X] T111 [P] [US5] Integration test for title-and-year-only matching against Letterboxd fixtures in `tests/integration/test_weak_matching.py` (the weakest case under FR-011)
 
 ### Implementation for User Story 5
 
-- [ ] T112 [US5] Implement `import` FetchMode plumbing and `ctx.import_path` in `aggregato/sync/runner.py` and `aggregato/sync/child.py`
-- [ ] T113 [US5] Implement `POST /providers/{id}/import` with multipart upload, type validation, and unchanged-on-rejection semantics in `aggregato/api/routes/providers.py`
-- [ ] T114 [P] [US5] Record Goodreads CSV fixtures in `tests/fixtures/goodreads/`
-- [ ] T115 [US5] Implement the Goodreads provider in `aggregato/providers/goodreads/` — CSV parsing, ISBN and ISBN-13 extraction, import-only capabilities (depends on T114)
-- [ ] T116 [P] [US5] Record Letterboxd fixtures in `tests/fixtures/letterboxd/`, including a structurally-changed page that must raise `StructureChangedError`
-- [ ] T117 [US5] Implement the Letterboxd provider in `aggregato/providers/letterboxd/` — RSS for recent activity plus CSV for history, combining two acquisition surfaces rather than scraping what the feed provides (depends on T116)
-- [ ] T118 [US5] Add the import upload flow to `frontend/src/views/Providers.vue`
+- [X] T112 [US5] Implement `import` FetchMode plumbing and `ctx.import_path` in `aggregato/sync/runner.py` and `aggregato/sync/child.py`
+- [X] T113 [US5] Implement `POST /providers/{id}/import` with multipart upload, type validation, and unchanged-on-rejection semantics in `aggregato/api/routes/providers.py`
+- [X] T114 [P] [US5] Record Goodreads CSV fixtures in `tests/fixtures/goodreads/`
+- [X] T115 [US5] Implement the Goodreads provider in `aggregato/providers/goodreads/` — CSV parsing, ISBN and ISBN-13 extraction, import-only capabilities (depends on T114)
+- [X] T116 [P] [US5] Record Letterboxd fixtures in `tests/fixtures/letterboxd/`, including a structurally-changed page that must raise `StructureChangedError`
+- [X] T117 [US5] Implement the Letterboxd provider in `aggregato/providers/letterboxd/` — RSS for recent activity plus CSV for history, combining two acquisition surfaces rather than scraping what the feed provides (depends on T116)
+- [X] T118 [US5] Add the import upload flow to `frontend/src/views/Providers.vue`
 
 **Checkpoint**: Platforms with no API are first-class, proving the contract is general.
 
@@ -291,19 +291,19 @@ syncs and appears in the UI with no core modification.
 
 ### Tests for User Story 6 (MANDATORY - Constitution Principle II) ⚠️
 
-- [ ] T119 [P] [US6] Complete all nine conformance assertion groups in `tests/conformance/` and register every bundled provider
-- [ ] T120 [P] [US6] Integration test asserting a `schema_version` bump replays the archive with no network in `tests/integration/test_replay.py` (SC-011)
-- [ ] T121 [P] [US6] Integration test walking the authoring guide end to end for a throwaway provider, asserting zero core file changes in `tests/integration/test_new_provider_tutorial.py` (SC-009)
+- [X] T119 [P] [US6] Complete all nine conformance assertion groups in `tests/conformance/` and register every bundled provider
+- [X] T120 [P] [US6] Integration test asserting a `schema_version` bump replays the archive with no network in `tests/integration/test_replay.py` (SC-011)
+- [X] T121 [P] [US6] Integration test walking the authoring guide end to end for a throwaway provider, asserting zero core file changes in `tests/integration/test_new_provider_tutorial.py` (SC-009)
 
 ### Implementation for User Story 6
 
-- [ ] T122 [US6] Implement `GET /providers/{id}/config-schema` with secrets marked `writeOnly` in `aggregato/api/routes/providers.py`
-- [ ] T123 [US6] Implement schema-driven settings form rendering in `frontend/src/components/SchemaForm.vue` with `frontend/src/components/__tests__/SchemaForm.spec.ts`
-- [ ] T124 [US6] Implement drop-in directory discovery and the `unreviewed` label in `aggregato/providers/registry.py`, with the enable-action warning in `frontend/src/views/Providers.vue`
-- [ ] T125 [US6] Implement scraping disclosure — `acquisition` label, risk statement at the point of enabling — in `frontend/src/views/Providers.vue`
-- [ ] T126 [US6] Implement the normalization replay job in `aggregato/ingest/normalize_replay.py`, triggered when a provider's `schema_version` exceeds the stored maximum
-- [ ] T127 [US6] Implement the provider-API version declaration and the drop-in compatibility warning in `aggregato/providers/registry.py`
-- [ ] T128 [P] [US6] Write the provider authoring guide in `docs/writing-a-provider.md`, referencing contracts/provider-plugin.md as the normative contract
+- [X] T122 [US6] Implement `GET /providers/{id}/config-schema` with secrets marked `writeOnly` in `aggregato/api/routes/providers.py`
+- [X] T123 [US6] Implement schema-driven settings form rendering in `frontend/src/components/SchemaForm.vue` with `frontend/src/components/__tests__/SchemaForm.spec.ts`
+- [X] T124 [US6] Implement drop-in directory discovery and the `unreviewed` label in `aggregato/providers/registry.py`, with the enable-action warning in `frontend/src/views/Providers.vue`
+- [X] T125 [US6] Implement scraping disclosure — `acquisition` label, risk statement at the point of enabling — in `frontend/src/views/Providers.vue`
+- [X] T126 [US6] Implement the normalization replay job in `aggregato/ingest/normalize_replay.py`, triggered when a provider's `schema_version` exceeds the stored maximum
+- [X] T127 [US6] Implement the provider-API version declaration and the drop-in compatibility warning in `aggregato/providers/registry.py`
+- [X] T128 [P] [US6] Write the provider authoring guide in `docs/writing-a-provider.md`, referencing contracts/provider-plugin.md as the normative contract
 
 **Checkpoint**: Platform coverage can grow through contribution without core changes.
 
