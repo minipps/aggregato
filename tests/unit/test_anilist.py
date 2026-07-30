@@ -11,7 +11,14 @@ import httpx
 
 from aggregato.domain.enums import CreatorKind, EntryKind, FetchMode, Role, ScaleKind
 from aggregato.domain.models import Cursor, NormalizedEntry, RawRecord
-from aggregato.providers.anilist import _QUERY, AniListConfig, AniListProvider, _headers
+from aggregato.domain.ratings import normalize_rating
+from aggregato.providers.anilist import (
+    _QUERY,
+    _SCALES,
+    AniListConfig,
+    AniListProvider,
+    _headers,
+)
 from aggregato.providers.base import ProviderContext
 from aggregato.sync.child import _politeness_policy
 
@@ -29,7 +36,8 @@ def test_anilist_fixture_has_season_staff_studio_and_ordinal_rating() -> None:
         CreatorKind.STUDIO,
     }
     assert {identifier.value for identifier in batch.creator_external_ids} == {"10", "11"}
-    scale = AniListProvider().rating_scales[0]
+    assert batch.opinions[0].rating_scale_id == "anilist-10"
+    scale = _SCALES["POINT_10"]
     assert scale.kind is ScaleKind.ORDINAL
     assert scale.labels is not None and scale.labels["8"] == 80
 
@@ -222,3 +230,78 @@ def test_the_fixture_covers_the_statuses_that_render_differently() -> None:
         for i in items
     ]
     assert kinds == [[EntryKind.WATCH], [], [EntryKind.PROGRESS]]
+
+
+async def test_a_five_point_account_is_rated_on_the_five_point_scale() -> None:
+    """The reported bug: every account was declared POINT_10, whatever it had selected.
+
+    A POINT_5 account's 4 stars was read as 4 out of 10 and normalized to 40 — an opinion the
+    account never held. AniList reports ``score`` in the account's own format and nowhere in the
+    score itself says which, so the format has to be fetched and retained alongside it.
+    """
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        item = {
+            "id": 7,
+            "score": 4,
+            "status": "COMPLETED",
+            "updatedAt": 1700000000,
+            "media": {"id": 70, "type": json.loads(request.content)["variables"]["type"]},
+        }
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "MediaListCollection": {
+                        "user": {"mediaListOptions": {"scoreFormat": "POINT_5"}},
+                        "lists": [{"entries": [item]}],
+                    }
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        context = ProviderContext(
+            http=http,  # type: ignore[arg-type]
+            config=AniListProvider.config_model(username="mini"),
+            secrets={},
+            log=logging.getLogger(__name__),
+            state={},
+        )
+        records = [
+            record
+            async for record in AniListProvider().fetch(context, None, FetchMode.INCREMENTAL)
+            if isinstance(record, RawRecord)
+        ]
+
+    opinion = AniListProvider().normalize(records[0]).opinions[0]
+    assert opinion.rating_scale_id == "anilist-5"
+    assert normalize_rating(opinion.rating_raw, _SCALES["POINT_5"]) == 75
+    # The bug, stated as the number it produced: the same 4 read as 4 of 10.
+    assert normalize_rating(opinion.rating_raw, _SCALES["POINT_10"]) == 40
+
+
+def test_a_payload_retained_before_the_format_was_asked_for_keeps_its_old_scale() -> None:
+    """Replay must not move a stored rating on a guess. One fetch supplies the real format."""
+    stored_before = {
+        "id": 9,
+        "score": 8,
+        "status": "COMPLETED",
+        "updatedAt": 1700000000,
+        "media": {"id": 90, "type": "ANIME", "title": {"romaji": "Old"}},
+    }
+    batch = AniListProvider().normalize(RawRecord(native_id="9", payload=stored_before))
+    assert batch.opinions[0].rating_scale_id == "anilist-10"
+
+
+def test_the_query_asks_for_the_score_format_it_normalizes_against() -> None:
+    assert "scoreFormat" in _QUERY
+
+
+def test_every_declared_scale_admits_its_format_s_own_values() -> None:
+    """A scale that rejects a value the platform can emit turns a rating into an ingest failure."""
+    for raw, score_format in ((100, "POINT_100"), (7.5, "POINT_10_DECIMAL"), (3, "POINT_3")):
+        scale = _SCALES[score_format]
+        assert scale.admits(Decimal(str(raw))), f"{score_format} rejects {raw}"
+    assert normalize_rating(Decimal(1), _SCALES["POINT_3"]) == 0
+    assert normalize_rating(Decimal(100), _SCALES["POINT_100"]) == 100
