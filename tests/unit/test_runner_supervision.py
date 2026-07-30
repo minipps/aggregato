@@ -1,0 +1,385 @@
+"""Child-process supervision (T033, T034, FR-025, §6.7).
+
+These drive **real subprocesses**, because the whole point of the child is what a process gives you
+that a task does not: it can be killed, it can crash without taking the parent down, and it cannot
+reach the parent's database handle. Mocking that away would test the mock.
+
+The children here are tiny scripts rather than real providers, so each failure mode can be produced
+on demand — a hang, a SIGKILL, a malformed line, an over-long line. A real provider cannot be made
+to crash reliably, which is exactly why supervision needs its own tests.
+
+`tests/conftest.py` blocks sockets in the parent; none of these needs the network.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+from aggregato.domain.enums import ErrorClass, RunStatus
+from aggregato.domain.models import Cursor
+from aggregato.sync.protocol import (
+    BatchMessage,
+    CheckpointMessage,
+    ErrorMessage,
+    FailureMessage,
+    ProtocolViolation,
+    decode,
+    encode,
+)
+from aggregato.sync.runner import RunOutcome, _consume, _terminate
+
+# --- The protocol itself ------------------------------------------------------------------------
+
+
+def test_a_checkpoint_round_trips() -> None:
+    message = CheckpointMessage(cursor=Cursor(state={"next_page": 3}))
+    decoded = decode(encode(message))
+    assert isinstance(decoded, CheckpointMessage)
+    assert decoded.cursor.state == {"next_page": 3}
+
+
+def test_every_message_serializes_to_exactly_one_line() -> None:
+    """The protocol is line-delimited, so an embedded newline would desynchronize the stream."""
+    messages = [
+        CheckpointMessage(cursor=Cursor(state={"a": 1})),
+        ErrorMessage(error_class=ErrorClass.AUTH, message="line1\nline2", detail="a\nb\nc"),
+        FailureMessage(native_id="x", payload={"note": "has\nnewline"}, error="bad\nthing"),
+    ]
+    for message in messages:
+        line = encode(message)
+        assert line.count("\n") == 1, message
+        assert line.endswith("\n")
+
+
+def test_an_unknown_message_type_is_rejected() -> None:
+    """A protocol we half-understand is worse than one we reject."""
+    with pytest.raises(ProtocolViolation, match="invalid message"):
+        decode('{"type": "something_new", "data": 1}')
+
+
+def test_a_non_json_line_is_rejected() -> None:
+    with pytest.raises(ProtocolViolation, match="invalid message"):
+        decode("this is not json")
+
+
+def test_an_empty_object_is_rejected() -> None:
+    with pytest.raises(ProtocolViolation):
+        decode("{}")
+
+
+def test_an_over_long_line_is_rejected_before_parsing() -> None:
+    """An unbounded line is a memory exhaustion the wall clock cannot catch."""
+    from aggregato.sync.protocol import MAX_LINE_BYTES
+
+    with pytest.raises(ProtocolViolation, match="over the"):
+        decode("x" * (MAX_LINE_BYTES + 1))
+
+
+def test_a_message_with_an_extra_field_is_rejected() -> None:
+    with pytest.raises(ProtocolViolation):
+        decode('{"type": "checkpoint", "cursor": {"state": {}}, "surprise": true}')
+
+
+# --- Supervision against real child processes ---------------------------------------------------
+
+
+async def _spawn(script: str, tmp_path: Path) -> asyncio.subprocess.Process:
+    """Run a throwaway script as a child, wired like a real provider child."""
+    path = tmp_path / "fake_child.py"
+    path.write_text(script)
+    return await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+async def _run_child(script: str, tmp_path: Path, wall_clock: float = 5.0) -> RunOutcome:
+    """Consume a child's output under a wall clock, the way execute_run does."""
+    process = await _spawn(script, tmp_path)
+    outcome = RunOutcome(status=RunStatus.RUNNING)
+    try:
+        async with asyncio.timeout(wall_clock):
+            await _consume(process, outcome)
+            await process.wait()
+    except TimeoutError:
+        await _terminate(process)
+        outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = "wall-clock limit exceeded"
+        return outcome
+    except ProtocolViolation as exc:
+        await _terminate(process)
+        outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = str(exc)
+        return outcome
+    if outcome.error_class is None and process.returncode == 0:
+        outcome.status = RunStatus.SUCCESS
+    elif outcome.error_class is None:
+        outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = f"exited with code {process.returncode}"
+    else:
+        outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
+    return outcome
+
+
+HEADER = "import sys, json, time\n"
+
+# Resolved at import time: ASYNC240 rightly objects to blocking filesystem calls inside a
+# coroutine, and these paths are constants anyway.
+FIXTURE_RECORDS = (Path(__file__).parent.parent / "fixtures/fixture/log-two-pages.jsonl").resolve()
+FIXTURE_BROKEN = (
+    Path(__file__).parent.parent / "fixtures/fixture/unreadable-not-json.jsonl"
+).resolve()
+
+
+def _emit(obj: dict[str, object]) -> str:
+    return f"sys.stdout.write(json.dumps({obj!r}) + '\\n'); sys.stdout.flush()\n"
+
+
+async def test_a_clean_run_reports_success(tmp_path: Path) -> None:
+    outcome = await _run_child(
+        HEADER + _emit({"type": "checkpoint", "cursor": {"state": {"page": 2}}}), tmp_path
+    )
+    assert outcome.status is RunStatus.SUCCESS
+    assert outcome.cursor_after is not None
+    assert outcome.cursor_after.state == {"page": 2}
+
+
+async def test_a_hanging_child_is_killed_at_the_wall_clock(tmp_path: Path) -> None:
+    """§6.7 — "no output and no exit" must not be forever."""
+    script = HEADER + "time.sleep(300)\n"
+    outcome = await _run_child(script, tmp_path, wall_clock=1.0)
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+    assert "wall-clock" in (outcome.error_message or "")
+
+
+async def test_a_hang_after_a_checkpoint_is_partial_not_failed(tmp_path: Path) -> None:
+    """The work before the checkpoint is real and must not be thrown away (FR-020)."""
+    script = (
+        HEADER
+        + _emit({"type": "checkpoint", "cursor": {"state": {"page": 5}}})
+        + "time.sleep(300)\n"
+    )
+    outcome = await _run_child(script, tmp_path, wall_clock=1.0)
+
+    assert outcome.status is RunStatus.PARTIAL
+    assert outcome.cursor_after is not None
+    assert outcome.cursor_after.state == {"page": 5}
+
+
+async def test_a_crashing_child_does_not_take_the_parent_down(tmp_path: Path) -> None:
+    script = HEADER + "raise SystemExit(3)\n"
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+    # And we are still here to assert it, which is the actual claim.
+
+
+async def test_a_child_killed_by_a_signal_is_recorded_as_failed(tmp_path: Path) -> None:
+    """SIGKILL gives the child no chance to report. The parent must cope with silence."""
+    script = HEADER + "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+
+
+async def test_records_before_a_crash_are_kept(tmp_path: Path) -> None:
+    """A crash mid-run must not discard what already arrived and validated."""
+    record = {
+        "type": "batch",
+        "raw": {"native_id": "r1", "payload": {"x": 1}},
+        "batch": {
+            "work": {"media_type": "film", "title": "Kept"},
+            "entries": [
+                {
+                    "kind": "watch",
+                    "logged_at": "2026-01-01T00:00:00Z",
+                    "logged_precision": "day",
+                }
+            ],
+        },
+    }
+    script = HEADER + _emit(record) + "raise SystemExit(9)\n"
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.FAILED
+    assert len(outcome.records) == 1
+    assert outcome.records[0][1].work.title == "Kept"
+
+
+async def test_a_malformed_line_ends_the_run_rather_than_being_skipped(tmp_path: Path) -> None:
+    """FR-008 — the boundary rejects, it does not tolerate."""
+    script = HEADER + "sys.stdout.write('not json\\n'); sys.stdout.flush()\n"
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+    assert "invalid message" in (outcome.error_message or "")
+
+
+async def test_a_reported_error_keeps_its_classification(tmp_path: Path) -> None:
+    """The child classifies; the parent records what it said rather than guessing."""
+    script = HEADER + _emit(
+        {"type": "error", "error_class": "auth", "message": "token rejected", "detail": "trace"}
+    )
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.error_class is ErrorClass.AUTH
+    assert outcome.error_message == "token rejected"
+    assert outcome.status is RunStatus.FAILED
+
+
+async def test_a_single_bad_record_is_collected_without_failing_the_run(tmp_path: Path) -> None:
+    """FR-023 — one poisoned record costs its own row, not the run."""
+    script = HEADER + _emit(
+        {"type": "failure", "native_id": "r9", "payload": {"bad": True}, "error": "KeyError: x"}
+    )
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.SUCCESS
+    assert len(outcome.failures) == 1
+    assert outcome.failures[0].payload == {"bad": True}
+
+
+async def test_stdout_and_stderr_do_not_interfere(tmp_path: Path) -> None:
+    """A provider that prints must not corrupt the protocol, so logging goes to stderr."""
+    script = (
+        HEADER
+        + "sys.stderr.write('provider chatter\\n')\n"
+        + _emit({"type": "checkpoint", "cursor": {"state": {"page": 1}}})
+        + "sys.stderr.write('more chatter\\n')\n"
+    )
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.SUCCESS
+    assert outcome.cursor_after is not None
+
+
+# --- The real child, end to end -----------------------------------------------------------------
+
+
+async def test_the_real_child_runs_the_fixture_provider(tmp_path: Path) -> None:
+    """The actual `python -m aggregato.sync.child` against the actual bundled provider."""
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="fixture",
+            config={"path": str(FIXTURE_RECORDS)},
+            wall_clock_seconds=60,
+        )
+    )
+
+    assert outcome.status is RunStatus.SUCCESS, outcome.error_message
+    assert len(outcome.records) == 5
+    assert outcome.failures == []
+    assert outcome.cursor_after is not None
+    # The last checkpoint names the page to read NEXT, so after two pages it is 3.
+    assert outcome.cursor_after.state == {"next_page": 3}
+
+
+async def test_the_real_child_resumes_from_a_cursor(tmp_path: Path) -> None:
+    """Cursor round-trip through the real process boundary: no duplicate, no gap (FR-020)."""
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    full = await execute_run(
+        RunRequest(
+            provider_id="fixture", config={"path": str(FIXTURE_RECORDS)}, wall_clock_seconds=60
+        )
+    )
+    resumed = await execute_run(
+        RunRequest(
+            provider_id="fixture",
+            config={"path": str(FIXTURE_RECORDS)},
+            cursor=Cursor(state={"next_page": 2}),
+            wall_clock_seconds=60,
+        )
+    )
+
+    all_ids = [raw.native_id for raw, _ in full.records]
+    resumed_ids = [raw.native_id for raw, _ in resumed.records]
+    assert resumed_ids == all_ids[3:]
+    assert len(set(resumed_ids)) == len(resumed_ids)
+
+
+async def test_the_real_child_reports_a_structure_change_as_such(tmp_path: Path) -> None:
+    """A broken file must not look like an empty history (FR-024, FR-026)."""
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="fixture", config={"path": str(FIXTURE_BROKEN)}, wall_clock_seconds=60
+        )
+    )
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.STRUCTURE_CHANGED
+    assert outcome.records == []
+
+
+async def test_the_child_receives_only_its_own_secrets(tmp_path: Path) -> None:
+    """FR-037, made structural: the child is a process, so there is nothing else to reach."""
+    from aggregato.sync.runner import RunRequest
+
+    request = RunRequest(
+        provider_id="fixture",
+        config={"path": "unused-by-this-test"},
+        secrets={"FIXTURE_TOKEN": "mine"},
+    )
+    payload = json.loads(request.payload())
+    assert payload["secrets"] == {"FIXTURE_TOKEN": "mine"}
+    # No engine, no URL, no other provider's config anywhere in what crosses the boundary.
+    serialized = request.payload()
+    for forbidden in ("sqlite", "postgresql", "database_url", "api.token"):
+        assert forbidden not in serialized
+
+
+def test_batch_messages_preserve_decimal_and_timezone() -> None:
+    """A 3.5 arriving back as 3.4999 fails its scale's step check for no visible reason."""
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from aggregato.domain.enums import EntryKind, LoggedPrecision, MediaType
+    from aggregato.domain.models import (
+        NormalizedBatch,
+        NormalizedEntry,
+        NormalizedOpinion,
+        NormalizedWork,
+        RawRecord,
+    )
+
+    logged = datetime(2026, 2, 14, 20, 30, tzinfo=UTC)
+    message = BatchMessage(
+        raw=RawRecord(native_id="r", payload={}),
+        batch=NormalizedBatch(
+            work=NormalizedWork(media_type=MediaType.FILM, title="X"),
+            entries=[
+                NormalizedEntry(
+                    kind=EntryKind.WATCH,
+                    logged_at=logged,
+                    logged_precision=LoggedPrecision.EXACT,
+                )
+            ],
+            opinions=[NormalizedOpinion(rating_raw=Decimal("3.5"), rating_scale_id="s")],
+        ),
+    )
+
+    decoded = decode(encode(message))
+    assert isinstance(decoded, BatchMessage)
+    assert decoded.batch.opinions[0].rating_raw == Decimal("3.5")
+    assert isinstance(decoded.batch.opinions[0].rating_raw, Decimal)
+    assert decoded.batch.entries[0].logged_at == logged
+    assert decoded.batch.entries[0].logged_at.tzinfo is not None
