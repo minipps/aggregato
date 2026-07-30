@@ -95,15 +95,25 @@ markers = ["bench: performance budget checks (Constitution VI)"]
 root_packages = ["aggregato"]
 # Needed because one contract forbids an *external* module (httpx) rather than a first-party one.
 include_external_packages = true
+# A `if TYPE_CHECKING:` import cannot construct anything at runtime, so it cannot break any contract
+# here — the rules below are about reachable capability, not about which names a module can spell.
+# Session-level rather than per-contract: import-linter reads this once, when building the graph.
+exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Providers cannot reach storage, ingest, or an HTTP client of their own"
 type = "forbidden"
 source_modules = ["aggregato.providers"]
 forbidden_modules = ["aggregato.db", "aggregato.ingest", "httpx"]
-# No exemption for `aggregato.providers.base` either: the host builds the client and hands it over
-# in ProviderContext (research.md R9), so the provider tree only ever needs the *type*, which it
-# takes behind `if TYPE_CHECKING` rather than as a runtime import.
+# One exemption, and only one: `providers/http.py` IS the host-owned client wrapper that enforces
+# the politeness floors (research.md R9), so it necessarily imports httpx. It lives in this tree
+# because plan.md puts it here, not because it is provider code. Every actual provider package
+# still cannot reach httpx, which is the rule that matters — a provider that could construct its
+# own client could raise its own rate limit (FR-043).
+#
+# `providers/base.py` gets no exemption and needs none: it takes the httpx *type* behind
+# `if TYPE_CHECKING`, which the session-level exclude_type_checking_imports above discounts.
+ignore_imports = ["aggregato.providers.http -> httpx"]
 
 [[tool.importlinter.contracts]]
 name = "The API never drives the scheduler in-process"
