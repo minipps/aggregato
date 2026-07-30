@@ -442,6 +442,22 @@ paths:
                   - properties:
                       items: { type: array, items: { $ref: "#/components/schemas/IngestFailure" } }
 
+  /ingest-failures/{id}/replay:
+    post:
+      tags: [operations]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The retained payload was reprocessed after a provider fix
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [replayed]
+                properties:
+                  replayed: { type: boolean }
+
   /stats/summary:
     get:
       tags: [log]

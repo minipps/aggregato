@@ -55,6 +55,7 @@ export type ErrorClass =
   | 'internal'
 
 export type ProviderStatus = 'disabled' | 'idle' | 'syncing' | 'degraded' | 'misconfigured'
+export type RunStatus = 'running' | 'success' | 'partial' | 'failed'
 
 export type Acquisition = 'api' | 'feed' | 'export' | 'scrape'
 
@@ -227,6 +228,35 @@ export interface ProviderHealth {
 export interface Health {
   status: 'ok' | 'degraded'
   providers: ProviderHealth[]
+}
+
+export interface SyncRun {
+  id: number
+  provider_id: string
+  lineage_id: string
+  attempt: number
+  mode: 'incremental' | 'full' | 'import'
+  status: RunStatus
+  started_at: string
+  finished_at?: string | null
+  items_seen: number
+  items_written: number
+  items_failed: number
+  error_class?: ErrorClass | null
+  error_message?: string | null
+  next_retry_at?: string | null
+  log_excerpt?: string | null
+}
+
+export interface IngestFailure {
+  id: number
+  provider_id: string
+  sync_run_id: number
+  stage: 'fetch' | 'validate' | 'normalize' | 'write'
+  error: string
+  raw_payload: Record<string, unknown>
+  created_at: string
+  resolved_at?: string | null
 }
 
 /** Query parameters of `GET /entries` that the log view exposes. */

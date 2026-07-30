@@ -16,6 +16,7 @@ import EntryList from '@/components/EntryList.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
+import ProviderStatus from '@/components/ProviderStatus.vue'
 
 const RECENT_LIMIT = 10
 
@@ -43,6 +44,10 @@ const unhealthy = computed(() =>
       @retry="status.reload()"
     />
     <template v-else-if="status.data.value">
+      <div v-if="unhealthy.length" class="degraded-banner" role="alert">
+        Sync needs attention for {{ unhealthy.map((provider) => provider.id ?? 'an unknown provider').join(', ') }}.
+        <RouterLink :to="{ name: 'providers' }">Review providers</RouterLink>
+      </div>
       <p :class="['summary', status.data.value.status === 'ok' ? 'summary--ok' : 'summary--warn']">
         <template v-if="unhealthy.length === 0">Every provider is healthy.</template>
         <template v-else>
@@ -66,7 +71,7 @@ const unhealthy = computed(() =>
             <th scope="row">
               <RouterLink :to="{ name: 'providers' }">{{ provider.id ?? 'unknown' }}</RouterLink>
             </th>
-            <td>{{ provider.status ?? 'unknown' }}</td>
+            <td><ProviderStatus v-if="provider.status" :status="provider.status" /><span v-else>unknown</span></td>
             <td>
               <LoggedAt
                 v-if="provider.last_success_at"
@@ -112,4 +117,6 @@ const unhealthy = computed(() =>
 .summary--warn {
   border-left-color: var(--warn);
 }
+
+.degraded-banner { border: 1px solid var(--danger); color: var(--danger); padding: var(--space-3); margin-bottom: var(--space-3); }
 </style>

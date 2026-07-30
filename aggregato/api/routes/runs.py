@@ -17,6 +17,9 @@ from aggregato.api.schemas import PageResponse
 from aggregato.db.engine import transaction
 from aggregato.db.schema import ingest_failures, sync_runs
 from aggregato.domain.enums import ErrorClass, IngestStage, RunStatus
+from aggregato.ingest.failures import CapturedFailure, replay_failure
+from aggregato.ingest.writer import WriteContext, ensure_rating_scales, write_batches
+from aggregato.providers.registry import load_provider
 
 router = APIRouter(tags=["operations"])
 
@@ -48,6 +51,10 @@ class IngestFailure(BaseModel):
     raw_payload: dict[str, object]
     created_at: datetime
     resolved_at: datetime | None = None
+
+
+class ReplayResult(BaseModel):
+    replayed: bool
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -113,6 +120,57 @@ async def list_ingest_failures(
             limit=clamp_limit(limit),
         )
     return PageResponse(items=[_failure(row) for row in page.items], next_cursor=page.next_cursor)
+
+
+@router.post("/ingest-failures/{id}/replay", response_model=ReplayResult)
+async def replay_ingest_failure(request: Request, id: int) -> ReplayResult:
+    """Reprocess one retained payload after its provider's normalizer has been fixed."""
+    now = datetime.now(UTC)
+    async with transaction(request.app.state.engine) as conn:
+        row = (
+            await conn.execute(
+                select(ingest_failures).where(
+                    ingest_failures.c.id == id, ingest_failures.c.resolved_at.is_(None)
+                )
+            )
+        ).first()
+        if row is None:
+            return ReplayResult(replayed=False)
+        failure = CapturedFailure(
+            id=row.id,
+            provider_id=row.provider_id,
+            sync_run_id=row.sync_run_id,
+            stage=IngestStage(row.stage),
+            error=row.error,
+            raw_payload=row.raw_payload,
+        )
+        provider = load_provider(failure.provider_id)
+        scales = list(getattr(provider, "rating_scales", []))
+        await ensure_rating_scales(conn, scales)
+
+        async def write(raw: object, batch: object) -> None:
+            counts = await write_batches(
+                conn,
+                WriteContext(
+                    provider_id=failure.provider_id,
+                    sync_run_id=failure.sync_run_id,
+                    schema_version=int(getattr(provider, "schema_version", 1)),
+                    now=now,
+                    rating_scales={scale.id: scale for scale in scales},
+                ),
+                [(raw, batch)],  # type: ignore[list-item]
+            )
+            if counts.failed:
+                raise ValueError("replayed payload still fails host validation")
+
+        replayed = await replay_failure(
+            conn,
+            failure=failure,
+            normalize=provider.normalize,
+            write=write,
+            now=now,
+        )
+    return ReplayResult(replayed=replayed)
 
 
 def _run(row: Any) -> SyncRun:

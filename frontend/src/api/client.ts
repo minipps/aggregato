@@ -19,6 +19,8 @@ import type {
   Page,
   Problem,
   Provider,
+  SyncRun,
+  IngestFailure,
   WorkDetail,
 } from './types'
 
@@ -255,4 +257,16 @@ export function checkProvider(id: string): Promise<CheckResult> {
 
 export function health(): Promise<Health> {
   return request<Health>('GET', '/health')
+}
+
+export function providerRuns(id: string): Pager<SyncRun> {
+  return pager<SyncRun>(`/providers/${encodeURIComponent(id)}/runs`)
+}
+
+export function ingestFailures(): Pager<IngestFailure> {
+  return pager<IngestFailure>('/ingest-failures')
+}
+
+export function replayFailure(id: number): Promise<{ replayed: boolean }> {
+  return request<{ replayed: boolean }>('POST', `/ingest-failures/${id}/replay`)
 }

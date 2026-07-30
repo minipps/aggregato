@@ -21,6 +21,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
+import ProviderStatus from '@/components/ProviderStatus.vue'
 
 const list = useRequest(providers)
 
@@ -95,7 +96,7 @@ function check(id: string): Promise<void> {
           {{ provider.name }}
           <!-- FR-041: an unreviewed drop-in provider is labelled as such, always. -->
           <span v-if="!provider.reviewed" class="badge badge--warn">unreviewed</span>
-          <span class="badge">{{ provider.status }}</span>
+          <ProviderStatus :status="provider.status" />
         </h2>
 
         <p class="muted">
