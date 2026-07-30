@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -41,6 +42,11 @@ from aggregato.sync.protocol import (
 #: How long one run may take before it is killed. Generous, because a first backfill of a decade of
 #: history is legitimately slow; finite, because "no output and no exit" must not be forever (§6.7).
 DEFAULT_WALL_CLOCK_SECONDS = 60 * 5
+
+#: The kernel's cap on one argv entry (``MAX_ARG_STRLEN``, 32 pages). Not used by the spawn — the
+#: payload travels on stdin precisely so it does not have to be — but named here because it is the
+#: reason, and the reason is what a test asserts against.
+MAX_ARG_STRLEN = 128 * 1024
 
 #: Grace between SIGTERM and SIGKILL. A child mid-write gets a moment to finish its line; a child
 #: that is genuinely wedged does not get to ignore us.
@@ -123,8 +129,7 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
         "aggregato.sync.child",
         "--provider",
         request.provider_id,
-        "--payload",
-        request.payload(),
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -132,6 +137,7 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
     outcome = RunOutcome(status=RunStatus.RUNNING)
     try:
         async with asyncio.timeout(request.wall_clock_seconds):
+            await _send_payload(process, request.payload())
             await _consume(process, outcome)
             await process.wait()
     except TimeoutError:
@@ -175,6 +181,26 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
 
     outcome.status = RunStatus.SUCCESS
     return outcome
+
+
+async def _send_payload(process: asyncio.subprocess.Process, payload: str) -> None:
+    """Hand the run's parameters to the child on stdin, then close it.
+
+    On stdin rather than argv: a replay run carries every retained payload for the provider, which
+    for a few hundred records is far past the kernel's 128 KiB single-argument limit — ``execve``
+    answered ``E2BIG`` and the spawn raised before the run existed. It also keeps a provider's
+    resolved credentials out of the process table, where argv is world-readable.
+
+    Writing before reading stdout is safe because the child reads its whole payload before it emits
+    anything; a child that does not is a hang the wall clock already covers.
+    """
+    assert process.stdin is not None
+    process.stdin.write(payload.encode())
+    with suppress(BrokenPipeError, ConnectionResetError):
+        # The child died before reading its instructions. Nothing to report from here — the exit
+        # code and stderr are what classify it, further down.
+        await process.stdin.drain()
+    process.stdin.close()
 
 
 async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> None:

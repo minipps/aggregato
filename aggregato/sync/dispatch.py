@@ -254,6 +254,11 @@ async def run_once(
         )
     )
 
+    # The fetch window, before replay is folded in: the sanity baseline compares one full fetch
+    # against the last one, and counting replayed records would record a window twice its real size,
+    # which the next full run then reads as half the collection having disappeared.
+    fetched_count = len(outcome.records) + len(outcome.failures)
+
     if replay_outcome is not None and replay_outcome.status is RunStatus.SUCCESS:
         # A single ingest transaction writes both replayed and freshly fetched batches.  This avoids
         # a crash half-way through a migration from marking only part of a provider as current.
@@ -276,7 +281,7 @@ async def run_once(
         provider_id=provider_id,
         mode=mode,
         outcome=outcome,
-        item_count=len(outcome.records) + len(outcome.failures),
+        item_count=fetched_count,
         run_started_at=now,
         config=provider_settings,
     )
