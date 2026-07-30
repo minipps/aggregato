@@ -44,6 +44,13 @@ async def resolve_work(
         if row is not None:
             return WorkResolution(row.work_id, Confidence.ASSERTED)
 
+    # A provider that asserts an identifier has already said which work this is.  If that identifier
+    # is new, title/year must not override it: two differently identified works can share a title
+    # and year (different cuts, remakes, or simply a provider correction).  Title matching is the
+    # fallback only when the payload offered no identifier at all.
+    if batch.external_ids:
+        return await _create_work(conn, batch, now=now)
+
     title_key = normalize_title(batch.work.title)
     candidates = list(
         await conn.execute(
@@ -59,13 +66,26 @@ async def resolve_work(
     if len(candidates) == 1:
         return WorkResolution(candidates[0].id, Confidence.MATCHED)
 
+    return await _create_work(
+        conn, batch, now=now, candidates=tuple(candidate.id for candidate in candidates)
+    )
+
+
+async def _create_work(
+    conn: AsyncConnection,
+    batch: NormalizedBatch,
+    *,
+    now: datetime,
+    candidates: tuple[uuid.UUID, ...] = (),
+) -> WorkResolution:
+    """Create an unlinked work and retain any ambiguous title candidates for the queue."""
     work_id = uuid.uuid4()
     await conn.execute(
         works.insert().values(
             id=work_id,
             media_type=str(batch.work.media_type),
             title=batch.work.title,
-            sort_title=title_key,
+            sort_title=normalize_title(batch.work.title),
             original_title=batch.work.original_title,
             release_year=batch.work.release_year,
             sequence_number=batch.work.sequence_number,
@@ -75,8 +95,4 @@ async def resolve_work(
             updated_at=now,
         )
     )
-    return WorkResolution(
-        work_id,
-        Confidence.ASSERTED,
-        tuple(candidate.id for candidate in candidates),
-    )
+    return WorkResolution(work_id, Confidence.ASSERTED, candidates)
