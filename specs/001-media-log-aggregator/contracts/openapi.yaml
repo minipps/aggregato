@@ -541,8 +541,11 @@ paths:
     get:
       tags: [operations]
       summary: Cached platform-supplied image
+      security: []
       description: Fetched lazily on first request, never during a sync. With caching disabled a
         placeholder is returned; the API never redirects to the third-party host (FR-033).
+        Unauthenticated, so a page can embed the URL in an img tag — the hash is a sha256 of the
+        source URL and cannot be enumerated.
       parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
       responses:
         "200":

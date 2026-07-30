@@ -83,6 +83,9 @@ _UNSAFE_METHODS: Final = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _SESSION_PATH: Final = "/auth/session"
 """Suffix of the session-exchange path — the one write a read-only credential may perform."""
 
+_IMAGE_PATH: Final = "/media/image/"
+"""Prefix of the cached-image path, which reads without a credential — see :func:`require_auth`."""
+
 
 @dataclass(frozen=True, slots=True)
 class AuthContext:
@@ -133,7 +136,15 @@ async def require_auth(request: Request) -> AuthContext:
     the bearer token does not match, or the session is unknown, expired, or was issued under a
     rotated token; 403 when a cookie-authenticated state-changing request has no valid CSRF token.
     Never FastAPI's default ``{"detail": ...}`` 401 shape.
+
+    One exception: reading a cached image is unauthenticated, so a page can embed
+    ``<img src=".../media/image/...">`` — a browser attaches neither a bearer header nor a
+    cross-site cookie to an image load. The path carries a sha256, which cannot be enumerated, and
+    the bytes are artwork the source platform already serves publicly. Nothing else is exempt.
     """
+    if _is_public_image(request):
+        return AuthContext(via="bearer", readonly=True)
+
     presented = _bearer(request)
     if presented is not None:
         matched = _match_credential(request, presented)
@@ -243,6 +254,15 @@ def _is_write(request: Request) -> bool:
     FR-032 forbids.
     """
     return request.method in _UNSAFE_METHODS and not request.url.path.endswith(_SESSION_PATH)
+
+
+def _is_public_image(request: Request) -> bool:
+    """Whether this is a read of a cached image, the one route that needs no credential.
+
+    Reads only: a ``POST`` to this path has no route anyway, and treating one as authenticated would
+    hand an unauthenticated caller whatever a future write here does.
+    """
+    return request.method in {"GET", "HEAD"} and _IMAGE_PATH in request.url.path
 
 
 def _engine(request: Request) -> AsyncEngine:
