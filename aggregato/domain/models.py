@@ -213,6 +213,24 @@ class NormalizedBatch(BaseModel):
     credits: list[NormalizedCredit] = Field(default_factory=list)
     external_ids: list[NormalizedExternalId] = Field(default_factory=list)
     creator_external_ids: list[NormalizedCreatorId] = Field(default_factory=list)
+    retracts_entries: bool = False
+    """The platform has **withdrawn** what this record previously logged, so the host should
+    tombstone it (writer ``_retract_entries``).
+
+    Only a provider can know this, which is why it is stated rather than inferred. An empty
+    ``entries`` list is ambiguous on its own: for AniList a title moved back to ``PLANNING`` means
+    the account withdrew the watch, while for Goodreads a row with no Date Read merely means the
+    export does not say when it was read. Tombstoning the second on the strength of the first
+    destroys real history — so the default is ``False`` and silence never deletes.
+
+    Set it only where the platform's record is mutable *state* rather than an immutable *event*.
+    Requires ``entries`` to be empty: a record cannot log an event and withdraw it at once."""
+
+    @model_validator(mode="after")
+    def _retraction_states_nothing_else(self) -> NormalizedBatch:
+        if self.retracts_entries and self.entries:
+            raise ValueError("retracts_entries cannot be combined with entries of its own")
+        return self
 
 
 class CheckResult(BaseModel):

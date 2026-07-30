@@ -83,9 +83,19 @@ class AniListProvider:
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: object
     ) -> AsyncIterator[RawRecord | Checkpoint]:
-        if cursor is not None and cursor.state.get("complete"):
-            yield Checkpoint(cursor=cursor)
-            return
+        """Read the account's whole anime and manga collection, every run.
+
+        No cursor, and deliberately none: ``MediaListCollection`` is a snapshot of *mutable state*,
+        with no "changed since" filter to page on. A cursor that recorded "already read this" — as
+        this provider used to, by checkpointing ``{"complete": True}`` and short-circuiting on it —
+        made every run after the first yield nothing at all, so a title moving from ``PLANNING`` to
+        ``COMPLETED``, or a brand new entry, could never be seen again. Re-reading both collections
+        is two requests against a 90-per-minute limit, which is what makes that affordable.
+
+        Yielding no ``Checkpoint`` is the honest declaration for one unpaginated request per media
+        type: there is no mid-fetch position to resume from, so the provider accepts full resyncs
+        (contract §1) and the host stores no cursor to go stale.
+        """
         config = _config(ctx)
         # AniList now requires the collection media type.  Query both kinds so an account's anime
         # and manga history remain one provider stream and one cursor.
@@ -110,7 +120,6 @@ class AniListProvider:
                     # endpoint cannot duplicate one collection in both requests.
                     if item.get("media", {}).get("type") == media_type:
                         yield RawRecord(native_id=str(item["id"]), payload=item)
-        yield Checkpoint(cursor=Cursor(state={"complete": True}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         item = raw.payload
@@ -170,6 +179,7 @@ class AniListProvider:
                     )
                 )
         timestamp = datetime.fromtimestamp(item.get("updatedAt", 0), tz=UTC)
+        entries = _entries(item, media_type, timestamp, raw.native_id)
         opinions = (
             []
             if score in (None, 0)
@@ -192,16 +202,12 @@ class AniListProvider:
                 image_url=media.get("coverImage", {}).get("large"),
                 metadata={"anilist_format": media.get("format")},
             ),
-            entries=[
-                NormalizedEntry(
-                    kind=EntryKind.WATCH
-                    if media_type is MediaType.ANIME_SERIES
-                    else EntryKind.READ,
-                    logged_at=timestamp,
-                    logged_precision=LoggedPrecision.EXACT,
-                    native_id=raw.native_id,
-                )
-            ],
+            entries=entries,
+            # A stated status that logs nothing is the account taking back what it logged before. A
+            # payload with no ``status`` key at all is not: it was stored before this provider asked
+            # for the field, and replay re-reading it knows nothing about the account's intent.
+            # Retracting on that silence would empty the log of everything the older query fetched.
+            retracts_entries="status" in item and not entries,
             opinions=opinions,
             credits=credits,
             external_ids=[
@@ -234,6 +240,65 @@ def _headers(config: AniListConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def _entries(
+    item: dict[str, object], media_type: MediaType, timestamp: datetime, native_id: str | None
+) -> list[NormalizedEntry]:
+    """The log events a list entry's ``status`` actually attests to — possibly none.
+
+    A list entry is a *status*, not an event: ``PLANNING`` means the account intends to watch
+    something and has watched none of it. Emitting a watch for it (which this provider did before)
+    renders an untouched backlog as a viewing history. There is no watchlist concept in the domain
+    to put it in, so a plan states nothing and produces no entry; the work, its credits and its
+    identifiers are still archived from the same batch, and the raw payload retains the status
+    verbatim for replay.
+
+    ``CURRENT`` and ``PAUSED`` are partial: they become a progress entry, which the domain requires
+    to carry a value — so with no episodes counted yet, they too state nothing loggable.
+
+    Every status shares the list entry's ``native_id``, so moving a title from ``CURRENT`` to
+    ``COMPLETED`` rewrites the recorded entry instead of adding a second one, and moving it back to
+    ``PLANNING`` retracts it (:func:`~aggregato.ingest.writer._retract_entries`). One list entry is
+    one state, and the log shows the newest one — for anime and manga alike.
+    """
+    screen = media_type is MediaType.ANIME_SERIES
+    # REPEATING covers a reread too: REWATCH is the only repeat kind the domain has, and calling a
+    # reread a plain READ would lose the fact that it happened again.
+    kind = {
+        "COMPLETED": EntryKind.WATCH if screen else EntryKind.READ,
+        "REPEATING": EntryKind.REWATCH,
+        "DROPPED": EntryKind.DROP,
+        "CURRENT": EntryKind.PROGRESS,
+        "PAUSED": EntryKind.PROGRESS,
+    }.get(str(item.get("status")))
+    if kind is None:
+        # PLANNING, and any status this provider was not written against: no event is claimed
+        # rather than one invented.
+        return []
+
+    progress: dict[str, object] = {}
+    if kind is EntryKind.PROGRESS:
+        count = item.get("progress")
+        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+            return []
+        progress = {
+            "progress_value": Decimal(count),
+            "progress_unit": "episodes" if screen else "chapters",
+        }
+
+    return [
+        NormalizedEntry(
+            kind=kind,
+            logged_at=timestamp,
+            logged_precision=LoggedPrecision.EXACT,
+            # AniList's own id for the list entry. It is the same id across every status the account
+            # moves the title through, which is what lets the writer's upsert replace the recorded
+            # entry rather than accumulate one row per status change.
+            native_id=native_id,
+            **progress,  # type: ignore[arg-type]
+        )
+    ]
+
+
 def _role(raw: str) -> Role:
     """Map AniList's open-ended staff label while retaining it verbatim on the credit."""
     label = raw.casefold()
@@ -253,7 +318,8 @@ def _role(raw: str) -> Role:
 _QUERY = (
     "query ($name: String, $type: MediaType!) { "
     "MediaListCollection(userName: $name, type: $type) { lists { "
-    "entries { id score notes updatedAt media { id type format seasonYear title { romaji english "
+    "entries { id status progress score notes updatedAt media { id type format seasonYear "
+    "title { romaji english "
     "native } coverImage { large } staff { edges { role node { id name { full } } } } "
     "studios { nodes { id name } } } } } } }"
 )
