@@ -27,7 +27,7 @@ def test_every_media_type_maps_exactly_once() -> None:
     ("media_type", "expected"),
     [
         (MediaType.FILM, MediaFamily.SCREEN),
-        (MediaType.ANIME_SEASON, MediaFamily.SCREEN),
+        (MediaType.ANIME_SERIES, MediaFamily.SCREEN),
         (MediaType.MANGA, MediaFamily.PRINT),
         (MediaType.TRACK, MediaFamily.AUDIO),
         (MediaType.PODCAST_EPISODE, MediaFamily.AUDIO),

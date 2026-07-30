@@ -1,22 +1,111 @@
 {
   "data": {
     "MediaListCollection": {
-      "lists": [{"entries": [{
-        "id": 101,
-        "score": 8,
-        "notes": "Recorded fixture",
-        "updatedAt": 1700000000,
-        "media": {
-          "id": 1001,
-          "type": "ANIME",
-          "format": "TV",
-          "seasonYear": 2024,
-          "title": {"romaji": "Fixture Season", "english": "Fixture Season", "native": "フィクスチャ"},
-          "coverImage": {"large": "https://images.example/fixture.jpg"},
-          "staff": {"edges": [{"role": "Director", "node": {"id": 10, "name": {"full": "Fixture Director"}}}]},
-          "studios": {"nodes": [{"id": 11, "name": "Fixture Studio"}]}
+      "lists": [
+        {
+          "entries": [
+            {
+              "id": 101,
+              "score": 8,
+              "notes": "Recorded fixture",
+              "updatedAt": 1700000000,
+              "media": {
+                "id": 1001,
+                "type": "ANIME",
+                "format": "TV",
+                "seasonYear": 2024,
+                "title": {
+                  "romaji": "Fixture Season",
+                  "english": "Fixture Season",
+                  "native": "フィクスチャ"
+                },
+                "coverImage": {
+                  "large": "https://images.example/fixture.jpg"
+                },
+                "staff": {
+                  "edges": [
+                    {
+                      "role": "Director",
+                      "node": {
+                        "id": 10,
+                        "name": {
+                          "full": "Fixture Director"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "studios": {
+                  "nodes": [
+                    {
+                      "id": 11,
+                      "name": "Fixture Studio"
+                    }
+                  ]
+                }
+              },
+              "status": "COMPLETED",
+              "progress": 12
+            },
+            {
+              "id": 102,
+              "status": "PLANNING",
+              "score": 0,
+              "notes": null,
+              "updatedAt": 1700000001,
+              "media": {
+                "id": 1002,
+                "type": "ANIME",
+                "format": "TV",
+                "seasonYear": 2025,
+                "title": {
+                  "romaji": "Fixture Plan To Watch",
+                  "english": "Fixture Plan To Watch",
+                  "native": "予定"
+                },
+                "coverImage": {
+                  "large": "https://images.example/plan.jpg"
+                },
+                "staff": {
+                  "edges": []
+                },
+                "studios": {
+                  "nodes": []
+                }
+              },
+              "progress": 0
+            },
+            {
+              "id": 103,
+              "status": "CURRENT",
+              "progress": 3,
+              "score": 0,
+              "notes": null,
+              "updatedAt": 1700000002,
+              "media": {
+                "id": 1003,
+                "type": "ANIME",
+                "format": "TV",
+                "seasonYear": 2026,
+                "title": {
+                  "romaji": "Fixture Currently Watching",
+                  "english": "Fixture Currently Watching",
+                  "native": "視聴中"
+                },
+                "coverImage": {
+                  "large": "https://images.example/current.jpg"
+                },
+                "staff": {
+                  "edges": []
+                },
+                "studios": {
+                  "nodes": []
+                }
+              }
+            }
+          ]
         }
-      }]}]
+      ]
     }
   }
 }

@@ -41,7 +41,7 @@ from aggregato.domain.subject_ref import SubjectRef
 def _batch() -> NormalizedBatch:
     return NormalizedBatch(
         work=NormalizedWork(
-            media_type=MediaType.TV_SEASON,
+            media_type=MediaType.TV_SERIES,
             title="Severance",
             original_title=None,
             release_year=2022,
