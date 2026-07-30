@@ -23,9 +23,10 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(config, run_migrations=False)
     async with app.state.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
-    async with app.router.lifespan_context(app), httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as value:
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as value,
+    ):
         value.headers["Authorization"] = f"Bearer {TOKEN}"
         yield value
 
