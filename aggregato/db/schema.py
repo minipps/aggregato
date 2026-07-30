@@ -186,6 +186,22 @@ entries = Table(
     Index("ix_entries_work_id", "work_id"),
     Index("ix_entries_provider_id", "provider_id"),
     Index("ix_entries_ingested_at_id", text("ingested_at DESC"), text("id DESC")),
+    # The common log path excludes tombstones and sub-units before applying either keyset sort.
+    # These composite indexes keep that predicate and each permitted entry sort on one index walk.
+    Index(
+        "ix_entries_active_logged_at_id",
+        "deleted_at",
+        "subject_ref",
+        text("logged_at DESC"),
+        text("id DESC"),
+    ),
+    Index(
+        "ix_entries_active_ingested_at_id",
+        "deleted_at",
+        "subject_ref",
+        text("ingested_at DESC"),
+        text("id DESC"),
+    ),
 )
 
 opinions = Table(
@@ -233,6 +249,13 @@ opinions = Table(
     ),
     Index("ix_opinions_rating_normalized", "rating_normalized"),
     Index("ix_opinions_work_id", "work_id"),
+    # ``opinion_facts`` groups a live provider item before entries can sort by its score.
+    Index(
+        "ix_opinions_active_provider_item_rating",
+        "deleted_at",
+        "provider_item_id",
+        text("rating_normalized DESC"),
+    ),
 )
 
 rating_scales = Table(
