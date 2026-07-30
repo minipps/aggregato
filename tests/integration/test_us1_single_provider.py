@@ -95,17 +95,23 @@ async def test_single_provider_operator_journey(
     assert enabled.status_code == 200
     assert enabled.json()["enabled"] is True
 
-    first = await run_once(
-        engine,
-        config,
-        provider_id="fixture",
-        mode=FetchMode.INCREMENTAL,
-        cursor=None,
-        retry_step=0,
-        consecutive_failures=0,
-        interval_seconds=3600,
-        clock=FixedClock(),
-    )
+    # A worker/application restart receives a new database engine, not the old process's config
+    # object. Its successful fixture read proves the web-saved path survives in the data volume.
+    restarted_app = create_app(config, run_migrations=False)
+    try:
+        first = await run_once(
+            restarted_app.state.engine,
+            config,
+            provider_id="fixture",
+            mode=FetchMode.INCREMENTAL,
+            cursor=None,
+            retry_step=0,
+            consecutive_failures=0,
+            interval_seconds=3600,
+            clock=FixedClock(),
+        )
+    finally:
+        await restarted_app.state.engine.dispose()
     assert first.status is RunStatus.SUCCESS, first.error_message
     browsed = await http_client.get("/api/v1/entries?include_subunits=true")
     assert browsed.status_code == 200

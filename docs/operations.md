@@ -24,3 +24,12 @@ bytes. Raw payloads are the offline replay source, so lowering that retention tr
 ability to rebuild old derived data without contacting a platform. Turning off image caching returns
 a local placeholder and cleanup removes cached image files. Export an archive before lowering any
 retention setting if the old data matters.
+
+## Provider configuration in Docker
+
+Settings saved from the Providers screen are stored in the archive database at
+`/data/aggregato.db`. Docker Compose mounts `/data` on the named `aggregato-data` volume, so those
+settings survive `docker compose stop`, `docker compose up`, image upgrades, and `docker compose
+down`. Do not run `docker compose down --volumes` (or remove `aggregato-data`) unless the whole
+archive, including provider settings, is intentionally being discarded. YAML-mounted provider
+settings remain file-pinned and cannot be changed from the web.
