@@ -22,6 +22,10 @@ Design decisions worth stating once:
   cannot forge a header that matches, and there is no extra table, no extra secret, and no state to
   expire. Bearer requests are exempt: a browser never attaches a bearer token by itself, so there
   is no cross-site request to forge.
+* **The optional read-only token is bearer-only and method-gated.** ``api.readonly_token``, when
+  set, authenticates reads and refuses every ``POST``/``PUT``/``PATCH``/``DELETE`` with a 403 — so
+  it cannot change settings, trigger a sync, or exchange itself for a session cookie. Every
+  mutating endpoint is an unsafe method, so the gate is the method rather than a per-route list.
 * **``Secure`` only over TLS.** Setting it unconditionally would break a plain-HTTP LAN install,
   which is a supported deployment.
 """
@@ -84,10 +88,12 @@ class AuthContext:
     Attributes:
         via: ``"bearer"`` or ``"cookie"``.
         session_id: The session row's id for cookie auth, ``None`` for bearer.
+        readonly: The request presented ``api.readonly_token``, so it may only read.
     """
 
     via: Literal["bearer", "cookie"]
     session_id: str | None = None
+    readonly: bool = False
 
 
 def token_fingerprint(token: str) -> str:
@@ -128,9 +134,14 @@ async def require_auth(request: Request) -> AuthContext:
     token = _token(request)
     presented = _bearer(request)
     if presented is not None:
-        if not _matches(presented, token):
-            raise _unauthorized("The bearer token is not valid.")
-        return AuthContext(via="bearer")
+        if _matches(presented, token):
+            return AuthContext(via="bearer")
+        readonly = _readonly_token(request)
+        if readonly is not None and _matches(presented, readonly):
+            if request.method in _UNSAFE_METHODS:
+                raise _readonly_forbidden(request.method)
+            return AuthContext(via="bearer", readonly=True)
+        raise _unauthorized("The bearer token is not valid.")
 
     cookie = request.cookies.get(SESSION_COOKIE)
     if cookie is None:
@@ -185,6 +196,12 @@ async def issue_session(request: Request) -> tuple[str, str]:
 def _token(request: Request) -> str:
     config: Config = request.app.state.config
     return config.api.token.get_secret_value()
+
+
+def _readonly_token(request: Request) -> str | None:
+    config: Config = request.app.state.config
+    secret = config.api.readonly_token
+    return None if secret is None else secret.get_secret_value()
 
 
 def _engine(request: Request) -> AsyncEngine:
@@ -248,6 +265,15 @@ def _check_csrf(request: Request, session_id: str, token: str) -> None:
             detail=f"A cookie-authenticated {request.method} requires the {CSRF_HEADER} header.",
             type=error_type("csrf-required"),
         )
+
+
+def _readonly_forbidden(method: str) -> ProblemError:
+    return ProblemError(
+        status=_FORBIDDEN,
+        title="Forbidden",
+        detail=f"The read-only token cannot perform a {method}.",
+        type=error_type("readonly-token"),
+    )
 
 
 def _unauthorized(detail: str) -> ProblemError:

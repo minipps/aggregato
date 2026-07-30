@@ -192,3 +192,58 @@ async def test_rotating_the_token_invalidates_an_existing_session(
     signature = hmac.new(rotated.encode(), session_id.encode(), sha256).hexdigest()
     client.cookies.set(SESSION_COOKIE, f"{session_id}.{signature}")
     _assert_problem(await client.get("/probe"), 401)
+
+
+# --- The optional read-only token ------------------------------------------------------------
+
+READONLY = "read-only-horse-battery-staple"
+
+
+@pytest.fixture
+async def readonly_app(engine: AsyncEngine, app: FastAPI, data_dir: Path) -> FastAPI:
+    """The same app, with ``api.readonly_token`` configured."""
+    register_auth(
+        app,
+        config=load_config(
+            env={
+                "AGGREGATO_TOKEN": TOKEN,
+                "AGGREGATO_READONLY_TOKEN": READONLY,
+                "AGGREGATO_DATA": str(data_dir),
+            }
+        ),
+        engine=engine,
+    )
+    return app
+
+
+@pytest.fixture
+async def readonly_client(readonly_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
+    transport = httpx.ASGITransport(app=readonly_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        yield c
+
+
+async def test_readonly_token_reads(readonly_client: httpx.AsyncClient) -> None:
+    response = await readonly_client.get("/probe", headers={"Authorization": f"Bearer {READONLY}"})
+    assert response.status_code == 200
+    assert response.json() == {"via": "bearer"}
+
+
+@pytest.mark.parametrize("path", ["/probe", "/auth/session"])
+async def test_readonly_token_cannot_write_or_get_a_cookie(
+    readonly_client: httpx.AsyncClient, path: str
+) -> None:
+    """No write, and no session cookie either — otherwise the restriction would be one hop away."""
+    response = await readonly_client.post(path, headers={"Authorization": f"Bearer {READONLY}"})
+    assert response.status_code in (401, 403)
+    _assert_problem(response, response.status_code)
+    assert not readonly_client.cookies.get(SESSION_COOKIE)
+
+
+async def test_readonly_token_is_not_accepted_when_unconfigured(
+    client: httpx.AsyncClient,
+) -> None:
+    """The default config has no read-only token, so that value is just a wrong token."""
+    _assert_problem(
+        await client.get("/probe", headers={"Authorization": f"Bearer {READONLY}"}), 401
+    )

@@ -49,6 +49,7 @@ class MissingTokenError(ConfigError):
 # setting paths they override.
 ENV_SETTINGS: Mapping[str, str] = {
     "AGGREGATO_TOKEN": "api.token",
+    "AGGREGATO_READONLY_TOKEN": "api.readonly_token",
     "AGGREGATO_HOST": "api.host",
     "AGGREGATO_PORT": "api.port",
     "AGGREGATO_DATA": "data_dir",
@@ -90,6 +91,10 @@ class ApiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     token: SecretStr
+    #: Optional second bearer credential granting reads only: every state-changing request is
+    #: refused. For exposing the archive in a public or shared environment without handing over
+    #: the credential that can edit settings or trigger syncs.
+    readonly_token: SecretStr | None = None
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -134,6 +139,7 @@ class Config(BaseModel):
         """
         data: dict[str, Any] = self.model_dump(mode="json", exclude={"env_refs"})
         data["api"].pop("token", None)
+        data["api"].pop("readonly_token", None)
         for path, ref in self.env_refs.items():
             _set_path(data, path, ref)
         return data
