@@ -66,6 +66,14 @@ async def app(engine: AsyncEngine, data_dir: Path) -> FastAPI:
     async def write_probe() -> dict[str, bool]:
         return {"written": True}
 
+    @application.get("/media/image/{hash}")
+    async def image_probe(hash: str) -> dict[str, str]:
+        return {"hash": hash}
+
+    @application.post("/media/image/{hash}")
+    async def image_write_probe(hash: str) -> dict[str, bool]:
+        return {"written": True}
+
     return application
 
 
@@ -93,6 +101,16 @@ async def test_no_endpoint_is_reachable_unauthenticated(
 ) -> None:
     """FR-032: there is no unauthenticated mode, and no 401 escapes as FastAPI's default shape."""
     _assert_problem(await client.request(method, path), 401)
+
+
+async def test_cached_image_reads_without_credentials(client: httpx.AsyncClient) -> None:
+    """Covers are embeddable in an <img>, which carries no bearer header (FR-033)."""
+    response = await client.get(f"/media/image/{'a' * 64}")
+    assert response.status_code == 200
+
+
+async def test_the_image_exemption_is_reads_only(client: httpx.AsyncClient) -> None:
+    _assert_problem(await client.post(f"/media/image/{'a' * 64}"), 401)
 
 
 async def test_valid_bearer_authenticates(client: httpx.AsyncClient) -> None:
