@@ -87,6 +87,15 @@ REGISTERED = [
         },
     ),
     Registration(
+        provider_id="koito",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "base_url": "https://koito.fixture",
+            "api_key": "invalid" if path.name == "credentials-invalid.json" else "valid",
+        },
+    ),
+    Registration(
         provider_id="goodreads",
         records="library_export.csv",
         invalid="structure-changed.csv",
@@ -150,6 +159,8 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
         http = httpx.AsyncClient(transport=httpx.MockTransport(_listenbrainz_fixture(path)))
     elif registration.provider_id == "anilist":
         http = httpx.AsyncClient(transport=httpx.MockTransport(_anilist_fixture(path)))
+    elif registration.provider_id == "koito":
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_koito_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -177,6 +188,33 @@ def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Respons
             if max_ts is None
             else "page-2.json"
             if max_ts == "1700000200"
+            else "page-3-empty.json"
+        )
+        return httpx.Response(200, json=json.loads((directory / name).read_text()))
+
+    return respond
+
+
+def _koito_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    """Serve the recorded Koito pages, keyed on the backwards `to` boundary the provider sends.
+
+    `to` is one second below the oldest listen on `page-1.json` (2026-07-20T17:58:03Z), so a walk
+    that computed the boundary wrongly gets the terminal empty page and fails group 6 rather than
+    silently passing on call order.
+    """
+    directory = path.parent
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("Authorization") == "Token invalid":
+            return httpx.Response(
+                401, json=json.loads((directory / "credentials-invalid.json").read_text())
+            )
+        to = request.url.params.get("to")
+        name = (
+            "page-1.json"
+            if to is None
+            else "page-2.json"
+            if to == "1784570282"
             else "page-3-empty.json"
         )
         return httpx.Response(200, json=json.loads((directory / name).read_text()))

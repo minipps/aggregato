@@ -1,0 +1,119 @@
+"""Koito's request shape, its backwards walk, and the envelope it refuses to read as empty."""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+import httpx
+import pytest
+from pydantic import ValidationError
+
+from aggregato.domain.enums import FetchMode, Role
+from aggregato.domain.models import Checkpoint, Cursor, RawRecord
+from aggregato.providers.base import ProviderContext
+from aggregato.providers.errors import StructureChangedError
+from aggregato.providers.koito import KoitoConfig, KoitoProvider, listens_url
+
+_FIXTURES = Path("tests/fixtures/koito")
+
+
+def _ctx(respond: object, **config: object) -> ProviderContext:
+    return ProviderContext(
+        http=httpx.AsyncClient(transport=httpx.MockTransport(respond)),  # type: ignore[arg-type]
+        config=KoitoConfig(base_url="https://koito.fixture", api_key="valid", **config),  # type: ignore[arg-type]
+        secrets={},
+        log=logging.getLogger(__name__),
+        state={},
+    )
+
+
+def test_base_url_is_trimmed_and_the_api_path_is_appended() -> None:
+    config = KoitoConfig(base_url=" http://koito.lan:4110/ ", api_key="key")
+
+    assert config.base_url == "http://koito.lan:4110"
+    assert listens_url(config) == "http://koito.lan:4110/apis/web/v1/listens"
+
+
+def test_base_url_rejects_the_api_path() -> None:
+    with pytest.raises(ValidationError, match="stop before the API path"):
+        KoitoConfig(base_url="http://koito.lan:4110/apis/web/v1", api_key="key")
+
+
+async def test_backwards_walk_always_sends_from_and_steps_to_below_the_oldest_listen() -> None:
+    """`from` is mandatory even for an unbounded walk: Koito ignores `to` when `from` is zero, so a
+    request without it answers with an empty page that reads exactly like the end of the history."""
+    seen: list[dict[str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        to = request.url.params.get("to")
+        name = (
+            "page-1.json"
+            if to is None
+            else "page-2.json"
+            if to == "1784570282"
+            else "page-3-empty.json"
+        )
+        return httpx.Response(200, json=json.loads((_FIXTURES / name).read_text()))
+
+    items = [item async for item in KoitoProvider().fetch(_ctx(respond), None, FetchMode.FULL)]
+
+    assert all(params["from"] == "1" for params in seen)
+    assert [params.get("to") for params in seen] == [None, "1784570282", "1784451760"]
+    native_ids = [item.native_id for item in items if isinstance(item, RawRecord)]
+    assert native_ids == ["1784570712:412", "1784570283:91", "1784452440:55", "1784451761:412"]
+    # The final checkpoint clears `to_ts`, which is what makes the next incremental run start at the
+    # top instead of resuming mid-history.
+    last = [item for item in items if isinstance(item, Checkpoint)][-1]
+    assert last.cursor.state == {"newest_ts": 1784570712, "to_ts": None}
+
+
+async def test_incremental_starts_one_second_past_the_newest_listen_already_seen() -> None:
+    seen: list[dict[str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json=json.loads((_FIXTURES / "page-3-empty.json").read_text()))
+
+    cursor = Cursor(state={"newest_ts": 1784570712, "to_ts": None})
+    async for _ in KoitoProvider().fetch(_ctx(respond), cursor, FetchMode.INCREMENTAL):
+        pass
+
+    assert seen == [{"limit": "100", "from": "1784570713"}]
+
+
+def test_normalize_files_track_and_artist_ids_and_credits_every_artist() -> None:
+    listen = json.loads((_FIXTURES / "page-1.json").read_text())["items"][1]
+    batch = KoitoProvider().normalize(RawRecord(native_id="1784570283:91", payload=listen))
+
+    assert [credit.creator_name for credit in batch.credits] == ["Ayako", "Rui"]
+    assert {credit.role for credit in batch.credits} == {Role.PERFORMER}
+    assert [(i.namespace, i.value) for i in batch.external_ids] == [("koito_track", "91")]
+    assert [(i.namespace, i.value) for i in batch.creator_external_ids] == [
+        ("koito_artist", "12"),
+        ("koito_artist", "13"),
+    ]
+    assert batch.entries[0].logged_at.timestamp() == 1784570283
+
+
+async def test_a_renamed_envelope_is_a_structure_change_not_an_empty_history() -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=json.loads((_FIXTURES / "structure-changed.json").read_text())
+        )
+
+    with pytest.raises(StructureChangedError, match="no `items` list"):
+        async for _ in KoitoProvider().fetch(_ctx(respond), None, FetchMode.FULL):
+            pass
+
+
+async def test_a_server_ignoring_the_timeframe_filter_does_not_loop_forever() -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=json.loads((_FIXTURES / "page-1.json").read_text()))
+
+    cursor = Cursor(state={"newest_ts": None, "to_ts": 1_000_000})
+    with pytest.raises(StructureChangedError, match="not honouring the timeframe filter"):
+        async for _ in KoitoProvider().fetch(_ctx(respond), cursor, FetchMode.FULL):
+            pass

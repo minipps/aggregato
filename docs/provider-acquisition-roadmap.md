@@ -21,6 +21,33 @@ Goodreads provides a supported personal-library feed or export endpoint, the pro
 That makes the future automatic path additive while refusing to pretend an unsupported endpoint is
 safe to poll today.
 
+## Koito
+
+Koito is self-hosted, so its API is the highest surface and already the one in use:
+`GET /apis/web/v1/listens`, authenticated with `Authorization: Token <api-key>`.
+
+`listenbrainz` with a different `base_url` is deliberately *not* how Koito is read. Koito's
+ListenBrainz compatibility covers submission only — `/apis/listenbrainz/1` serves `submit-listens`
+and `validate-token` and exposes nothing that reads a history — so the two providers stay separate
+with separate ids. `GET /apis/web/v1/export` is not used either: it streams the whole archive in one
+unresumable response, which is a lower surface than a paged endpoint, not a higher one.
+
+Paging walks backwards in time using the inclusive `to` filter, one second below the oldest listen
+already emitted, and checkpoints after every page. Two consequences worth knowing before changing it:
+
+1. `from` is always sent. Koito only honours `to` when `from` is non-zero; `to` alone resolves to
+   `BETWEEN 0 AND 0` and answers with an empty page, which is indistinguishable from the end of the
+   history.
+2. The page boundary therefore has one-second resolution. If Koito grows a keyset cursor over
+   `(listened_at, track_id)` — the shape its export path already uses internally — switch to it,
+   keep `id="koito"`, and no resync is needed because the native id is unchanged.
+
+Identifiers are installation-scoped integers (`koito_track`, `koito_artist`). A listen carries no
+release, no rating and no review, so the provider declares none of those capabilities. If a future
+Koito release states `musicbrainz_id` on the trimmed track and artist objects a listen carries, the
+normalizer already files it (`mbid_recording`, `mbid_artist`) — record a fixture and bump
+`schema_version` to replay stored payloads through it.
+
 ## Letterboxd
 
 Letterboxd already supports automatic recent synchronization through its public RSS feed. Configure
