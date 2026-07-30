@@ -24,8 +24,12 @@ from pydantic import BaseModel, Field, SecretStr
 from aggregato.domain.enums import Acquisition, Capability, MediaType
 from aggregato.providers.fixture import FixtureProvider
 
+
 class ExampleConfig(BaseModel):
-    token: SecretStr = Field(description="Personal API token", json_schema_extra={"writeOnly": True})
+    token: SecretStr = Field(
+        description="Personal API token", json_schema_extra={"writeOnly": True}
+    )
+
 
 class ExampleProvider(FixtureProvider):
     id = "example_log"
@@ -36,6 +40,7 @@ class ExampleProvider(FixtureProvider):
     config_model = ExampleConfig
     schema_version = 1
     default_poll_interval = timedelta(hours=6)
+
 
 provider = ExampleProvider()
 provider_api_version = 1
