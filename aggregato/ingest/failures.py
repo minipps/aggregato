@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import ingest_failures
 from aggregato.domain.enums import IngestStage
+from aggregato.domain.models import NormalizedBatch, RawRecord
 
 
 @dataclass(frozen=True)
@@ -150,3 +151,33 @@ async def mark_resolved(conn: AsyncConnection, failure_ids: Sequence[int], *, no
         update(ingest_failures).where(ingest_failures.c.id.in_(failure_ids)).values(resolved_at=now)
     )
     return result.rowcount
+
+
+async def replay_failure(
+    conn: AsyncConnection,
+    *,
+    failure: CapturedFailure,
+    normalize: object,
+    write: object,
+    now: datetime,
+) -> bool:
+    """Re-run a stored payload through a corrected normalizer and mark it resolved on success.
+
+    ``normalize`` and ``write`` are intentionally narrow callables supplied by the host. Keeping
+    this module free of provider imports means replay remains the same transactionally safe storage
+    operation for every integration.
+    """
+    from collections.abc import Awaitable, Callable
+    from typing import cast
+
+    normalizer = cast(Callable[[RawRecord], NormalizedBatch], normalize)
+    writer = cast(Callable[[RawRecord, NormalizedBatch], Awaitable[None]], write)
+    payload = dict(failure.raw_payload)
+    native_id = str(payload.get("id", failure.id))
+    try:
+        batch = normalizer(RawRecord(native_id=native_id, payload=payload))
+        await writer(RawRecord(native_id=native_id, payload=payload), batch)
+    except (ValueError, TypeError):
+        return False
+    await mark_resolved(conn, [failure.id], now=now)
+    return True
