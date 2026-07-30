@@ -80,6 +80,13 @@ PY
 # while leaving the lockfile claiming the old version.
 (cd frontend && npm version "$version" --no-git-tag-version >/dev/null)
 
+# uv.lock pins the root project's own version alongside every dependency, and nothing else in this
+# script would touch it — which is how v0.1.1 shipped with a lockfile still claiming 0.1.0. Left
+# stale it dirties the working tree for whoever next runs `uv sync`, and `--frozen` in the Dockerfile
+# means the image build will not notice. No `--upgrade`: this re-locks the version key, and a release
+# is not the moment to move a dependency nobody reviewed.
+uv lock --quiet
+
 # The release workflow's version gate, run here so a disagreement fails before the tag is public.
 python3 - "$version" <<'PY'
 import json
@@ -90,8 +97,12 @@ import tomllib
 tag = sys.argv[1]
 project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
 frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
-if {project, frontend} != {tag}:
-    sys.exit(f"release: v{tag} disagrees: pyproject {project}, frontend {frontend}")
+packages = tomllib.loads(pathlib.Path("uv.lock").read_text())["package"]
+locked = next(p["version"] for p in packages if p["name"] == "aggregato")
+if {project, frontend, locked} != {tag}:
+    sys.exit(
+        f"release: v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}"
+    )
 PY
 
 # --- Confirm, then publish ----------------------------------------------------------------------
@@ -109,7 +120,7 @@ read -r reply
 case "$reply" in
     y | Y) ;;
     *)
-        git checkout -- pyproject.toml frontend/package.json frontend/package-lock.json
+        git checkout -- pyproject.toml frontend/package.json frontend/package-lock.json uv.lock
         echo "release: aborted, version files restored"
         exit 1
         ;;
