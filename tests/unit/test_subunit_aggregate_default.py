@@ -124,3 +124,8 @@ async def test_stats_exclude_subunit_entries_until_explicitly_requested(
         "episode- or track-level loggers"
     )
     assert opted_in.json()["total_entries"] == 2
+
+    top_default = await client.get("/api/v1/stats/top?group=work")
+    top_opted_in = await client.get("/api/v1/stats/top?group=work&include_subunits=true")
+    assert [item["label"] for item in top_default.json()["items"]] == ["Whole work"]
+    assert len(top_opted_in.json()["items"]) == 2

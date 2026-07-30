@@ -133,7 +133,7 @@ browsed entries match what the platform shows.
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
 - [X] T046 [P] [US1] Register `listenbrainz` in the conformance suite in `tests/conformance/test_providers.py`
-- [ ] T047 [P] [US1] Integration test for the single-provider journey in `tests/integration/test_us1_single_provider.py` — enable, sync, browse, resync writes nothing
+- [X] T047 [P] [US1] Integration test for the single-provider journey in `tests/integration/test_us1_single_provider.py` — enable, sync, browse, resync writes nothing
 - [X] T048 [P] [US1] Integration test asserting a fresh install makes zero outbound requests in `tests/integration/test_fresh_install_is_silent.py` (SC-013)
 - [X] T049 [P] [US1] Integration test asserting interrupted syncs lose and duplicate nothing in `tests/integration/test_idempotent_interrupted_sync.py` (SC-003)
 - [X] T050 [P] [US1] Contract tests for `/entries`, `/works`, `/opinions`, `/providers` in `tests/contract/test_log_endpoints.py`
@@ -335,13 +335,13 @@ and browsable.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T136 [P] Implement `GET /stats/summary` and `GET /stats/top` in `aggregato/api/routes/stats.py`, with the shared aggregate builder excluding sub-unit records by default
-- [ ] T137 [P] Add `tests/unit/test_subunit_aggregate_default.py` asserting the default direction explicitly, with a failure message naming the corruption it prevents
-- [ ] T138 [P] Implement the Stats view in `frontend/src/views/Stats.vue`
-- [ ] T139 [P] Accessibility sweep across every view — keyboard reachability, semantic structure, text alternatives — recorded in `docs/accessibility.md`
-- [ ] T140 [P] Light and dark theme plus density pass in `frontend/src/styles/`, designed for typography rather than assuming cover art
-- [ ] T141 [P] Document `structure_changed` → `docker compose pull` as the standard operator response in `docs/operations.md`
-- [ ] T142 [P] Add the run-history retention defaults and storage growth note to `docs/operations.md`
+- [X] T136 [P] Implement `GET /stats/summary` and `GET /stats/top` in `aggregato/api/routes/stats.py`, with the shared aggregate builder excluding sub-unit records by default
+- [X] T137 [P] Add `tests/unit/test_subunit_aggregate_default.py` asserting the default direction explicitly, with a failure message naming the corruption it prevents
+- [X] T138 [P] Implement the Stats view in `frontend/src/views/Stats.vue`
+- [X] T139 [P] Accessibility sweep across every view — keyboard reachability, semantic structure, text alternatives — recorded in `docs/accessibility.md`
+- [X] T140 [P] Light and dark theme plus density pass in `frontend/src/styles/`, designed for typography rather than assuming cover art
+- [X] T141 [P] Document `structure_changed` → `docker compose pull` as the standard operator response in `docs/operations.md`
+- [X] T142 [P] Add the run-history retention defaults and storage growth note to `docs/operations.md`
 - [ ] T143 Run the full quickstart.md validation end to end on a clean machine and record results
 - [ ] T144 Final Constitution v1.0.0 gate check — four quality gates clean, conformance green, budgets within 10% of `baseline.json`, no undocumented violation
 
