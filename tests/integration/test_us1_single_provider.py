@@ -48,10 +48,7 @@ pytestmark = pytest.mark.skipif(not _fts5_available(), reason="the writer mainta
 
 
 def config_for(data_dir: Path) -> Config:
-    return load_config(
-        {"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_DATA": str(data_dir)},
-        db_overrides={"providers": {"fixture": {"path": str(FIXTURE)}}},
-    )
+    return load_config({"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_DATA": str(data_dir)})
 
 
 @pytest.fixture
@@ -89,6 +86,11 @@ async def test_single_provider_operator_journey(
 ) -> None:
     """A fresh archive becomes browsable, and a second run has no duplicate writes."""
     http_client, config, engine = client
+    configured = await http_client.put(
+        "/api/v1/providers/fixture/config", json={"path": str(FIXTURE)}
+    )
+    assert configured.status_code == 200
+    assert configured.json()["enabled"] is False
     enabled = await http_client.post("/api/v1/providers/fixture/enable")
     assert enabled.status_code == 200
     assert enabled.json()["enabled"] is True

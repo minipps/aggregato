@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, File, UploadFile
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.requests import Request
@@ -147,6 +147,79 @@ async def provider_config_schema(request: Request, id: str) -> dict[str, Any]:
     config: Config = request.app.state.config
     _require_installed(id, config.provider_dir)
     return load_provider(id, config.provider_dir).config_model.model_json_schema()
+
+
+@router.put("/providers/{id}/config", response_model=ProviderView)
+async def update_provider_config(
+    request: Request,
+    id: str,
+    body: Annotated[dict[str, Any], Body()],
+) -> ProviderView:
+    """Validate and persist one provider's configuration without enabling it.
+
+    The opaque settings stay in the local database and are deliberately never included in a
+    response: provider schemas can contain credentials. The scheduler reads this row for its next
+    run, so this endpoint is a real configuration write rather than UI-only state.
+
+    Failure modes: 404 for an unavailable provider; 409 when its settings are pinned by the YAML
+    file; 422 when the body does not satisfy the provider's own configuration model.
+    """
+    config: Config = request.app.state.config
+    engine: AsyncEngine = request.app.state.engine
+    info = _require_installed(id, config.provider_dir)
+    pinned_prefix = f"providers.{id}."
+    if any(path.startswith(pinned_prefix) for path in config.file_pinned):
+        raise ProblemError(
+            status=409,
+            title="Provider configuration is file-pinned",
+            detail=f"{id} is configured by the mounted YAML file and cannot be changed on the web.",
+            type=error_type("provider-config-file-pinned"),
+        )
+    try:
+        load_provider(id, config.provider_dir).config_model.model_validate(body)
+    except ValidationError as exc:
+        raise ProblemError(
+            status=422,
+            title="Provider configuration is invalid",
+            detail="; ".join(error["msg"] for error in exc.errors()),
+            type=error_type("provider-config-invalid"),
+        ) from exc
+
+    now = datetime.now(UTC)
+    async with transaction(engine) as conn:
+        exists = (await conn.execute(select(providers.c.id).where(providers.c.id == id))).first()
+        if exists is None:
+            # Saving settings must not start network activity. Enable is a separate, deliberate
+            # operation, preserving the fresh-install silence guarantee (SC-013).
+            await conn.execute(
+                providers.insert().values(
+                    id=id,
+                    enabled=False,
+                    status=str(ProviderStatus.DISABLED),
+                    acquisition=info.acquisition,
+                    schema_version=info.schema_version,
+                    reviewed=info.reviewed,
+                    config=body,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(
+                provider_state.insert().values(
+                    provider_id=id,
+                    effective_interval_seconds=int(info.default_poll_interval.total_seconds()),
+                    consecutive_failures=0,
+                    retry_step=0,
+                    kv={},
+                )
+            )
+        else:
+            await conn.execute(
+                update(providers).where(providers.c.id == id).values(config=body, updated_at=now)
+            )
+
+    rows = await _provider_rows(engine)
+    return _view(info, rows.get(id), config)
 
 
 @router.post("/providers/{id}/sync", status_code=202, response_model=SyncQueued)

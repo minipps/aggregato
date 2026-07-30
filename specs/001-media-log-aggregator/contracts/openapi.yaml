@@ -283,6 +283,27 @@ paths:
                   error_class: { $ref: "#/components/schemas/ErrorClass" }
                   detail: { type: string }
 
+  /providers/{id}/config:
+    put:
+      tags: [providers]
+      summary: Validate and persist provider configuration
+      description: Settings remain local and are never returned, because provider schemas can contain credentials. Saving configuration does not enable or sync a provider.
+      parameters:
+        - $ref: "#/components/parameters/providerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Provider configuration saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
   /providers/{id}/import:
     post:
       tags: [providers]

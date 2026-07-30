@@ -122,6 +122,25 @@ async def _finish_import_job(engine: AsyncEngine, job_id: int) -> None:
         )
 
 
+async def _provider_settings(
+    engine: AsyncEngine, config: Config, provider_id: str
+) -> dict[str, object]:
+    """Read an operator's saved web settings, falling back to startup configuration.
+
+    The database row is the mutable configuration layer. It is read immediately before spawning
+    the child so a web edit takes effect on the next scheduled run without restarting the worker.
+    Empty rows are the legacy/never-configured state and retain the YAML/environment settings.
+    """
+    async with transaction(engine) as conn:
+        stored = (
+            await conn.execute(select(providers.c.config).where(providers.c.id == provider_id))
+        ).scalar_one_or_none()
+    if isinstance(stored, dict) and stored:
+        return dict(stored)
+    fallback = config.providers.get(provider_id)
+    return dict(fallback.settings) if fallback is not None else {}
+
+
 async def run_once(
     engine: AsyncEngine,
     config: Config,
@@ -157,7 +176,7 @@ async def run_once(
     """
     now = clock.now()
     provider = load_provider(provider_id, config.provider_dir)
-    provider_config = config.providers.get(provider_id)
+    provider_settings = await _provider_settings(engine, config, provider_id)
     lineage = lineage_id or uuid.uuid4()
     attempt = retry_step + 1
 
@@ -180,7 +199,7 @@ async def run_once(
             RunRequest(
                 provider_id=provider_id,
                 mode=mode,
-                config=dict(provider_config.settings) if provider_config else {},
+                config=provider_settings,
                 secrets={},
                 provider_dir=config.provider_dir,
                 replay_records=replay_records,
@@ -199,7 +218,7 @@ async def run_once(
             provider_id=provider_id,
             mode=mode,
             cursor=cursor,
-            config=dict(provider_config.settings) if provider_config else {},
+            config=provider_settings,
             # `secrets` stays empty: config.py resolves ${VAR} references into `settings` at read
             # time (research.md R15), so a provider's credentials already arrive inside its own
             # validated config block. A second channel would be two places to leak from.
@@ -233,7 +252,7 @@ async def run_once(
         outcome=outcome,
         item_count=len(outcome.records) + len(outcome.failures),
         run_started_at=now,
-        config=provider_config.settings if provider_config else {},
+        config=provider_settings,
     )
     await _close_run(engine, run_id, outcome=outcome, written=written, now=clock.now())
     await _reschedule(

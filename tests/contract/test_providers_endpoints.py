@@ -113,6 +113,36 @@ async def test_config_schema_of_an_unknown_provider_is_a_404_problem(
     assert response.headers["content-type"] == "application/problem+json"
 
 
+async def test_configure_provider_persists_validated_settings_without_enabling_it(
+    client: httpx.AsyncClient,
+) -> None:
+    """Web configuration is durable but cannot start a provider without a separate enable action."""
+    response = await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+    engine = await _engine_for(client)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        saved = (
+            await conn.execute(select(providers.c.config).where(providers.c.id == "fixture"))
+        ).scalar_one()
+    assert saved == {"path": str(FIXTURE)}
+
+
+async def test_invalid_provider_config_is_rejected_without_creating_provider_state(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.put("/api/v1/providers/fixture/config", json={"wrong_key": 1})
+
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    engine = await _engine_for(client)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        assert (
+            await conn.execute(select(providers.c.id).where(providers.c.id == "fixture"))
+        ).first() is None
+
+
 # --- Enable and disable -------------------------------------------------------------------------
 
 
