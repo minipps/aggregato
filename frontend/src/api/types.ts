@@ -1,0 +1,226 @@
+/**
+ * Hand-written mirror of `specs/001-media-log-aggregator/contracts/openapi.yaml`.
+ *
+ * Hand-written rather than generated: FR-031 makes the contract the only interface the UI may use,
+ * and a codegen step would be a build dependency for types that change once per contract revision.
+ * Only the schemas US1 actually renders are declared here.
+ */
+
+export type MediaType =
+  | 'film'
+  | 'tv_series'
+  | 'tv_season'
+  | 'book'
+  | 'comic'
+  | 'manga'
+  | 'anime_series'
+  | 'anime_season'
+  | 'album'
+  | 'track'
+  | 'game'
+  | 'podcast'
+  | 'podcast_episode'
+  | 'other'
+
+export type MediaFamily = 'screen' | 'print' | 'audio' | 'interactive' | 'other'
+
+export type EntryKind = 'watch' | 'rewatch' | 'listen' | 'read' | 'finish' | 'progress' | 'drop'
+
+export type Role =
+  | 'author'
+  | 'illustrator'
+  | 'translator'
+  | 'editor'
+  | 'director'
+  | 'writer'
+  | 'composer'
+  | 'performer'
+  | 'featured_performer'
+  | 'voice'
+  | 'narrator'
+  | 'studio'
+  | 'publisher'
+  | 'developer'
+  | 'other'
+
+export type Confidence = 'asserted' | 'matched' | 'manual'
+
+export type ErrorClass =
+  | 'auth'
+  | 'rate_limit'
+  | 'transport'
+  | 'parse'
+  | 'structure_changed'
+  | 'blocked'
+  | 'internal'
+
+export type ProviderStatus = 'disabled' | 'idle' | 'syncing' | 'degraded' | 'misconfigured'
+
+export type Acquisition = 'api' | 'feed' | 'export' | 'scrape'
+
+export type ProviderCapability =
+  | 'poll'
+  | 'backfill'
+  | 'file_import'
+  | 'reports_deletes'
+  | 'has_ratings'
+  | 'has_reviews'
+  | 'has_credits'
+  | 'scrapes'
+  | 'push'
+
+/** Precision of a logged date. Nothing may render more precision than this states (FR-004). */
+export type LoggedPrecision = 'exact' | 'day' | 'month' | 'year' | 'unknown'
+
+/** RFC 9457 problem detail — the one error shape the whole UI renders (Constitution III). */
+export interface Problem {
+  type: string
+  title: string
+  status: number
+  detail?: string
+  instance?: string
+}
+
+/** Keyset page. `next_cursor` is the only way forward; the API has no offset (FR-030). */
+export interface Page<T> {
+  items: T[]
+  next_cursor: string | null
+}
+
+export interface SubjectRef {
+  season?: number
+  episode?: number
+  track?: number
+  disc?: number
+  chapter?: number
+  volume?: number
+}
+
+/** Raw and normalized together; normalized is not a cross-platform claim (FR-003). */
+export interface Rating {
+  raw: number | null
+  scale_id: string | null
+  normalized: number | null
+}
+
+export interface ExternalId {
+  namespace: string
+  value: string
+  source: string
+  confidence: Confidence
+}
+
+export interface Work {
+  id: string
+  media_type: MediaType
+  media_family: MediaFamily
+  title: string
+  original_title?: string | null
+  release_year?: number | null
+  parent_work_id?: string | null
+  sequence_number?: number | null
+  image?: string | null
+  entry_count?: number
+  providers?: string[]
+}
+
+export interface Entry {
+  id: number
+  work_id: string
+  work?: Work
+  provider_id: string
+  kind: EntryKind
+  logged_at: string
+  logged_precision: LoggedPrecision
+  subject_ref?: SubjectRef | null
+  progress?: { value?: number; unit?: string } | null
+  ingested_at?: string
+  deleted_at?: string | null
+}
+
+export interface Opinion {
+  id: number
+  work_id: string
+  provider_id: string
+  rating?: Rating | null
+  subject_ref?: SubjectRef | null
+  is_liked?: boolean | null
+  review_text?: string | null
+  review_format?: 'plain' | 'markdown' | 'html' | null
+  contains_spoilers?: boolean | null
+  authored_at?: string | null
+}
+
+export interface Credit {
+  id: number
+  creator_id: string
+  creator_name?: string
+  role: Role
+  role_raw?: string | null
+  credited_as?: string | null
+  position: number
+  source: string
+  link_confidence: Confidence
+}
+
+export interface WorkDetail extends Work {
+  external_ids?: ExternalId[]
+  credits?: Credit[]
+  entries?: Entry[]
+  opinions?: Opinion[]
+  parent?: Work
+  siblings?: Work[]
+}
+
+export interface ProviderError {
+  error_class?: ErrorClass
+  message?: string
+  action_required?: string
+}
+
+export interface Provider {
+  id: string
+  name: string
+  enabled: boolean
+  status: ProviderStatus
+  acquisition: Acquisition
+  reviewed: boolean
+  capabilities: ProviderCapability[]
+  media_types: MediaType[]
+  poll_interval_seconds?: number
+  next_run_at?: string | null
+  last_success_at?: string | null
+  consecutive_failures?: number
+  last_error?: ProviderError | null
+  file_pinned_settings?: string[]
+}
+
+export interface CheckResult {
+  ok: boolean
+  error_class?: ErrorClass
+  detail?: string
+}
+
+export interface ProviderHealth {
+  id?: string
+  status?: ProviderStatus
+  last_success_at?: string | null
+  consecutive_failures?: number
+}
+
+export interface Health {
+  status: 'ok' | 'degraded'
+  providers: ProviderHealth[]
+}
+
+/** Query parameters of `GET /entries` that the log view exposes. */
+export interface EntryQuery {
+  media_type?: MediaType
+  media_family?: MediaFamily
+  provider?: string
+  kind?: EntryKind
+  from?: string
+  to?: string
+  q?: string
+  limit?: number
+}

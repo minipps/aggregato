@@ -1,0 +1,14 @@
+{
+  "payload": {
+    "listens": [
+      {
+        "listened_at": 1700000100,
+        "recording_msid": "55555555-5555-4555-8555-555555555555",
+        "track_metadata": {
+          "track_name": "Second Fixture Track",
+          "artist_name": "Another Fixture Artist"
+        }
+      }
+    ]
+  }
+}

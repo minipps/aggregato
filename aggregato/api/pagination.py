@@ -35,6 +35,14 @@ from sqlalchemy import ColumnElement, and_, literal, or_, tuple_
 SortKey = Literal["logged_at", "ingested_at", "score"]
 """The ``sort`` values the ``/entries`` contract permits."""
 
+CursorKey = SortKey | Literal["created_at", "updated_at"]
+"""Every column a cursor can be issued for.
+
+Wider than :data:`SortKey` because ``/works`` and ``/opinions`` have no ``sort`` parameter but
+still page by keyset: they order by ``created_at`` and ``updated_at`` respectively. The key is
+carried in the cursor so one endpoint's cursor cannot be replayed against another's column.
+"""
+
 SortOrder = Literal["asc", "desc"]
 """The ``order`` values the ``/entries`` contract permits."""
 
@@ -70,7 +78,7 @@ class Cursor:
         id: The row's primary key — the tiebreaker that makes the order total.
     """
 
-    sort: SortKey
+    sort: CursorKey
     value: CursorValue
     id: str
 
@@ -131,7 +139,7 @@ def encode_cursor(cursor: Cursor) -> str:
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-def decode_cursor(raw: str, sort: SortKey) -> Cursor:
+def decode_cursor(raw: str, sort: CursorKey) -> Cursor:
     """Decode a client-supplied cursor, or fail loudly.
 
     Args:
@@ -189,19 +197,45 @@ def keyset_where(
 
     Returns:
         A boolean SQLAlchemy expression to AND into the query's WHERE clause.
+
+    Raises:
+        InvalidCursor: The cursor's ``id`` cannot be read as ``id_col``'s own type — a hand-edited
+            cursor claiming ``"abc"`` against a ``bigint`` key.
     """
-    after_null = id_col > cursor.id if order == "asc" else id_col < cursor.id
+    key_id = _typed_id(id_col, cursor.id)
+    after_null = id_col > key_id if order == "asc" else id_col < key_id
 
     if cursor.value is None:
         # The previous page ended inside the null block, which is last; nothing non-null remains.
         return and_(sort_col.is_(None), after_null)
 
     row = tuple_(sort_col, id_col)
-    key = tuple_(literal(cursor.value), literal(cursor.id))
+    key = tuple_(literal(cursor.value), key_id)
     strictly_after = row > key if order == "asc" else row < key
     # NULLs compare as NULL inside the row comparison above, so they must be added explicitly —
     # this is the clause that keeps unscored entries from vanishing from page two onward.
     return or_(strictly_after, sort_col.is_(None))
+
+
+def _typed_id(id_col: ColumnElement[Any], raw: str) -> ColumnElement[Any]:
+    """Bind the cursor's ``id`` as the id column's own type.
+
+    The cursor carries the id as text, because one codec serves a ``bigint`` key (entries, opinions)
+    and a UUID key (works). Comparing a text bind parameter against either of those is a per-dialect
+    coin flip: Postgres rejects ``bigint < text`` outright, and SQLite silently sorts every integer
+    before every string, which would hand back page one forever. So the value is converted to the
+    column's Python type and bound with that type.
+    """
+    try:
+        python_type = id_col.type.python_type
+    except NotImplementedError:  # pragma: no cover - a column with no Python type
+        return literal(raw)
+    if python_type is str:
+        return literal(raw)
+    try:
+        return literal(python_type(raw), id_col.type)
+    except (TypeError, ValueError) as exc:
+        raise InvalidCursor(f"cursor id {raw!r} is not a valid {python_type.__name__}") from exc
 
 
 def _encode_value(value: CursorValue) -> tuple[str, Any]:
