@@ -31,10 +31,14 @@ UI labels them — that directory scan is a later task (T124) and deliberately a
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import pkgutil
+import sys
+import warnings
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from types import ModuleType
 
 from .base import Provider
 
@@ -69,7 +73,7 @@ class ProviderInfo:
     and warns about on the enable action (FR-041)."""
 
 
-def discover_providers() -> list[ProviderInfo]:
+def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
     """List the provider packages bundled in this tree.
 
     Imports each provider package to read its declared metadata — which is safe precisely because
@@ -85,10 +89,18 @@ def discover_providers() -> list[ProviderInfo]:
             runtime condition: it means a bundled provider is malformed.
     """
     infos = [_info(name, reviewed=True) for name in _bundled_package_names()]
+    drop_ins = [_drop_in_info(path) for path in _drop_in_package_paths(drop_in_dir)]
+    duplicate_ids = {info.id for info in infos} & {info.id for info in drop_ins}
+    if duplicate_ids:
+        raise RuntimeError(
+            "drop-in provider ids conflict with bundled providers: "
+            + ", ".join(sorted(duplicate_ids))
+        )
+    infos.extend(drop_ins)
     return sorted(infos, key=lambda info: info.id)
 
 
-def load_provider(provider_id: str) -> Provider:
+def load_provider(provider_id: str, drop_in_dir: Path | None = None) -> Provider:
     """Return the provider object for ``provider_id``.
 
     Args:
@@ -101,8 +113,9 @@ def load_provider(provider_id: str) -> Provider:
         LookupError: No installed provider has that id.
         RuntimeError: The package exists but breaks the convention (see ``discover_providers``).
     """
-    if provider_id in _bundled_package_names():
-        return _provider_object(f"{__package__}.{provider_id}", provider_id)
+    for info in discover_providers(drop_in_dir):
+        if info.id == provider_id:
+            return _provider_object(info.module, provider_id)
     raise LookupError(f"no provider with id {provider_id!r} is installed")
 
 
@@ -118,6 +131,76 @@ def _bundled_package_names() -> list[str]:
         for _finder, name, is_package in pkgutil.iter_modules([str(_PROVIDERS_DIR)])
         if is_package and not name.startswith("_")
     ]
+
+
+def _drop_in_package_paths(drop_in_dir: Path | None) -> list[Path]:
+    """Packages immediately inside the operator-owned directory, if it exists.
+
+    A missing directory is equivalent to no drop-ins: it is normal on a fresh install.  A present
+    non-directory is a configuration error, because silently ignoring a path the operator supplied
+    would make a provider appear installed while never being loadable.
+    """
+    if drop_in_dir is None:
+        return []
+    if not drop_in_dir.exists():
+        return []
+    if not drop_in_dir.is_dir():
+        raise RuntimeError(f"provider_dir is not a directory: {drop_in_dir}")
+    return sorted(
+        (
+            path
+            for path in drop_in_dir.iterdir()
+            if path.is_dir() and (path / "__init__.py").is_file()
+        ),
+        key=lambda path: path.name,
+    )
+
+
+def _drop_in_info(path: Path) -> ProviderInfo:
+    provider = _provider_object(_drop_in_module_path(path), path.name)
+    declared_version = getattr(sys.modules[_drop_in_module_path(path)], "provider_api_version", 1)
+    if declared_version != PROVIDER_API_VERSION:
+        warnings.warn(
+            f"drop-in provider {provider.id!r} declares provider API {declared_version!r}; "
+            f"this host implements {PROVIDER_API_VERSION}. It may be incompatible.",
+            stacklevel=2,
+        )
+    return ProviderInfo(
+        id=provider.id,
+        name=provider.name,
+        module=_drop_in_module_path(path),
+        media_types=frozenset(str(m) for m in provider.media_types),
+        capabilities=frozenset(str(c) for c in provider.capabilities),
+        acquisition=str(provider.acquisition),
+        schema_version=provider.schema_version,
+        default_poll_interval=provider.default_poll_interval,
+        reviewed=False,
+    )
+
+
+def _drop_in_module_path(path: Path) -> str:
+    """Load a package under a host-owned namespace without putting its directory on ``sys.path``."""
+    module_path = f"{_DROPIN_NAMESPACE}.{path.name}"
+    if module_path in sys.modules:
+        return module_path
+    namespace = sys.modules.get(_DROPIN_NAMESPACE)
+    if namespace is None:
+        namespace = ModuleType(_DROPIN_NAMESPACE)
+        namespace.__path__ = []  # namespace-package marker
+        sys.modules[_DROPIN_NAMESPACE] = namespace
+    spec = importlib.util.spec_from_file_location(
+        module_path, path / "__init__.py", submodule_search_locations=[str(path)]
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load drop-in provider package at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_path] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_path, None)
+        raise
+    return module_path
 
 
 def _info(package_name: str, *, reviewed: bool) -> ProviderInfo:
@@ -156,3 +239,9 @@ def _provider_object(module_path: str, expected_id: str) -> Provider:
             f"{expected_id!r}; the slug and the directory must agree"
         )
     return provider
+
+
+PROVIDER_API_VERSION = 1
+"""The extension API version implemented by this host (contract provider API 1.0)."""
+
+_DROPIN_NAMESPACE = "aggregato.dropins"

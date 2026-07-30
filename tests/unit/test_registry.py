@@ -21,6 +21,7 @@ from aggregato.domain.enums import Acquisition, Capability, FetchMode, MediaType
 from aggregato.domain.models import Checkpoint, Cursor, RawRecord
 from aggregato.providers.base import Provider, ProviderContext
 from aggregato.providers.registry import (
+    PROVIDER_API_VERSION,
     PROVIDER_ATTR,
     ProviderInfo,
     discover_providers,
@@ -70,6 +71,37 @@ def test_conventions_hold_for_the_bundled_provider() -> None:
 def test_unknown_provider_id_is_a_lookup_error() -> None:
     with pytest.raises(LookupError):
         load_provider("not-a-provider")
+
+
+def test_drop_in_provider_is_discovered_as_unreviewed(tmp_path: Path) -> None:
+    package = tmp_path / "tutorial_provider"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from aggregato.providers.fixture import FixtureProvider\n"
+        "provider = FixtureProvider()\n"
+        "provider.id = 'tutorial_provider'\n"
+        f"provider_api_version = {PROVIDER_API_VERSION}\n"
+    )
+
+    info = next(info for info in discover_providers(tmp_path) if info.id == "tutorial_provider")
+    assert info.reviewed is False
+    assert info.module == "aggregato.dropins.tutorial_provider"
+    assert load_provider("tutorial_provider", tmp_path).id == "tutorial_provider"
+
+
+def test_drop_in_version_mismatch_warns_without_hiding_the_provider(tmp_path: Path) -> None:
+    package = tmp_path / "old_provider"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from aggregato.providers.fixture import FixtureProvider\n"
+        "provider = FixtureProvider()\n"
+        "provider.id = 'old_provider'\n"
+        "provider_api_version = 999\n"
+    )
+
+    with pytest.warns(UserWarning, match="provider API 999"):
+        infos = discover_providers(tmp_path)
+    assert next(info for info in infos if info.id == "old_provider").reviewed is False
 
 
 def test_importing_a_provider_module_has_no_side_effects() -> None:
