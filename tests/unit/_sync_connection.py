@@ -23,6 +23,6 @@ class SyncConnectionAdapter:
         """Expose the dialect used by the shared upsert statement builder."""
         return self._connection.dialect
 
-    async def execute(self, statement: Any) -> Any:
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
         """Execute synchronously behind the production awaitable interface."""
-        return self._connection.execute(statement)
+        return self._connection.execute(statement, *args, **kwargs)
