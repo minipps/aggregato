@@ -26,6 +26,7 @@ from sqlalchemy import Row
 from aggregato.api.queries import WorkAggregate, aware
 from aggregato.domain.enums import (
     Confidence,
+    CreatorKind,
     EntryKind,
     LoggedPrecision,
     MediaFamily,
@@ -78,6 +79,30 @@ class Credit(BaseModel):
     position: int
     source: str
     link_confidence: Confidence
+
+
+class Creator(BaseModel):
+    """A creator with the aggregate counts used by list and detail views."""
+
+    id: uuid.UUID
+    kind: CreatorKind
+    name: str
+    image: str | None = None
+    families: list[MediaFamily] = Field(default_factory=list)
+    credit_count: int = 0
+    logged_count: int = 0
+
+
+class CreatorAlias(BaseModel):
+    name: str
+    media_family: MediaFamily
+    kind: str
+
+
+class CreatorDetail(Creator):
+    aliases: list[CreatorAlias] = Field(default_factory=list)
+    external_ids: list[ExternalId] = Field(default_factory=list)
+    credits_by_role: dict[str, list[Credit]] = Field(default_factory=dict)
 
 
 class Work(BaseModel):
