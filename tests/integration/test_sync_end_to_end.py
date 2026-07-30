@@ -37,7 +37,7 @@ from aggregato.db.search import create_search_index
 from aggregato.domain.enums import ErrorClass, FetchMode, ProviderStatus, RunStatus
 from aggregato.providers.fixture import FixtureProvider
 from aggregato.sync.dispatch import run_once
-from aggregato.sync.scheduler import Scheduler, claim, due_providers
+from aggregato.sync.scheduler import Scheduler, claim, due_providers, recover_interrupted_runs
 
 FIXTURE = (Path(__file__).parent.parent / "fixtures/fixture/log-two-pages.jsonl").resolve()
 BROKEN = (Path(__file__).parent.parent / "fixtures/fixture/unreadable-not-json.jsonl").resolve()
@@ -173,6 +173,50 @@ async def test_a_syncing_provider_is_not_dispatched_again(engine: AsyncEngine) -
     await enable_fixture(engine)
     await claim(engine, "fixture", now=NOW)
     assert await due_providers(engine, now=NOW) == []
+
+
+async def test_worker_startup_recovers_an_interrupted_sync(engine: AsyncEngine) -> None:
+    """A restarted container must not leave a provider permanently locked as syncing."""
+    await enable_fixture(engine)
+    await claim(engine, "fixture", now=NOW)
+    async with transaction(engine) as conn:
+        await conn.execute(
+            sync_runs.insert().values(
+                provider_id="fixture",
+                lineage_id=uuid.uuid4(),
+                attempt=1,
+                mode="incremental",
+                status=str(RunStatus.RUNNING),
+                started_at=NOW,
+                items_seen=0,
+                items_written=0,
+                items_failed=0,
+            )
+        )
+
+    recovered = await recover_interrupted_runs(engine, now=NOW + timedelta(minutes=1))
+
+    assert recovered == ["fixture"]
+    async with transaction(engine) as conn:
+        run = (
+            await conn.execute(select(sync_runs).where(sync_runs.c.provider_id == "fixture"))
+        ).mappings().one()
+        provider = (
+            await conn.execute(select(providers).where(providers.c.id == "fixture"))
+        ).mappings().one()
+        state = (
+            await conn.execute(
+                select(provider_state).where(provider_state.c.provider_id == "fixture")
+            )
+        ).mappings().one()
+    assert run["status"] == str(RunStatus.FAILED)
+    assert run["error_class"] == str(ErrorClass.INTERNAL)
+    assert "will be retried" in run["error_message"]
+    assert provider["status"] == str(ProviderStatus.IDLE)
+    restart_at = NOW + timedelta(minutes=1)
+    assert state["next_run_at"] == restart_at.replace(tzinfo=None)
+    due = await due_providers(engine, now=restart_at)
+    assert [provider.provider_id for provider in due] == ["fixture"]
 
 
 # --- One full run ------------------------------------------------------------------------------

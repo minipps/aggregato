@@ -133,7 +133,13 @@ class ListenBrainzConfig(BaseModel):
             )
         if parts.query or parts.fragment:
             raise ValueError("base_url must not carry a query string or fragment")
-        return value.rstrip("/")
+        normalized = value.rstrip("/")
+        if urlsplit(normalized).path.endswith("/1"):
+            raise ValueError(
+                "base_url must stop before the API version /1; use the server's "
+                "ListenBrainz API prefix (for example, .../apis/listenbrainz)"
+            )
+        return normalized
 
 
 class ListenBrainzProvider:

@@ -25,9 +25,10 @@ from aggregato.config import Config, ConfigError, load_config
 from aggregato.db.engine import create_engine
 from aggregato.db.migrate import upgrade_to_head
 from aggregato.db.retention import cleanup
+from aggregato.domain.clock import SYSTEM_CLOCK
 from aggregato.logging import configure_logging
 from aggregato.sync.dispatch import build_dispatch
-from aggregato.sync.scheduler import Scheduler
+from aggregato.sync.scheduler import Scheduler, recover_interrupted_runs
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ async def serve(config: Config) -> None:
     await asyncio.to_thread(upgrade_to_head, config.database_url)
 
     engine = create_engine(config.database_url)
+    recovered = await recover_interrupted_runs(engine, now=SYSTEM_CLOCK.now())
+    if recovered:
+        log.warning("recovered interrupted syncs for %s", ", ".join(recovered))
     scheduler = Scheduler(engine, dispatch=build_dispatch(engine, config))
     retention_task = asyncio.create_task(
         _retention_loop(engine, config.data_dir), name="retention-cleanup"

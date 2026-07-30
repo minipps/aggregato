@@ -31,9 +31,9 @@ from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.db.engine import transaction
-from aggregato.db.schema import provider_state, providers
+from aggregato.db.schema import provider_state, providers, sync_runs
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
-from aggregato.domain.enums import ProviderStatus
+from aggregato.domain.enums import ErrorClass, ProviderStatus, RunStatus
 from aggregato.logging import bind_run
 
 #: How often the loop looks for due work. Seconds rather than minutes because a "sync now" button
@@ -130,6 +130,51 @@ async def claim(engine: AsyncEngine, provider_id: str, *, now: datetime) -> bool
             .values(status=str(ProviderStatus.SYNCING), updated_at=now)
         )
         return result.rowcount == 1
+
+
+async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> list[str]:
+    """Release provider locks and close run records left by a stopped worker.
+
+    A provider's ``syncing`` status is a durable lock.  It is normally released by the dispatch
+    path, but a container can be killed between recording a run and its cleanup.  Without this
+    recovery, that durable lock prevents every later scheduled and manual sync forever.  The cursor
+    is intentionally untouched: re-running a partially completed page is safe because ingest is
+    idempotent.
+    """
+    async with transaction(engine) as conn:
+        result = await conn.execute(
+            select(providers.c.id).where(providers.c.status == str(ProviderStatus.SYNCING))
+        )
+        provider_ids = [str(row.id) for row in result]
+        if not provider_ids:
+            return []
+
+        await conn.execute(
+            update(sync_runs)
+            .where(
+                and_(
+                    sync_runs.c.provider_id.in_(provider_ids),
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                )
+            )
+            .values(
+                status=str(RunStatus.FAILED),
+                finished_at=now,
+                error_class=str(ErrorClass.INTERNAL),
+                error_message="worker stopped before this sync completed; it will be retried",
+            )
+        )
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id.in_(provider_ids))
+            .values(status=str(ProviderStatus.IDLE), updated_at=now)
+        )
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id.in_(provider_ids))
+            .values(next_run_at=now)
+        )
+    return provider_ids
 
 
 async def release(
