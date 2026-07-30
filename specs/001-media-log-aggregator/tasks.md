@@ -318,16 +318,16 @@ and browsable.
 
 ### Tests for User Story 7 (MANDATORY - Constitution Principle II) ⚠️
 
-- [ ] T129 [P] [US7] Integration test for export and restore in `tests/integration/test_us7_export_restore.py` — no secrets in the archive, restore requires zero syncs
+- [X] T129 [P] [US7] Integration test for export and restore in `tests/integration/test_us7_export_restore.py` — no secrets in the archive, restore requires zero syncs
 
 ### Implementation for User Story 7
 
-- [ ] T130 [US7] Implement the portable archive builder in `aggregato/export.py` (database dump plus configuration, secrets excluded)
-- [ ] T131 [US7] Implement `GET /export` as a streaming response in `aggregato/api/routes/export.py`
-- [ ] T132 [US7] Implement storage usage reporting broken out by raw payload retention and image cache in `aggregato/api/routes/settings.py`
-- [ ] T133 [US7] Implement retention settings and the cleanup job in `aggregato/db/retention.py`, keeping failures longer than successes by default
-- [ ] T134 [US7] Implement the image cache toggle and its placeholder behaviour in `aggregato/images/cache.py`
-- [ ] T135 [P] [US7] Implement the Settings view — global config, token rotation, image cache, storage usage, export — in `frontend/src/views/Settings.vue`
+- [X] T130 [US7] Implement the portable archive builder in `aggregato/export.py` (database dump plus configuration, secrets excluded)
+- [X] T131 [US7] Implement `GET /export` as a streaming response in `aggregato/api/routes/export.py`
+- [X] T132 [US7] Implement storage usage reporting broken out by raw payload retention and image cache in `aggregato/api/routes/settings.py`
+- [X] T133 [US7] Implement retention settings and the cleanup job in `aggregato/db/retention.py`, keeping failures longer than successes by default
+- [X] T134 [US7] Implement the image cache toggle and its placeholder behaviour in `aggregato/images/cache.py`
+- [X] T135 [P] [US7] Implement the Settings view — global config, token rotation, image cache, storage usage, export — in `frontend/src/views/Settings.vue`
 
 **Checkpoint**: The archive is genuinely the operator's.
 
