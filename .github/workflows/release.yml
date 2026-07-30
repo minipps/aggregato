@@ -18,7 +18,7 @@ jobs:
     needs: gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # `--generate-notes` diffs against the previous tag, so the tags have to be present.
           fetch-depth: 0
