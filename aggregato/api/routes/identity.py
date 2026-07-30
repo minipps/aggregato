@@ -127,6 +127,17 @@ async def undo(request: Request, id: int) -> dict[str, bool]:
 
 async def _restore(conn: Any, log: Any) -> None:
     snapshot = log.snapshot
+    # An ignored/created queue decision only changes the queue row.  It still gets a merge-log
+    # entry so every decision has the same undo affordance, but it must not be interpreted as a
+    # structural creator split merely because the compact log vocabulary is merge|split.
+    if set(snapshot) == {"resolution_queue"}:
+        for queue in snapshot["resolution_queue"]:
+            await conn.execute(
+                update(resolution_queue)
+                .where(resolution_queue.c.id == queue["id"])
+                .values(**_typed(queue))
+            )
+        return
     if log.operation == "split":
         moved = [int(item) for item in log.moved_credit_ids or []]
         await conn.execute(delete(work_credits).where(work_credits.c.id.in_(moved)))
