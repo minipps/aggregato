@@ -24,6 +24,14 @@ Two Koito details drive the request shape and are not obvious from the endpoint:
 A listen is a **track** and nothing else: the payload names no release, and Koito's own identifiers
 for the track and its artists are integers scoped to that installation, filed under ``koito_track``
 and ``koito_artist`` (FR-009).
+
+Artwork needs one more step than the other providers. ``track.image`` holds a path per size
+(``xs``/``small``/``medium``/``large``/``xl``) **relative to the configured server**, and an empty
+string per size for a track with no art. A relative path is not fetchable, and ``normalize`` holds
+no config to resolve one against — so ``fetch`` resolves it while it still has ``base_url``, and the
+payload it hands the host carries an absolute URL. ``normalize`` then accepts only an absolute one,
+which is also what makes it safe over payloads stored before this existed: they hold the relative
+path, and a relative path is skipped rather than handed to the image cache to fail on.
 """
 
 from __future__ import annotations
@@ -196,6 +204,11 @@ class KoitoProvider:
                 return
 
             for listen in listens:
+                # Before the record is yielded, so the payload the host retains is the one replay
+                # will read (FR-002). This is the last point that knows the server the paths belong
+                # to. ponytail: an operator who moves the server keeps the old host in payloads
+                # already stored; re-polling restamps them, and the cache only fetches a URL once.
+                _absolutize_image(config, listen)
                 yield RawRecord(native_id=_native_id(listen), payload=listen)
 
             stamps = [_listened_at(listen) for listen in listens]
@@ -226,7 +239,9 @@ class KoitoProvider:
         Returns:
             A ``NormalizedBatch`` — identical on every call for the same input. Every identifier in
             the payload is extracted (FR-009) and ``role_raw`` keeps Koito's own field name verbatim
-            (FR-016).
+            (FR-016). ``image_url`` is whichever size ``IMAGE_SIZES`` prefers, and only ever an
+            absolute URL — the host stores the platform's own artwork URL and never goes looking for
+            art of its own (FR-010, FR-033).
 
         Raises:
             StructureChangedError: The stored payload is not a listen — no parsable ``time``, or no
@@ -246,7 +261,9 @@ class KoitoProvider:
         ]
 
         return NormalizedBatch(
-            work=NormalizedWork(media_type=MediaType.TRACK, title=title),
+            work=NormalizedWork(
+                media_type=MediaType.TRACK, title=title, image_url=_image_url(track)
+            ),
             entries=[
                 NormalizedEntry(
                     kind=EntryKind.LISTEN,
@@ -454,6 +471,64 @@ def _ids_raw(
     if mbid is not None:
         found.append((mbid_namespace, mbid, Confidence.ASSERTED))
     return found
+
+
+IMAGE_SIZES = ("large", "medium", "small", "xs", "xl")
+"""Artwork sizes in the order this provider prefers them.
+
+``large`` first: it is the biggest size that is still one modest file, and it has to serve both the
+40x60 thumbnail and the 120x180 detail poster from a single cache entry. The smaller sizes are
+fallbacks for a track Koito only has a thumbnail for, and ``xl`` is last — a track that somehow
+states only ``xl`` should still get artwork rather than none.
+"""
+
+
+def _absolutize_image(config: KoitoConfig, listen: Mapping[str, Any]) -> None:
+    """Rewrite ``track.image`` in place so every stated size is an absolute URL.
+
+    Every size is rewritten rather than one chosen here, which keeps the retained payload the same
+    shape the server sent — same keys, same empty strings — and leaves choosing a size to
+    ``normalize``, where preference belongs. Absent or malformed ``track.image`` is left alone;
+    ``normalize`` is what reports a missing *title*, and a missing image is no structural failure.
+    """
+    track = listen.get("track")
+    if not isinstance(track, dict):
+        return
+    image = track.get("image")
+    if not isinstance(image, dict):
+        return
+    for size, value in image.items():
+        path = _as_text(value)
+        if path is not None:
+            image[size] = _absolute(config.base_url, path)
+
+
+def _absolute(base_url: str, path: str) -> str:
+    """Resolve one of Koito's server-relative image paths against the configured base URL.
+
+    Concatenated rather than ``urljoin``ed: Koito states these paths from its own root, so a
+    ``base_url`` carrying a subpath — Koito behind a reverse proxy at ``/koito`` — needs the subpath
+    kept, which is exactly what ``urljoin`` would discard. A path that is already absolute is
+    returned untouched, so a future Koito release stating full URLs needs no change here.
+    """
+    if urlsplit(path).scheme in {"http", "https"}:
+        return path
+    return f"{base_url}/{path.lstrip('/')}"
+
+
+def _image_url(track: Mapping[str, Any]) -> str | None:
+    """The best stated artwork URL for a track, or ``None``.
+
+    Only an absolute URL is returned. A relative one means the payload predates ``fetch`` resolving
+    these (see the module docstring), and handing it to the image cache would spend a fetch attempt
+    and a failure row on a URL that cannot resolve.
+    """
+    image = _as_mapping(track.get("image"))
+    for size in IMAGE_SIZES:
+        candidate = _as_text(image.get(size))
+        if candidate is not None and urlsplit(candidate).scheme in {"http", "https"}:
+            return candidate
+    return None
 
 
 def _as_mapping(value: object) -> Mapping[str, Any]:

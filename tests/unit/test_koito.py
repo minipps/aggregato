@@ -117,3 +117,73 @@ async def test_a_server_ignoring_the_timeframe_filter_does_not_loop_forever() ->
     with pytest.raises(StructureChangedError, match="not honouring the timeframe filter"):
         async for _ in KoitoProvider().fetch(_ctx(respond), cursor, FetchMode.FULL):
             pass
+
+
+async def test_fetch_resolves_relative_artwork_paths_against_the_configured_server() -> None:
+    """Koito states image paths from its own root, and `normalize` has no config to resolve one
+    against — so the payload the host retains has to carry the absolute URL already."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        name = "page-1.json" if request.url.params.get("to") is None else "page-3-empty.json"
+        return httpx.Response(200, json=json.loads((_FIXTURES / name).read_text()))
+
+    records = [
+        record
+        async for record in KoitoProvider().fetch(_ctx(respond), None, FetchMode.FULL)
+        if isinstance(record, RawRecord)
+    ]
+    batch = KoitoProvider().normalize(records[0])
+
+    assert batch.work.image_url == (
+        "https://koito.fixture/image/3f6a1c4e-0000-4000-8000-000000000001/large.webp"
+    )
+    # Every size is rewritten, not just the preferred one: the retained payload keeps the shape the
+    # server sent.
+    assert records[0].payload["track"]["image"]["xs"] == (
+        "https://koito.fixture/image/3f6a1c4e-0000-4000-8000-000000000001/xs.webp"
+    )
+
+
+async def test_a_base_url_with_a_subpath_keeps_the_subpath() -> None:
+    """Koito behind a reverse proxy at /koito: urljoin would discard the prefix and 404."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        name = "page-1.json" if request.url.params.get("to") is None else "page-3-empty.json"
+        return httpx.Response(200, json=json.loads((_FIXTURES / name).read_text()))
+
+    ctx = ProviderContext(
+        http=httpx.AsyncClient(transport=httpx.MockTransport(respond)),  # type: ignore[arg-type]
+        config=KoitoConfig(base_url="https://host.fixture/koito", api_key="valid"),
+        secrets={},
+        log=logging.getLogger(__name__),
+        state={},
+    )
+    records = [
+        record
+        async for record in KoitoProvider().fetch(ctx, None, FetchMode.FULL)
+        if isinstance(record, RawRecord)
+    ]
+
+    assert KoitoProvider().normalize(records[0]).work.image_url == (
+        "https://host.fixture/koito/image/3f6a1c4e-0000-4000-8000-000000000001/large.webp"
+    )
+
+
+def test_a_track_with_no_artwork_states_no_image_url() -> None:
+    """Koito sends an empty string per size rather than omitting `image`."""
+    listen = json.loads((_FIXTURES / "page-1.json").read_text())["items"][1]
+
+    assert (
+        KoitoProvider().normalize(RawRecord(native_id="x", payload=listen)).work.image_url is None
+    )
+
+
+def test_a_relative_path_is_never_handed_to_the_image_cache() -> None:
+    """A payload stored before `fetch` resolved these holds a relative path. Storing it would spend
+    a fetch attempt and a failure row on a URL that cannot resolve."""
+    listen = json.loads((_FIXTURES / "page-1.json").read_text())["items"][0]
+    assert listen["track"]["image"]["large"].startswith("/")
+
+    assert (
+        KoitoProvider().normalize(RawRecord(native_id="x", payload=listen)).work.image_url is None
+    )
