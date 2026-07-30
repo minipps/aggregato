@@ -36,14 +36,17 @@ from aggregato.db.schema import (
     external_ids,
     opinions,
     provider_items,
+    work_credits,
 )
 from aggregato.db.search import SearchKind, index_document
 from aggregato.db.upsert import upsert_stmt
 from aggregato.domain.enums import Confidence, IngestStage
+from aggregato.domain.families import family_of
 from aggregato.domain.models import NormalizedBatch, RawRecord
 from aggregato.domain.ratings import RatingOutOfScale, RatingScale, normalize_rating
 from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
 from aggregato.ingest.failures import capture_failure
+from aggregato.ingest.resolve_creator import resolve_creators
 from aggregato.ingest.resolve_work import resolve_work
 from aggregato.ingest.titles import normalize_title
 
@@ -134,6 +137,31 @@ async def _write_one(
     for external in batch.external_ids:
         await _upsert_external_id(
             conn, ctx, work_id, external.namespace, external.value, external.confidence
+        )
+
+    creators = await resolve_creators(
+        conn, batch, family_of(batch.work.media_type), source=ctx.provider_id, now=ctx.now
+    )
+    for credit, creator in zip(batch.credits, creators, strict=True):
+        await conn.execute(
+            upsert_stmt(
+                conn,
+                work_credits,
+                [
+                    {
+                        "work_id": work_id,
+                        "creator_id": creator.creator_id,
+                        "role": str(credit.role),
+                        "role_raw": credit.role_raw,
+                        "credited_as": credit.credited_as,
+                        "position": credit.position,
+                        "source": ctx.provider_id,
+                        "link_confidence": str(creator.confidence),
+                    }
+                ],
+                constraint="uq_work_credits_work_creator_role_source",
+                update_columns=["role_raw", "credited_as", "position", "link_confidence"],
+            )
         )
 
     for entry in batch.entries:
