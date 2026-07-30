@@ -33,7 +33,6 @@ CONTRACT = (
 #: promise rather than an exemption — T144's final gate check expects this dict empty.
 NOT_YET_IMPLEMENTED: dict[str, str] = {
     "/providers/{id}/config-schema": "T122",
-    "/providers/{id}/import": "T113",
     "/stats/summary": "T136",
     "/stats/top": "T136",
     "/export": "T131",
