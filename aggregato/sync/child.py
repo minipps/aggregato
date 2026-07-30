@@ -167,23 +167,22 @@ def _tail(text: str, limit: int = 4000) -> str:
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and run. The parent invokes this as ``python -m aggregato.sync.child``.
 
-    The run's parameters arrive as ONE JSON argument rather than many flags: they include a nested
-    config object and a secrets mapping, and threading those through argv as individual strings
-    would mean quoting rules nobody wants to debug at 3am.
+    The run's parameters arrive as ONE JSON object on stdin rather than many flags: they include a
+    nested config object, a secrets mapping, and on a replay run every retained payload, so argv is
+    both the wrong size (the kernel caps a single argument at 128 KiB) and the wrong place (it is
+    world-readable, and the config carries resolved credentials).
     """
     parser = argparse.ArgumentParser(
-        description="Run one provider sync. Writes JSON lines to stdout."
+        description="Run one provider sync. Reads a JSON payload on stdin, writes JSON lines to "
+        "stdout."
     )
     parser.add_argument("--provider", required=True)
-    parser.add_argument(
-        "--payload", required=True, help="JSON: mode, cursor, config, secrets, state"
-    )
     args = parser.parse_args(argv)
 
     # stderr, never stdout: stdout is the protocol stream.
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
-    payload = json.loads(args.payload)
+    payload = json.loads(sys.stdin.read())
     cursor_state = payload.get("cursor")
     import_path = payload.get("import_path")
 

@@ -291,6 +291,35 @@ async def test_the_real_child_runs_the_fixture_provider(tmp_path: Path) -> None:
     assert outcome.cursor_after.state == {"next_page": 3}
 
 
+async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() -> None:
+    """A replay run carries every retained payload, which argv cannot hold.
+
+    Linux caps a single argument at 128 KiB, so a few hundred records made ``execve`` answer
+    ``E2BIG`` and the spawn raised before a run existed — the provider's lock was released but its
+    ``sync_runs`` row stayed ``running``. The payload goes on stdin, which has no such limit.
+    """
+    from aggregato.sync.runner import MAX_ARG_STRLEN, RunRequest, execute_run
+
+    seed = await execute_run(
+        RunRequest(
+            provider_id="fixture", config={"path": str(FIXTURE_RECORDS)}, wall_clock_seconds=60
+        )
+    )
+    records = [raw for raw, _ in seed.records]
+    request = RunRequest(
+        provider_id="fixture",
+        config={"path": str(FIXTURE_RECORDS)},
+        replay_records=records * 200,
+        wall_clock_seconds=60,
+    )
+    assert len(request.payload()) > MAX_ARG_STRLEN, "payload no longer exercises the limit"
+
+    outcome = await execute_run(request)
+
+    assert outcome.status is RunStatus.SUCCESS, outcome.error_message
+    assert len(outcome.records) == len(records) * 200
+
+
 async def test_the_real_child_resumes_from_a_cursor(tmp_path: Path) -> None:
     """Cursor round-trip through the real process boundary: no duplicate, no gap (FR-020)."""
     from aggregato.sync.runner import RunRequest, execute_run
