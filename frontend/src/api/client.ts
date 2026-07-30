@@ -21,6 +21,8 @@ import type {
   Provider,
   SyncRun,
   IngestFailure,
+  MergeLogEntry,
+  ResolutionItem,
   WorkDetail,
 } from './types'
 
@@ -269,4 +271,44 @@ export function ingestFailures(): Pager<IngestFailure> {
 
 export function replayFailure(id: number): Promise<{ replayed: boolean }> {
   return request<{ replayed: boolean }>('POST', `/ingest-failures/${id}/replay`)
+}
+
+export function resolutionQueue(query: { subject?: 'work' | 'creator' } = {}): Pager<ResolutionItem> {
+  return pager<ResolutionItem>('/resolution-queue', query)
+}
+
+export function decideResolution(
+  id: number,
+  decision: 'linked' | 'created' | 'split' | 'ignored',
+  targetId?: string,
+): Promise<MergeLogEntry> {
+  return request<MergeLogEntry>('POST', `/resolution-queue/${id}/decide`, {
+    body: { decision, ...(targetId === undefined ? {} : { target_id: targetId }) },
+  })
+}
+
+export function mergeWork(id: string, loserIds: string[]): Promise<MergeLogEntry> {
+  return request<MergeLogEntry>('POST', `/works/${encodeURIComponent(id)}/merge`, {
+    body: { loser_ids: loserIds },
+  })
+}
+
+export function mergeCreator(id: string, loserIds: string[]): Promise<MergeLogEntry> {
+  return request<MergeLogEntry>('POST', `/creators/${encodeURIComponent(id)}/merge`, {
+    body: { loser_ids: loserIds },
+  })
+}
+
+export function splitCreator(
+  id: string,
+  creditIds: number[],
+  newName?: string,
+): Promise<MergeLogEntry> {
+  return request<MergeLogEntry>('POST', `/creators/${encodeURIComponent(id)}/split`, {
+    body: { credit_ids: creditIds, ...(newName === undefined ? {} : { new_name: newName }) },
+  })
+}
+
+export function undoMerge(id: number): Promise<{ undone: boolean }> {
+  return request<{ undone: boolean }>('POST', `/merge-log/${id}/undo`)
 }

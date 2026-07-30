@@ -12,6 +12,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/ingest-failures', name: 'ingest-failures', component: () => import('@/views/IngestFailures.vue') },
   { path: '/creators', name: 'creators', component: () => import('@/views/Creators.vue') },
   { path: '/creators/:id', name: 'creator', component: () => import('@/views/Creator.vue') },
+  { path: '/resolution', name: 'resolution', component: () => import('@/views/Resolution.vue') },
 ]
 
 export const router = createRouter({

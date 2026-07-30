@@ -8,10 +8,10 @@
  * that in the contract is not enough — the person reading the number is who needs to know.
  */
 
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { work } from '@/api/client'
+import { mergeWork, undoMerge, work } from '@/api/client'
 import type { Rating } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -19,12 +19,25 @@ import EntryList from '@/components/EntryList.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
+import MergeDialog from '@/components/MergeDialog.vue'
 
 const route = useRoute()
 const workId = computed(() => String(route.params['id'] ?? ''))
 
 const detail = useRequest(() => work(workId.value))
 watch(workId, () => void detail.reload())
+const merging = ref(false)
+const notice = ref('')
+
+async function merge(loserIds: string[]): Promise<void> {
+  const log = await mergeWork(workId.value, loserIds)
+  notice.value = 'Works merged.'
+  merging.value = false
+  await detail.reload()
+  window.setTimeout(() => { notice.value = `Merged. Undo: ${log.id}` }, 0)
+}
+
+async function undo(id: number): Promise<void> { await undoMerge(id); notice.value = 'Merge undone.'; await detail.reload() }
 
 function ratingText(rating: Rating | null | undefined): string {
   if (!rating || rating.raw === null || rating.raw === undefined) return 'No rating'
@@ -46,6 +59,9 @@ function ratingText(rating: Rating | null | undefined): string {
 
     <template v-else-if="detail.data.value">
       <h1>{{ detail.data.value.title }}</h1>
+      <p><button type="button" @click="merging = true">Merge duplicate</button></p>
+      <MergeDialog v-if="merging" subject="work" :winner-id="workId" @merge="merge" @cancel="merging = false" />
+      <p v-if="notice" role="status">{{ notice }} <button v-if="notice.includes('Undo:')" type="button" @click="undo(Number(notice.split(': ')[1]))">Undo</button></p>
       <p class="muted">
         {{ detail.data.value.media_type }} · {{ detail.data.value.media_family }}
         <template v-if="detail.data.value.release_year"> · {{ detail.data.value.release_year }}</template>

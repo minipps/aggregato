@@ -131,7 +131,6 @@ async def _restore(conn: Any, log: Any) -> None:
         moved = [int(item) for item in log.moved_credit_ids or []]
         await conn.execute(delete(work_credits).where(work_credits.c.id.in_(moved)))
         await conn.execute(delete(creators).where(creators.c.id == log.winner_id))
-        await _insert(conn, creators, snapshot["creators"])
         await _insert(conn, work_credits, snapshot["work_credits"])
     elif log.subject == "creator":
         ids = [log.winner_id, *(uuid.UUID(item) for item in log.loser_ids)]
@@ -198,12 +197,10 @@ def _typed(row: dict[str, Any]) -> dict[str, Any]:
     for key, value in row.items():
         if value is None:
             result[key] = None
-        elif (
-            (key == "id"
-            and len(str(value)) in {32, 36})
-            or (key.endswith("_id")
+        elif (key == "id" and len(str(value)) in {32, 36}) or (
+            key.endswith("_id")
             and key not in {"provider_id", "rating_scale_id"}
-            and len(str(value)) in {32, 36})
+            and len(str(value)) in {32, 36}
         ):
             result[key] = _uuid(value)
         elif key.endswith("_at") and isinstance(value, str):

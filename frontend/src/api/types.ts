@@ -180,6 +180,27 @@ export interface CreatorDetail extends Creator {
   credits_by_role?: Record<string, Credit[]>
 }
 
+export interface ResolutionItem {
+  id: number
+  subject: 'work' | 'creator'
+  provider_id: string
+  payload_ref?: number | null
+  candidates: { id: string; label?: string; name?: string; score?: number; reason: string }[]
+  proposed: Record<string, unknown>
+  suggestion_kind?: string | null
+  created_at: string
+}
+
+export interface MergeLogEntry {
+  id: number
+  subject: 'work' | 'creator'
+  operation: 'merge' | 'split'
+  winner_id: string
+  loser_ids: string[]
+  performed_at: string
+  undo_url: string
+}
+
 export interface WorkDetail extends Work {
   external_ids?: ExternalId[]
   credits?: Credit[]
