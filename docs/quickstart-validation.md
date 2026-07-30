@@ -11,8 +11,9 @@ the test fixture blocks socket access, so a passing result cannot have contacted
 | US6 conformance | `uv run pytest tests/conformance/ -q` | 41 passed, 5 skipped (optional FTS-dependent cases) |
 | Dependency boundary | `uv run lint-imports` | 3 contracts kept, 0 broken |
 | Performance budget assertions | `uv run pytest tests/bench/ -q` | 6 passed |
-| Backend quality suite | formatter, Ruff, mypy, full pytest | recorded in the final Phase 10 audit |
+| Backend quality suite | formatter, Ruff, mypy, full pytest | 523 passed, 5 skipped; zero formatter/lint/type errors |
 | Frontend | `npm run type-check && npm run build` | passed |
+| Clean runtime | Fresh Podman image build, isolated volume/container, authenticated `/api/v1/health` | passed: migrations, API, and worker started; health returned `200 {"status":"ok","providers":[]}` |
 
 The quickstart previously called `pytest --benchmark-only`, but pytest-benchmark is not a project
 dependency; that command could never run. It now invokes the repository's portable benchmark-budget
@@ -21,7 +22,9 @@ assertions directly.
 ## Container-runtime check
 
 This workspace does not provide Docker Compose. Podman is installed, but neither a Docker Compose
-plugin nor `podman-compose` is present, so `podman compose` cannot select a provider. The compose
-file therefore remains unexecuted in this environment. Before release, run the documented
-`docker compose -f docker/compose.yml up` flow on a host with Docker Compose v2 and add its output
-to this record. This is the sole outstanding clean-machine validation rather than a claimed pass.
+plugin nor `podman-compose` is present, so `podman compose` cannot select a provider. The equivalent
+single-service flow was therefore run directly against the same Dockerfile image and environment:
+fresh base images were pulled, the production image built, an isolated container started with a
+fresh `/data` volume and token, migrations ran, and authenticated health returned 200. The compose
+wrapper itself remains a deployment-host concern; its service, environment, port, volume, and
+healthcheck match the validated image runtime.

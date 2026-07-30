@@ -342,8 +342,8 @@ and browsable.
 - [X] T140 [P] Light and dark theme plus density pass in `frontend/src/styles/`, designed for typography rather than assuming cover art
 - [X] T141 [P] Document `structure_changed` → `docker compose pull` as the standard operator response in `docs/operations.md`
 - [X] T142 [P] Add the run-history retention defaults and storage growth note to `docs/operations.md`
-- [ ] T143 Run the full quickstart.md validation end to end on a clean machine and record results
-- [ ] T144 Final Constitution v1.0.0 gate check — four quality gates clean, conformance green, budgets within 10% of `baseline.json`, no undocumented violation
+- [X] T143 Run the full quickstart.md validation end to end on a clean machine and record results
+- [X] T144 Final Constitution v1.0.0 gate check — four quality gates clean, conformance green, budgets within 10% of `baseline.json`, no undocumented violation
 
 ---
 

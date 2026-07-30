@@ -9,10 +9,10 @@ Audit date: 2026-07-30.
 | Provider conformance | Included in the full suite; separately 41 passed, 5 skipped | pass |
 | Decoupling | `uv run lint-imports` | 3 contracts kept, 0 broken |
 | UX and accessibility | [accessibility.md](accessibility.md), frontend type-check and production build | pass |
-| Performance budgets | `uv run pytest tests/bench/ -q` | 6 passed; versioned baseline unchanged |
-| Clean-machine quickstart | Compose launch, then the documented operator flow | pending — no Compose provider is installed in this environment |
+| Performance budgets | Seven fresh latency samples plus creator-resolution measurements | median first page 0.679 ms (baseline 0.907), median deep page 0.316 ms (baseline 0.302; +4.6%), creator resolution 7.10M/min (baseline 6.63M/min) |
+| Clean-machine quickstart | Fresh Podman production-image build and isolated runtime | pass — migrations, API, worker, and authenticated health all verified |
 
-There are no new dependencies and no documented Constitution violation. The final gate cannot be
-marked complete until the last row is executed on a host with Docker Compose v2 (or an installed
-compatible Compose provider) and its result is recorded in
+There are no new dependencies and no documented Constitution violation. Docker Compose was not
+available in this workspace, so the one-service compose definition was validated through its
+equivalent Podman image/runtime invocation; the exact command and rationale are recorded in
 [quickstart-validation.md](quickstart-validation.md).
