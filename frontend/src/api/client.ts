@@ -26,6 +26,9 @@ import type {
   ResolutionItem,
   WorkDetail,
   ArchiveSettings,
+  StatsPeriod,
+  StatsSummary,
+  TopStats,
 } from './types'
 
 /** Matches `servers:` in openapi.yaml. The SPA and the API share an origin in production. */
@@ -286,6 +289,26 @@ export function checkProvider(id: string): Promise<CheckResult> {
 
 export function health(): Promise<Health> {
   return request<Health>('GET', '/health')
+}
+
+/** Archive activity counts; sub-unit activity stays excluded unless the caller explicitly opts in. */
+export function statsSummary(
+  period: StatsPeriod = 'all',
+  includeSubunits = false,
+): Promise<StatsSummary> {
+  return request<StatsSummary>('GET', '/stats/summary', {
+    query: { period, include_subunits: includeSubunits },
+  })
+}
+
+export function topStats(
+  group: 'work' | 'creator',
+  period: StatsPeriod = 'all',
+  includeSubunits = false,
+): Promise<TopStats> {
+  return request<TopStats>('GET', '/stats/top', {
+    query: { group, period, include_subunits: includeSubunits },
+  })
 }
 
 export function providerRuns(id: string): Pager<SyncRun> {

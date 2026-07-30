@@ -267,6 +267,29 @@ export interface ArchiveSettings {
   storage: { raw_payload_bytes: number; image_cache_bytes: number; database_bytes: number }
 }
 
+export type StatsPeriod = 'all' | 'year' | 'month' | 'week'
+
+export interface StatsSummary {
+  period: StatsPeriod
+  total_entries: number
+  by_media_type: Record<string, number>
+  by_provider: Record<string, number>
+  by_period: { period: string; count: number }[]
+}
+
+export interface TopStat {
+  id: string
+  label: string
+  count: number
+  media_type?: MediaType | null
+}
+
+export interface TopStats {
+  group: 'work' | 'creator'
+  period: StatsPeriod
+  items: TopStat[]
+}
+
 export interface Health {
   status: 'ok' | 'degraded'
   providers: ProviderHealth[]
