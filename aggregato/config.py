@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, field_validator
 
 __all__ = [
     "Config",
@@ -50,6 +50,7 @@ class MissingTokenError(ConfigError):
 ENV_SETTINGS: Mapping[str, str] = {
     "AGGREGATO_TOKEN": "api.token",
     "AGGREGATO_READONLY_TOKEN": "api.readonly_token",
+    "AGGREGATO_CORS_ORIGINS": "api.cors_origins",
     "AGGREGATO_HOST": "api.host",
     "AGGREGATO_PORT": "api.port",
     "AGGREGATO_DATA": "data_dir",
@@ -95,8 +96,35 @@ class ApiSettings(BaseModel):
     #: refused. For exposing the archive in a public or shared environment without handing over
     #: the credential that can edit settings or trigger syncs.
     readonly_token: SecretStr | None = None
+    #: Browser origins allowed to call the API cross-origin, as a comma-separated list.
+    #:
+    #: Empty — the default — mounts no CORS middleware at all, which is what the supported
+    #: deployments want: the API serves the SPA itself and Vite proxies ``/api`` in development, so
+    #: neither is ever cross-origin and neither ever preflights. Set it only for a browser client
+    #: served from somewhere else.
+    cors_origins: tuple[str, ...] = ()
     host: str = "127.0.0.1"
     port: int = 8000
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _origins(cls, value: object) -> object:
+        """Split the environment's comma-separated string, and refuse a wildcard.
+
+        ``*`` is rejected rather than passed through: this API authenticates with a session cookie,
+        the middleware is mounted with credentials enabled, and "any origin may send the browser's
+        cookie" is a different thing from "the archive is public". The CORS specification forbids
+        the combination outright, so a wildcard here would silently produce a policy that rejects
+        every credentialed request anyway — an unexplainable failure instead of a refused setting.
+        """
+        if isinstance(value, str):
+            value = [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, list | tuple) and "*" in value:
+            raise ValueError(
+                "api.cors_origins does not accept '*': the API sends a session cookie, and CORS "
+                "forbids a wildcard origin with credentials. List the origins explicitly."
+            )
+        return value
 
 
 class Config(BaseModel):
