@@ -204,10 +204,10 @@ operator-facing message for each.
 
 ### Tests for User Story 3 (MANDATORY - Constitution Principle II) ⚠️
 
-- [ ] T083 [P] [US3] Integration test covering the full failure matrix in `tests/integration/test_us3_failure_matrix.py` — all ten cases from quickstart.md, one parametrized case per row
-- [ ] T084 [P] [US3] Integration test asserting no inferred deletion for a provider without `reports_deletes` in `tests/integration/test_no_inferred_deletes.py` (SC-014)
+- [X] T083 [P] [US3] Integration test covering the full failure matrix in `tests/integration/test_us3_failure_matrix.py` — all ten cases from quickstart.md, one parametrized case per row
+- [X] T084 [P] [US3] Integration test asserting no inferred deletion for a provider without `reports_deletes` in `tests/integration/test_no_inferred_deletes.py` (SC-014)
 - [X] T085 [P] [US3] Unit test for the sanity threshold in `tests/unit/test_sanity_threshold.py`
-- [ ] T086 [P] [US3] Integration test asserting a killed or hung provider child leaves the API serving and other providers syncing in `tests/integration/test_provider_containment.py` (FR-025)
+- [X] T086 [P] [US3] Integration test asserting a killed or hung provider child leaves the API serving and other providers syncing in `tests/integration/test_provider_containment.py` (FR-025)
 
 ### Implementation for User Story 3
 
