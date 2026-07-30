@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import (
@@ -83,6 +83,35 @@ class WriteContext:
     #: Scales the provider declared, by id. A rating naming a scale outside this set is a provider
     #: bug: the normalized value would be uncomputable and silently null.
     rating_scales: dict[str, RatingScale] = field(default_factory=dict)
+
+
+async def infer_deletes(
+    conn: AsyncConnection,
+    *,
+    provider_id: str,
+    seen_since: datetime,
+) -> int:
+    """Tombstone stale entries only after dispatch has passed all three safety guards.
+
+    This function deliberately has no configuration or run-status arguments: callers must prove
+    those guards before reaching this destructive operation, making it impossible for a normal
+    incremental write to accidentally infer deletion.
+    """
+    stale_items = select(provider_items.c.id).where(
+        provider_items.c.provider_id == provider_id,
+        provider_items.c.last_seen_at < seen_since,
+    )
+    result = await conn.execute(
+        update(entries)
+        .where(entries.c.provider_item_id.in_(stale_items), entries.c.deleted_at.is_(None))
+        .values(deleted_at=seen_since)
+    )
+    await conn.execute(
+        update(opinions)
+        .where(opinions.c.provider_item_id.in_(stale_items), opinions.c.deleted_at.is_(None))
+        .values(deleted_at=seen_since)
+    )
+    return result.rowcount
 
 
 async def write_batches(

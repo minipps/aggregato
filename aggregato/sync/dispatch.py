@@ -31,14 +31,22 @@ from aggregato.config import Config
 from aggregato.db.engine import transaction
 from aggregato.db.schema import provider_state, sync_runs
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
-from aggregato.domain.enums import ErrorClass, FetchMode, IngestStage, ProviderStatus, RunStatus
+from aggregato.domain.enums import (
+    Capability,
+    ErrorClass,
+    FetchMode,
+    IngestStage,
+    ProviderStatus,
+    RunStatus,
+)
 from aggregato.domain.models import Cursor
 from aggregato.ingest.failures import capture_failure
-from aggregato.ingest.writer import WriteContext, ensure_rating_scales, write_batches
+from aggregato.ingest.writer import WriteContext, ensure_rating_scales, infer_deletes, write_batches
 from aggregato.providers.registry import load_provider
-from aggregato.sync.errors import schedules_retry
+from aggregato.sync.errors import action_required, schedules_retry
 from aggregato.sync.retry import plan_after_failure, plan_after_success
 from aggregato.sync.runner import RunOutcome, RunRequest, execute_run
+from aggregato.sync.sanity import assess_window
 from aggregato.sync.scheduler import DueProvider, release
 
 log = logging.getLogger(__name__)
@@ -138,6 +146,16 @@ async def run_once(
     written = await _ingest(
         engine, provider, outcome, provider_id=provider_id, run_id=run_id, now=now
     )
+    sanity_passed = await _apply_full_run_guards(
+        engine,
+        provider=provider,
+        provider_id=provider_id,
+        mode=mode,
+        outcome=outcome,
+        item_count=len(outcome.records) + len(outcome.failures),
+        run_started_at=now,
+        config=provider_config.settings if provider_config else {},
+    )
     await _close_run(engine, run_id, outcome=outcome, written=written, now=clock.now())
     await _reschedule(
         engine,
@@ -148,6 +166,7 @@ async def run_once(
         interval_seconds=interval_seconds,
         lineage_id=lineage,
         clock=clock,
+        sanity_passed=sanity_passed,
     )
     return outcome
 
@@ -261,6 +280,7 @@ async def _reschedule(
     interval_seconds: int,
     lineage_id: uuid.UUID,
     clock: Clock,
+    sanity_passed: bool = True,
 ) -> None:
     """Advance the cursor and set the next run time from the ladder's decision."""
     from datetime import timedelta
@@ -279,6 +299,7 @@ async def _reschedule(
             consecutive_failures=consecutive_failures,
             normal_interval=normal,
             lineage_id=lineage_id,
+            retry_after=outcome.retry_after,
         )
         # auth, blocked, and structure_changed never schedule a retry, and the provider goes
         # degraded immediately — waiting does not fix any of them (contract §4).
@@ -299,6 +320,20 @@ async def _reschedule(
         consecutive_failures=decision.consecutive_failures,
         now=clock.now(),
         last_success_at=last_success,
+        last_error=(
+            None
+            if outcome.status is RunStatus.SUCCESS
+            else {
+                "error_class": str(outcome.error_class or ErrorClass.INTERNAL),
+                "message": outcome.error_message or "sync did not complete",
+                "action_required": action_required(outcome.error_class or ErrorClass.INTERNAL),
+            }
+        ),
+        effective_interval_seconds=(
+            max(interval_seconds, int(outcome.retry_after.total_seconds()))
+            if outcome.error_class is ErrorClass.RATE_LIMIT and outcome.retry_after is not None
+            else None
+        ),
     )
 
     # The cursor advances ONLY to the last checkpoint the child actually flushed — never to where
@@ -310,6 +345,51 @@ async def _reschedule(
                 .where(provider_state.c.provider_id == provider_id)
                 .values(cursor=outcome.cursor_after.state)
             )
+
+
+async def _apply_full_run_guards(
+    engine: AsyncEngine,
+    *,
+    provider: object,
+    provider_id: str,
+    mode: FetchMode,
+    outcome: RunOutcome,
+    item_count: int,
+    run_started_at: datetime,
+    config: dict[str, object],
+) -> bool:
+    """Record the full-window baseline and permit tombstones only on a sane, opted-in full run."""
+    if mode is not FetchMode.FULL or outcome.status is not RunStatus.SUCCESS:
+        return False
+    async with transaction(engine) as conn:
+        row = (
+            await conn.execute(
+                select(provider_state.c.last_window_item_count).where(
+                    provider_state.c.provider_id == provider_id
+                )
+            )
+        ).first()
+        result = assess_window(item_count, row.last_window_item_count if row else None)
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == provider_id)
+            .values(last_window_item_count=item_count)
+        )
+        if not result.passed:
+            outcome.status = RunStatus.PARTIAL
+            outcome.error_class = ErrorClass.PARSE
+            outcome.error_message = (
+                f"full fetch returned {item_count} items, below the sanity threshold "
+                f"of {result.minimum_count} from the prior window"
+            )
+            return False
+        capabilities = set(getattr(provider, "capabilities", set()))
+        if (
+            bool(config.get("infer_deletes", False))
+            and Capability.REPORTS_DELETES not in capabilities
+        ):
+            await infer_deletes(conn, provider_id=provider_id, seen_since=run_started_at)
+        return True
 
 
 async def current_cursor(engine: AsyncEngine, provider_id: str) -> Cursor | None:

@@ -26,7 +26,7 @@ from typing import Any
 from aggregato.domain.enums import ErrorClass, FetchMode
 from aggregato.domain.models import Checkpoint, Cursor, RawRecord
 from aggregato.providers.base import ProviderContext
-from aggregato.providers.errors import ProviderError
+from aggregato.providers.errors import ProviderError, RateLimited
 from aggregato.providers.http import PoliteClient, PolitenessPolicy
 from aggregato.providers.registry import load_provider
 from aggregato.sync.protocol import (
@@ -106,6 +106,7 @@ async def run(
                 error_class=exc.error_class,
                 message=str(exc) or type(exc).__name__,
                 detail=_tail(traceback.format_exc()),
+                retry_after_seconds=(exc.retry_after if isinstance(exc, RateLimited) else None),
             )
         )
         return 1

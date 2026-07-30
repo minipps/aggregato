@@ -63,6 +63,8 @@ class ErrorMessage(BaseModel):
     message: str
     #: Tail of the traceback, for the run's ``log_excerpt``. Never an operator-facing message.
     detail: str | None = None
+    #: Platform-provided delay in seconds, when this was a rate limit.
+    retry_after_seconds: float | None = Field(default=None, ge=0)
 
 
 class FailureMessage(BaseModel):

@@ -23,7 +23,7 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,7 @@ class RunOutcome:
     error_class: ErrorClass | None = None
     error_message: str | None = None
     log_excerpt: str | None = None
+    retry_after: timedelta | None = None
 
     @property
     def checkpointed(self) -> bool:
@@ -197,6 +198,8 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
                 outcome.error_message = message.message
                 if message.detail:
                     outcome.log_excerpt = _tail(message.detail)
+                if message.retry_after_seconds is not None:
+                    outcome.retry_after = timedelta(seconds=message.retry_after_seconds)
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:

@@ -142,6 +142,8 @@ async def release(
     consecutive_failures: int,
     now: datetime,
     last_success_at: datetime | None = None,
+    last_error: dict[str, str] | None = None,
+    effective_interval_seconds: int | None = None,
 ) -> None:
     """Record a run's outcome and reschedule.
 
@@ -149,10 +151,11 @@ async def release(
     decide retry policy; it persists what the ladder said (FR-019 through FR-022).
     """
     async with transaction(engine) as conn:
+        provider_values: dict[str, object] = {"status": str(status), "updated_at": now}
+        if last_error is not None or status is ProviderStatus.IDLE:
+            provider_values["last_error"] = last_error
         await conn.execute(
-            update(providers)
-            .where(providers.c.id == provider_id)
-            .values(status=str(status), updated_at=now)
+            update(providers).where(providers.c.id == provider_id).values(provider_values)
         )
         values: dict[str, object] = {
             "next_run_at": next_run_at,
@@ -161,6 +164,8 @@ async def release(
         }
         if last_success_at is not None:
             values["last_success_at"] = last_success_at
+        if effective_interval_seconds is not None:
+            values["effective_interval_seconds"] = effective_interval_seconds
         await conn.execute(
             update(provider_state).where(provider_state.c.provider_id == provider_id).values(values)
         )

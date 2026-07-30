@@ -30,6 +30,27 @@ NEVER_RETRY: frozenset[ErrorClass] = frozenset(
 
 _SERVER_ERROR_FLOOR = 500
 
+ACTION_REQUIRED: dict[ErrorClass, str] = {
+    ErrorClass.AUTH: "Update this provider's credentials, then trigger a sync.",
+    ErrorClass.BLOCKED: "Resolve the platform access block; do not retry until access is restored.",
+    ErrorClass.STRUCTURE_CHANGED: (
+        "This provider needs updating for the platform's changed response."
+    ),
+    ErrorClass.RATE_LIMIT: (
+        "The platform asked us to slow down; Aggregato will retry automatically."
+    ),
+    ErrorClass.TRANSPORT: (
+        "The platform or network is temporarily unavailable; Aggregato will retry automatically."
+    ),
+    ErrorClass.PARSE: "Inspect the provider response; Aggregato will retry automatically.",
+    ErrorClass.INTERNAL: "Inspect the run details and logs; Aggregato will retry automatically.",
+}
+
+
+def action_required(error_class: ErrorClass) -> str:
+    """Return a specific, operator-facing next action for every error class (SC-005)."""
+    return ACTION_REQUIRED[error_class]
+
 
 def classify(exc: BaseException) -> ErrorClass:
     """Map an exception to the ``ErrorClass`` recorded on the run and on ``providers.last_error``.
