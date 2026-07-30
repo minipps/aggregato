@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # So the release workflow runs these same gates instead of a second copy of them that can drift.
+  workflow_call:
 
 # Constitution "Quality Gates": all four must be clean, warnings are errors.
 jobs:

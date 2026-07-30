@@ -1,0 +1,56 @@
+name: Release
+
+# Tag-driven: `git tag v0.2.0 && git push origin v0.2.0` is the whole release procedure.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  # The same gates a push to main runs, by reference rather than by copy. A tag that cannot pass CI
+  # does not become a release.
+  gates:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `--generate-notes` diffs against the previous tag, so the tags have to be present.
+          fetch-depth: 0
+
+      - name: Tag matches the declared version
+        # Two files state the version and a release names a third thing; disagreement means an
+        # operator cannot tell what they are running. Caught here rather than after publishing.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          python -c "
+          import json, pathlib, sys, tomllib
+          tag = '$tag'
+          project = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
+          frontend = json.loads(pathlib.Path('frontend/package.json').read_text())['version']
+          if {project, frontend} != {tag}:
+              sys.exit(f'tag v{tag} disagrees: pyproject {project}, frontend {frontend}')
+          "
+
+      - name: Build the release archive
+        # `git archive` honours the export-ignore rules in .gitattributes, so this carries what is
+        # needed to run Aggregato or build its image and nothing that only exists to develop it.
+        # GitHub's own generated source archives honour the same rules, so all three assets agree.
+        run: |
+          git archive --format=tar.gz --prefix="aggregato-${GITHUB_REF_NAME}/" \
+            -o "aggregato-${GITHUB_REF_NAME}.tar.gz" "${GITHUB_REF_NAME}"
+          tar -tzf "aggregato-${GITHUB_REF_NAME}.tar.gz" | sed -n '1,40p'
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "aggregato-${GITHUB_REF_NAME}.tar.gz" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag
