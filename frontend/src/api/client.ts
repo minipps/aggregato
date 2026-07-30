@@ -11,6 +11,8 @@ import { router } from '@/router'
 
 import type {
   CheckResult,
+  Creator,
+  CreatorDetail,
   Entry,
   EntryQuery,
   Health,
@@ -215,6 +217,14 @@ export function work(id: string): Promise<WorkDetail> {
   return request<WorkDetail>('GET', `/works/${encodeURIComponent(id)}`)
 }
 
+export function creators(): Pager<Creator> {
+  return pager<Creator>('/creators')
+}
+
+export function creator(id: string): Promise<CreatorDetail> {
+  return request<CreatorDetail>('GET', `/creators/${encodeURIComponent(id)}`)
+}
+
 export function providers(): Promise<Provider[]> {
   return request<Provider[]>('GET', '/providers')
 }
@@ -227,7 +237,7 @@ export function providers(): Promise<Provider[]> {
  * the rest of the document, so that is what this sends.
  */
 export function setProviderEnabled(id: string, enabled: boolean): Promise<Provider> {
-  return request<Provider>('PATCH', `/providers/${encodeURIComponent(id)}`, { body: { enabled } })
+  return request<Provider>('POST', `/providers/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`)
 }
 
 export function syncProvider(

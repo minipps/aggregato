@@ -163,6 +163,22 @@ export interface Credit {
   link_confidence: Confidence
 }
 
+export interface Creator {
+  id: string
+  kind: 'person' | 'group' | 'studio' | 'imprint' | 'unknown'
+  name: string
+  image?: string | null
+  families?: MediaFamily[]
+  credit_count?: number
+  logged_count?: number
+}
+
+export interface CreatorDetail extends Creator {
+  aliases?: { name: string; media_family: MediaFamily; kind: string }[]
+  external_ids?: ExternalId[]
+  credits_by_role?: Record<string, Credit[]>
+}
+
 export interface WorkDetail extends Work {
   external_ids?: ExternalId[]
   credits?: Credit[]

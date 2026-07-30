@@ -8,6 +8,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/log', name: 'log', component: () => import('@/views/Log.vue') },
   { path: '/works/:id', name: 'work', component: () => import('@/views/Work.vue') },
   { path: '/providers', name: 'providers', component: () => import('@/views/Providers.vue') },
+  { path: '/creators', name: 'creators', component: () => import('@/views/Creators.vue') },
+  { path: '/creators/:id', name: 'creator', component: () => import('@/views/Creator.vue') },
 ]
 
 export const router = createRouter({
