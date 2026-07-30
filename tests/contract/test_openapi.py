@@ -87,14 +87,19 @@ def test_the_contract_has_no_unauthenticated_endpoint(contract: dict[str, Any]) 
 
     ``POST /auth/session`` narrows to bearer only — which is not an exemption, it is the one
     endpoint a session cookie cannot authenticate because it is what issues the cookie.
+
+    ``GET /media/image/{hash}`` is the single real exemption, listed here so adding a second one has
+    to be an argued edit rather than a passing test: an ``<img>`` tag sends no credential, and the
+    path carries an unguessable sha256 of artwork the source platform serves publicly (FR-033).
     """
+    unauthenticated = {("get", "/media/image/{hash}")}
     assert contract["security"], "the contract must declare global security"
     for path, spec in contract["paths"].items():
         for method, operation in spec.items():
             if method not in {"get", "post", "put", "patch", "delete"}:
                 continue
             security = operation.get("security")
-            if security is not None:
+            if security is not None and (method, path) not in unauthenticated:
                 assert security != [], f"{method.upper()} {path} opts out of authentication"
 
 
