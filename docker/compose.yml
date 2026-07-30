@@ -12,12 +12,33 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    # Every setting the application reads, with the defaults shown. Uncommented lines are the ones
+    # this image needs; the rest are commented examples, and .env.example is the same contract for a
+    # non-Docker run. Settings resolve: defaults <- AGGREGATO_CONFIG file <- these <- UI edits.
     environment:
       # The only fatal configuration error (FR-032). Generate: openssl rand -hex 32
       AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
       AGGREGATO_DATA: /data
-      # Optional: point at Postgres past roughly 1M entries.
+      # A second token that can only read: every write is refused with 403, so it can be handed to
+      # someone who should browse the archive but not change it. Must differ from AGGREGATO_TOKEN.
+      # AGGREGATO_READONLY_TOKEN: ${AGGREGATO_READONLY_TOKEN:-}
+      # What uvicorn binds inside the container. 0.0.0.0 is right here — the published port above is
+      # what decides who can reach it — so change this only if you know why.
+      # AGGREGATO_HOST: 0.0.0.0
+      # The container-internal port. Publish a different one by editing `ports:` instead.
+      # AGGREGATO_PORT: 8000
+      # Optional: point at Postgres past roughly 1M entries. Default is SQLite under AGGREGATO_DATA.
       # AGGREGATO_DATABASE_URL: postgresql+asyncpg://aggregato:secret@db/aggregato
+      # Optional YAML config file, for settings the UI then shows as file-pinned. Mount it first.
+      # AGGREGATO_CONFIG: /data/config.yaml
+      # The built web UI the API serves. The image sets this; an empty value means API only.
+      # AGGREGATO_STATIC_DIR: /app/static
+      # Optional directory of your own provider packages, discovered as unreviewed drop-ins (FR-041).
+      # AGGREGATO_PROVIDER_DIR: /data/providers
+      # Provider credentials are not settings of their own: the YAML config references them as
+      # ${VAR}, resolved at read time and never written back. Pass whichever ones your config names.
+      # LISTENBRAINZ_TOKEN: ${LISTENBRAINZ_TOKEN:-}
+      # ANILIST_TOKEN: ${ANILIST_TOKEN:-}
     volumes:
       - aggregato-data:/data
     healthcheck:
