@@ -67,4 +67,5 @@ review gates, not suggestions.
 | [.../contracts/provider-plugin.md](specs/001-media-log-aggregator/contracts/provider-plugin.md) | The plugin contract — normative |
 | [.../contracts/openapi.yaml](specs/001-media-log-aggregator/contracts/openapi.yaml) | The HTTP contract the UI consumes, and the only one |
 | [.../quickstart.md](specs/001-media-log-aggregator/quickstart.md) | How to prove each user story works |
+| [docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md) | How file imports evolve into supported automatic provider syncs |
 | [.specify/memory/constitution.md](.specify/memory/constitution.md) | The rules reviews are held to |
