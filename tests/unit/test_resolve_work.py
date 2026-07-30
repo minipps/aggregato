@@ -8,25 +8,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy import create_engine
 
-from aggregato.db.engine import create_engine
 from aggregato.db.schema import external_ids, metadata, works
 from aggregato.domain.enums import Confidence, MediaType
 from aggregato.domain.models import NormalizedBatch, NormalizedExternalId, NormalizedWork
 from aggregato.ingest.resolve_work import resolve_work
 from aggregato.ingest.titles import normalize_title
+from tests.unit._sync_connection import SyncConnectionAdapter
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
-async def conn(tmp_path: Path) -> AsyncIterator[AsyncConnection]:
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
-    async with engine.begin() as connection:
-        await connection.run_sync(metadata.create_all)
-        yield connection
-    await engine.dispose()
+def conn(tmp_path: Path) -> AsyncIterator[SyncConnectionAdapter]:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    with engine.begin() as connection:
+        metadata.create_all(connection)
+        yield SyncConnectionAdapter(connection)
+    engine.dispose()
 
 
 def batch(
@@ -40,7 +40,7 @@ def batch(
     )
 
 
-async def add_work(conn: AsyncConnection, title: str, year: int = 2020) -> uuid.UUID:
+async def add_work(conn: SyncConnectionAdapter, title: str, year: int = 2020) -> uuid.UUID:
     work_id = uuid.uuid4()
     await conn.execute(
         works.insert().values(
@@ -57,7 +57,7 @@ async def add_work(conn: AsyncConnection, title: str, year: int = 2020) -> uuid.
     return work_id
 
 
-async def test_asserted_identifier_wins_over_title(conn: AsyncConnection) -> None:
+async def test_asserted_identifier_wins_over_title(conn: SyncConnectionAdapter) -> None:
     existing = await add_work(conn, "Different title")
     await conn.execute(
         external_ids.insert().values(
@@ -83,19 +83,21 @@ async def test_asserted_identifier_wins_over_title(conn: AsyncConnection) -> Non
     assert result.confidence is Confidence.ASSERTED
 
 
-async def test_unique_title_and_year_match_is_linked(conn: AsyncConnection) -> None:
+async def test_unique_title_and_year_match_is_linked(conn: SyncConnectionAdapter) -> None:
     existing = await add_work(conn, "The Café")
     result = await resolve_work(conn, batch("Cafe"), now=NOW)
     assert result.work_id == existing
     assert result.confidence is Confidence.MATCHED
 
 
-async def test_no_match_creates_a_new_work(conn: AsyncConnection) -> None:
+async def test_no_match_creates_a_new_work(conn: SyncConnectionAdapter) -> None:
     result = await resolve_work(conn, batch(), now=NOW)
     assert result.ambiguous_candidates == ()
 
 
-async def test_ambiguous_title_and_year_creates_instead_of_merging(conn: AsyncConnection) -> None:
+async def test_ambiguous_title_and_year_creates_instead_of_merging(
+    conn: SyncConnectionAdapter,
+) -> None:
     first = await add_work(conn, "The Example")
     second = await add_work(conn, "Example")
     result = await resolve_work(conn, batch(), now=NOW)
