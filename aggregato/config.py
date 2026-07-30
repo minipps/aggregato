@@ -105,6 +105,8 @@ class Config(BaseModel):
     #: Vite serves the frontend itself and proxies /api. Absent therefore means "API only", not an
     #: error.
     static_dir: Path | None = None
+    #: Disable remote image retrieval while preserving stable local image URLs (FR-033).
+    image_cache_enabled: bool = True
     config_file: Path | None = None
     providers: dict[str, ProviderConfig] = {}
     file_pinned: frozenset[str] = frozenset()
