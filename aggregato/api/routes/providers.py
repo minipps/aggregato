@@ -109,7 +109,7 @@ async def list_providers(request: Request) -> list[ProviderView]:
 
     return [
         _view(info, rows.get(info.id), config)
-        for info in sorted(discover_providers(), key=lambda i: i.id)
+        for info in sorted(discover_providers(config.provider_dir), key=lambda i: i.id)
     ]
 
 
@@ -137,15 +137,16 @@ async def disable_provider(request: Request, id: str) -> ProviderView:
 
 
 @router.get("/providers/{id}/config-schema", response_model=dict[str, Any])
-async def provider_config_schema(id: str) -> dict[str, Any]:
+async def provider_config_schema(request: Request, id: str) -> dict[str, Any]:
     """Return the provider's declarative settings schema, never its configured values.
 
     Pydantic produces the schema from the provider's own ``config_model``.  This keeps the API and
     the schema-driven UI independent of provider-specific fields; ``SecretStr`` fields and explicit
     ``writeOnly`` extras survive in the resulting JSON Schema without a host-maintained secret list.
     """
-    _require_installed(id)
-    return load_provider(id).config_model.model_json_schema()
+    config: Config = request.app.state.config
+    _require_installed(id, config.provider_dir)
+    return load_provider(id, config.provider_dir).config_model.model_json_schema()
 
 
 @router.post("/providers/{id}/sync", status_code=202, response_model=SyncQueued)
@@ -178,7 +179,8 @@ async def sync_now(
     one provider would race on its cursor.
     """
     engine: AsyncEngine = request.app.state.engine
-    _require_installed(id)
+    config: Config = request.app.state.config
+    _require_installed(id, config.provider_dir)
     mode = (body or {}).get("mode", "incremental")
     if mode not in {"incremental", "full"}:
         raise ProblemError(
@@ -245,7 +247,8 @@ async def check_provider(request: Request, id: str) -> CheckResultView:
     immediacy.
     """
     engine: AsyncEngine = request.app.state.engine
-    _require_installed(id)
+    config: Config = request.app.state.config
+    _require_installed(id, config.provider_dir)
 
     async with transaction(engine) as conn:
         row = (
@@ -282,7 +285,7 @@ async def import_file(
     """
     config: Config = request.app.state.config
     engine: AsyncEngine = request.app.state.engine
-    info = _require_installed(id)
+    info = _require_installed(id, config.provider_dir)
     if Capability.FILE_IMPORT.value not in info.capabilities:
         raise ProblemError(
             status=422,
@@ -368,9 +371,9 @@ async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) ->
 # --- internals ---------------------------------------------------------------------------------
 
 
-def _require_installed(provider_id: str) -> ProviderInfo:
+def _require_installed(provider_id: str, drop_in_dir: Path | None = None) -> ProviderInfo:
     """The provider's declaration, or a 404. Installed is a property of the tree, not the DB."""
-    for info in discover_providers():
+    for info in discover_providers(drop_in_dir):
         if info.id == provider_id:
             return info
     raise ProblemError(
@@ -452,7 +455,7 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
     """Enable or disable, creating the provider's rows on first enable."""
     config: Config = request.app.state.config
     engine: AsyncEngine = request.app.state.engine
-    info = _require_installed(provider_id)
+    info = _require_installed(provider_id, config.provider_dir)
 
     provider_config = config.providers.get(provider_id)
     misconfigured = enabled and provider_config is not None and provider_config.error is not None

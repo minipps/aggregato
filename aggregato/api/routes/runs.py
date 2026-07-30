@@ -14,6 +14,7 @@ from starlette.requests import Request
 from aggregato.api.pagination import clamp_limit
 from aggregato.api.queries import fetch_page
 from aggregato.api.schemas import PageResponse
+from aggregato.config import Config
 from aggregato.db.engine import transaction
 from aggregato.db.schema import ingest_failures, sync_runs
 from aggregato.domain.enums import ErrorClass, IngestStage, RunStatus
@@ -144,7 +145,8 @@ async def replay_ingest_failure(request: Request, id: int) -> ReplayResult:
             error=row.error,
             raw_payload=row.raw_payload,
         )
-        provider = load_provider(failure.provider_id)
+        config: Config = request.app.state.config
+        provider = load_provider(failure.provider_id, config.provider_dir)
         scales = list(getattr(provider, "rating_scales", []))
         await ensure_rating_scales(conn, scales)
 

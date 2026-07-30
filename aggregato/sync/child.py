@@ -60,6 +60,7 @@ async def run(
     secrets: dict[str, str],
     state: dict[str, str],
     import_path: Path | None,
+    provider_dir: Path | None = None,
 ) -> int:
     """Fetch and normalize one run's worth of records.
 
@@ -75,7 +76,7 @@ async def run(
     Returns:
         A process exit code: 0 if the run completed, 1 if it ended on a classified error.
     """
-    provider = load_provider(provider_id)
+    provider = load_provider(provider_id, provider_dir)
     client = PoliteClient(
         PolitenessPolicy(
             acquisition=provider.acquisition,
@@ -184,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
             secrets=payload.get("secrets", {}),
             state=payload.get("state", {}),
             import_path=Path(import_path) if import_path else None,
+            provider_dir=Path(payload["provider_dir"]) if payload.get("provider_dir") else None,
         )
     )
 

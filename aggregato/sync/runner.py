@@ -79,6 +79,7 @@ class RunRequest:
     secrets: dict[str, str] = field(default_factory=dict)
     state: dict[str, str] = field(default_factory=dict)
     import_path: Path | None = None
+    provider_dir: Path | None = None
     wall_clock_seconds: float = DEFAULT_WALL_CLOCK_SECONDS
 
     def payload(self) -> str:
@@ -91,6 +92,7 @@ class RunRequest:
                 "secrets": self.secrets,
                 "state": self.state,
                 "import_path": str(self.import_path) if self.import_path else None,
+                "provider_dir": str(self.provider_dir) if self.provider_dir else None,
             }
         )
 

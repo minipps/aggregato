@@ -150,7 +150,7 @@ async def run_once(
         The run's outcome, already persisted.
     """
     now = clock.now()
-    provider = load_provider(provider_id)
+    provider = load_provider(provider_id, config.provider_dir)
     provider_config = config.providers.get(provider_id)
     lineage = lineage_id or uuid.uuid4()
     attempt = retry_step + 1
@@ -176,6 +176,7 @@ async def run_once(
             # validated config block. A second channel would be two places to leak from.
             secrets={},
             import_path=import_path,
+            provider_dir=config.provider_dir,
         )
     )
 
