@@ -35,6 +35,7 @@ from aggregato.api.routes import (
     providers,
     resolution,
     runs,
+    stats,
     works,
 )
 from aggregato.api.routes import settings as settings_routes
@@ -107,6 +108,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
     app.include_router(images.router, prefix=API_PREFIX)
     app.include_router(providers.router, prefix=API_PREFIX)
     app.include_router(runs.router, prefix=API_PREFIX)
+    app.include_router(stats.router, prefix=API_PREFIX)
     app.include_router(export.router, prefix=API_PREFIX)
     app.include_router(settings_routes.router, prefix=API_PREFIX)
 
