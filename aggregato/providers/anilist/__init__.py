@@ -68,10 +68,13 @@ class AniListProvider:
     rating_scales: list[RatingScale] = [  # noqa: RUF012
         RatingScale(
             id="anilist-10",
-            kind=ScaleKind.LINEAR,
+            # AniList's selected score format is a discrete set of labels.  Keep that fact rather
+            # than claiming that a user's 7 is arithmetic evidence about the distance to an 8.
+            kind=ScaleKind.ORDINAL,
             min_value=Decimal(0),
             max_value=Decimal(10),
             step=Decimal(1),
+            labels={str(value): value * 10 for value in range(11)},
         )
     ]
     schema_version: int = 1
@@ -107,6 +110,7 @@ class AniListProvider:
         title = media.get("title", {})
         score = item.get("score")
         staff = media.get("staff", {}).get("edges", [])
+        studios = media.get("studios", {}).get("nodes", [])
         credits = []
         creator_ids = []
         for position, edge in enumerate(staff):
@@ -115,7 +119,7 @@ class AniListProvider:
             if not name:
                 continue
             role_raw = edge.get("role", "staff")
-            role = Role.STUDIO if "studio" in role_raw.casefold() else Role.OTHER
+            role = _role(role_raw)
             credits.append(
                 NormalizedCredit(
                     creator_name=name,
@@ -131,6 +135,28 @@ class AniListProvider:
                         creator_name=name,
                         namespace="anilist",
                         value=str(node["id"]),
+                        confidence=Confidence.ASSERTED,
+                    )
+                )
+        for position, studio in enumerate(studios, start=len(credits)):
+            name = studio.get("name")
+            if not name:
+                continue
+            credits.append(
+                NormalizedCredit(
+                    creator_name=name,
+                    creator_kind=CreatorKind.STUDIO,
+                    role=Role.STUDIO,
+                    role_raw="Studio",
+                    position=position,
+                )
+            )
+            if studio.get("id") is not None:
+                creator_ids.append(
+                    NormalizedCreatorId(
+                        creator_name=name,
+                        namespace="anilist",
+                        value=str(studio["id"]),
                         confidence=Confidence.ASSERTED,
                     )
                 )
@@ -202,10 +228,27 @@ def _headers(config: AniListConfig) -> dict[str, str]:
     )
 
 
+def _role(raw: str) -> Role:
+    """Map AniList's open-ended staff label while retaining it verbatim on the credit."""
+    label = raw.casefold()
+    for keyword, role in (
+        ("studio", Role.STUDIO),
+        ("director", Role.DIRECTOR),
+        ("writer", Role.WRITER),
+        ("composer", Role.COMPOSER),
+        ("voice", Role.VOICE),
+        ("performer", Role.PERFORMER),
+    ):
+        if keyword in label:
+            return role
+    return Role.OTHER
+
+
 _QUERY = (
-    "query ($name: String) { MediaListCollection(userName: $name, type: ANIME) { lists { "
+    "query ($name: String) { MediaListCollection(userName: $name) { lists { "
     "entries { id score notes updatedAt media { id type format seasonYear title { romaji english "
-    "native } coverImage { large } staff { edges { role node { id name { full } } } } } } } } }"
+    "native } coverImage { large } staff { edges { role node { id name { full } } } } "
+    "studios { nodes { id name } } } } } } }"
 )
 
 provider = AniListProvider()

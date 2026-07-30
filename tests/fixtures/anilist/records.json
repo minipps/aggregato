@@ -13,7 +13,8 @@
           "seasonYear": 2024,
           "title": {"romaji": "Fixture Season", "english": "Fixture Season", "native": "フィクスチャ"},
           "coverImage": {"large": "https://images.example/fixture.jpg"},
-          "staff": {"edges": [{"role": "Animation Studio", "node": {"id": 10, "name": {"full": "Fixture Studio"}}}]}
+          "staff": {"edges": [{"role": "Director", "node": {"id": 10, "name": {"full": "Fixture Director"}}}]},
+          "studios": {"nodes": [{"id": 11, "name": "Fixture Studio"}]}
         }
       }]}]
     }
