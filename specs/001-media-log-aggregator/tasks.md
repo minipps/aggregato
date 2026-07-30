@@ -136,7 +136,7 @@ browsed entries match what the platform shows.
 - [ ] T047 [P] [US1] Integration test for the single-provider journey in `tests/integration/test_us1_single_provider.py` — enable, sync, browse, resync writes nothing
 - [X] T048 [P] [US1] Integration test asserting a fresh install makes zero outbound requests in `tests/integration/test_fresh_install_is_silent.py` (SC-013)
 - [X] T049 [P] [US1] Integration test asserting interrupted syncs lose and duplicate nothing in `tests/integration/test_idempotent_interrupted_sync.py` (SC-003)
-- [ ] T050 [P] [US1] Contract tests for `/entries`, `/works`, `/opinions`, `/providers` in `tests/contract/test_log_endpoints.py`
+- [X] T050 [P] [US1] Contract tests for `/entries`, `/works`, `/opinions`, `/providers` in `tests/contract/test_log_endpoints.py`
 
 ### Implementation for User Story 1
 
