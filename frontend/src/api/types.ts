@@ -259,6 +259,14 @@ export interface ProviderHealth {
   consecutive_failures?: number
 }
 
+export interface ArchiveSettings {
+  raw_payload_retention_days: number
+  success_run_retention_days: number
+  failure_run_retention_days: number
+  image_cache_enabled: boolean
+  storage: { raw_payload_bytes: number; image_cache_bytes: number; database_bytes: number }
+}
+
 export interface Health {
   status: 'ok' | 'degraded'
   providers: ProviderHealth[]

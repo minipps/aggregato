@@ -13,6 +13,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/creators', name: 'creators', component: () => import('@/views/Creators.vue') },
   { path: '/creators/:id', name: 'creator', component: () => import('@/views/Creator.vue') },
   { path: '/resolution', name: 'resolution', component: () => import('@/views/Resolution.vue') },
+  { path: '/settings', name: 'settings', component: () => import('@/views/Settings.vue') },
 ]
 
 export const router = createRouter({

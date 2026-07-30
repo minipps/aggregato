@@ -534,6 +534,29 @@ paths:
           content:
             application/octet-stream: { schema: { type: string, format: binary } }
 
+  /settings:
+    get:
+      tags: [operations]
+      summary: Archive retention settings and storage usage
+      responses:
+        "200":
+          description: Current global settings and storage accounting
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/ArchiveSettings" } }
+    patch:
+      tags: [operations]
+      summary: Update archive retention settings
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/ArchiveSettingsPatch" } }
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/ArchiveSettings" } }
+        "422": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -611,6 +634,30 @@ components:
     RunStatus: { type: string, enum: [running, success, partial, failed] }
     ProviderStatus: { type: string, enum: [disabled, idle, syncing, degraded, misconfigured] }
     Acquisition: { type: string, enum: [api, feed, export, scrape] }
+    StorageUsage:
+      type: object
+      required: [raw_payload_bytes, image_cache_bytes, database_bytes]
+      properties:
+        raw_payload_bytes: { type: integer, minimum: 0 }
+        image_cache_bytes: { type: integer, minimum: 0 }
+        database_bytes: { type: integer, minimum: 0 }
+    ArchiveSettings:
+      type: object
+      required: [raw_payload_retention_days, success_run_retention_days, failure_run_retention_days, image_cache_enabled, storage]
+      properties:
+        raw_payload_retention_days: { type: integer, minimum: 0 }
+        success_run_retention_days: { type: integer, minimum: 0 }
+        failure_run_retention_days: { type: integer, minimum: 0 }
+        image_cache_enabled: { type: boolean }
+        storage: { $ref: "#/components/schemas/StorageUsage" }
+    ArchiveSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        raw_payload_retention_days: { type: integer, minimum: 0 }
+        success_run_retention_days: { type: integer, minimum: 0 }
+        failure_run_retention_days: { type: integer, minimum: 0 }
+        image_cache_enabled: { type: boolean }
 
     SubjectRef:
       type: object

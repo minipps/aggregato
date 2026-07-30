@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
 from starlette.requests import Request
 
+from aggregato.db.retention import get_settings
 from aggregato.images.cache import cached_image
 
 router = APIRouter(tags=["media"])
@@ -14,7 +15,11 @@ router = APIRouter(tags=["media"])
 @router.get("/media/image/{hash}")
 async def image(request: Request, hash: str) -> Response:
     """Serve bytes from the local cache, or a small transparent placeholder on cache failure."""
+    # The static config switch remains a hard opt-out for deployments that never want image
+    # retrieval; the database setting is the operator-adjustable default.
     if not request.app.state.config.image_cache_enabled:
+        return _placeholder()
+    if not (await get_settings(request.app.state.engine))["image_cache_enabled"]:
         return _placeholder()
     found = await cached_image(request.app.state.engine, request.app.state.config.data_dir, hash)
     if found is None:

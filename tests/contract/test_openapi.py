@@ -34,7 +34,6 @@ CONTRACT = (
 NOT_YET_IMPLEMENTED: dict[str, str] = {
     "/stats/summary": "T136",
     "/stats/top": "T136",
-    "/export": "T131",
 }
 
 

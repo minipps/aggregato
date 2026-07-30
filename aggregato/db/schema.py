@@ -63,6 +63,16 @@ metadata = MetaData(
     }
 )
 
+# Global, operator-controlled switches.  Provider configuration stays on ``providers.config``;
+# these are deliberately separate because they affect host-owned retention rather than a plugin.
+settings = Table(
+    "settings",
+    metadata,
+    Column("key", String(64), primary_key=True),
+    Column("value", JSON_COL, nullable=False),
+    Column("updated_at", TIMESTAMP, nullable=False),
+)
+
 
 # --- Works and logs ---------------------------------------------------------------------------
 

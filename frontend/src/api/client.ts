@@ -25,6 +25,7 @@ import type {
   MergeLogEntry,
   ResolutionItem,
   WorkDetail,
+  ArchiveSettings,
 } from './types'
 
 /** Matches `servers:` in openapi.yaml. The SPA and the API share an origin in production. */
@@ -337,4 +338,26 @@ export function splitCreator(
 
 export function undoMerge(id: number): Promise<{ undone: boolean }> {
   return request<{ undone: boolean }>('POST', `/merge-log/${id}/undo`)
+}
+
+export function archiveSettings(): Promise<ArchiveSettings> {
+  return request<ArchiveSettings>('GET', '/settings')
+}
+
+export function updateArchiveSettings(
+  body: Partial<Omit<ArchiveSettings, 'storage'>>,
+): Promise<ArchiveSettings> {
+  return request<ArchiveSettings>('PATCH', '/settings', { body })
+}
+
+/** Download the streaming archive without exposing the API token to page source or URLs. */
+export async function downloadArchive(): Promise<void> {
+  const response = await fetch(buildUrl('/export', undefined), { credentials: 'same-origin' })
+  if (!response.ok) throw new ProblemError(await problemFrom(response))
+  const href = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = href
+  link.download = 'aggregato-export.zip'
+  link.click()
+  URL.revokeObjectURL(href)
 }

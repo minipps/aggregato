@@ -17,10 +17,14 @@ import contextlib
 import logging
 import signal
 import sys
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.config import Config, ConfigError, load_config
 from aggregato.db.engine import create_engine
 from aggregato.db.migrate import upgrade_to_head
+from aggregato.db.retention import cleanup
 from aggregato.logging import configure_logging
 from aggregato.sync.dispatch import build_dispatch
 from aggregato.sync.scheduler import Scheduler
@@ -48,6 +52,9 @@ async def serve(config: Config) -> None:
 
     engine = create_engine(config.database_url)
     scheduler = Scheduler(engine, dispatch=build_dispatch(engine, config))
+    retention_task = asyncio.create_task(
+        _retention_loop(engine, config.data_dir), name="retention-cleanup"
+    )
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -59,8 +66,21 @@ async def serve(config: Config) -> None:
     try:
         await scheduler.run_forever()
     finally:
+        retention_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await retention_task
         await engine.dispose()
         log.info("scheduler stopped")
+
+
+async def _retention_loop(engine: AsyncEngine, data_dir: Path) -> None:
+    """Run retention cleanup at boot and daily; it remains independent of provider runs."""
+    while True:
+        try:
+            await cleanup(engine, data_dir)
+        except Exception:
+            log.exception("retention cleanup failed")
+        await asyncio.sleep(24 * 60 * 60)
 
 
 def main(argv: list[str] | None = None) -> int:
