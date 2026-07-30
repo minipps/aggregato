@@ -53,6 +53,7 @@ ENV_SETTINGS: Mapping[str, str] = {
     "AGGREGATO_PORT": "api.port",
     "AGGREGATO_DATA": "data_dir",
     "AGGREGATO_DATABASE_URL": "database_url",
+    "AGGREGATO_STATIC_DIR": "static_dir",
 }
 
 DEFAULTS: Mapping[str, Any] = {
@@ -100,6 +101,10 @@ class Config(BaseModel):
     api: ApiSettings
     data_dir: Path
     database_url: str
+    #: Where the built SPA lives. Set by the Docker image; absent in a development checkout, where
+    #: Vite serves the frontend itself and proxies /api. Absent therefore means "API only", not an
+    #: error.
+    static_dir: Path | None = None
     config_file: Path | None = None
     providers: dict[str, ProviderConfig] = {}
     file_pinned: frozenset[str] = frozenset()
