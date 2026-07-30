@@ -119,7 +119,9 @@ class GoodreadsProvider:
         title = _required(row, "Title")
         author = _required(row, "Author")
         year = _year(row.get("Year Published")) or _year(row.get("Original Publication Year"))
-        read_at = _date(row.get("Date Read")) or _date(row.get("Date Added"))
+        # ``Date Added`` records library management, not a reading event.  The supplied export has
+        # unread shelves with a date-added value, so using it here would fabricate a ``read`` entry.
+        read_at = _date(row.get("Date Read"))
         ids = [
             NormalizedExternalId(
                 namespace="goodreads", value=raw.native_id, confidence=Confidence.ASSERTED
@@ -143,6 +145,9 @@ class GoodreadsProvider:
                     "binding": row.get("Binding") or None,
                     "publisher": row.get("Publisher") or None,
                     "pages": row.get("Number of Pages") or None,
+                    "date_added": row.get("Date Added") or None,
+                    "bookshelves": row.get("Bookshelves") or None,
+                    "exclusive_shelf": row.get("Exclusive Shelf") or None,
                 },
             ),
             entries=[
