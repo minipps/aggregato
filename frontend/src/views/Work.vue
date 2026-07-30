@@ -59,6 +59,20 @@ function ratingText(rating: Rating | null | undefined): string {
     />
 
     <template v-else-if="detail.data.value">
+      <!--
+        Local cache path only (FR-033) — the API never hands the browser a platform URL. alt is
+        empty because the h1 beside it already names the work; a poster carries nothing a reader
+        needs that the title does not already say.
+      -->
+      <img
+        v-if="detail.data.value.image"
+        class="poster"
+        :src="detail.data.value.image"
+        alt=""
+        width="120"
+        height="180"
+        decoding="async"
+      />
       <h1>{{ detail.data.value.title }}</h1>
       <p v-if="!readonlyAccess"><button type="button" @click="merging = true">Merge duplicate</button></p>
       <MergeDialog v-if="merging" subject="work" :winner-id="workId" @merge="merge" @cancel="merging = false" />
@@ -173,6 +187,18 @@ function ratingText(rating: Rating | null | undefined): string {
 </template>
 
 <style scoped>
+/* Block above the title rather than floated: a float here would bleed past the header into the
+   Opinions list on a narrow screen. */
+.poster {
+  display: block;
+  width: 120px;
+  height: 180px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: var(--space-3);
+}
+
 .caveat {
   border-left: 3px solid var(--warn);
   padding-left: var(--space-3);
