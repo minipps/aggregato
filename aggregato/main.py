@@ -18,10 +18,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from aggregato.api.deps import register_auth, require_auth
+from aggregato.api.deps import CSRF_HEADER, register_auth, require_auth
 from aggregato.api.errors import register_error_handlers
 from aggregato.api.routes import (
     auth,
@@ -96,6 +97,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
 
     register_error_handlers(app)
     register_auth(app, config=settings, engine=engine)
+    _mount_cors(app, settings)
 
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(health.router, prefix=API_PREFIX)
@@ -114,6 +116,36 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
 
     _mount_frontend(app, settings)
     return app
+
+
+def _mount_cors(app: FastAPI, settings: Config) -> None:
+    """Answer cross-origin preflights, for the origins the operator listed and no others.
+
+    Nothing is mounted unless ``api.cors_origins`` is set, and that is the normal case: the API
+    serves the SPA from its own origin and Vite proxies ``/api`` in development, so a browser never
+    preflights either one. ``OPTIONS`` on an API path stays a 405 there, which is the honest answer
+    — no route declares the method, and a 200 carrying no ``Access-Control-Allow-Origin`` would not
+    make a real preflight pass anyway.
+
+    Mounted as middleware rather than per-route handlers because a preflight arrives *without*
+    credentials — browsers strip ``Authorization`` and cookies from it — so it has to be answered
+    before the app-wide ``require_auth`` dependency, which would otherwise 401 it.
+    """
+    origins = settings.api.cors_origins
+    if not origins:
+        return
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(origins),
+        # The session cookie is the point: without this a cross-origin SPA could only ever use a
+        # bearer token, and `POST /auth/session` would set a cookie the browser discards.
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        # X-CSRF-Token is what makes a cookie-authenticated write possible at all (api/deps.py);
+        # omitting it here would let the preflight pass and then block every write.
+        allow_headers=["Authorization", "Content-Type", CSRF_HEADER],
+    )
+    log.info("CORS enabled for %s", ", ".join(origins))
 
 
 def _mount_frontend(app: FastAPI, settings: Config) -> None:

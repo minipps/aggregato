@@ -118,7 +118,9 @@ replays stored payloads through the child before fetching.
   broken *provider* block disables that provider only; a missing `api.token` is the one fatal error.
 - **Auth** (`api/deps.py`): bearer token or DB-backed session cookie, `hmac.compare_digest`,
   HMAC-derived double-submit CSRF for cookie writes. `api.readonly_token` is bearer-only and
-  method-gated — refusal is server-side, not hidden buttons.
+  method-gated — refusal is server-side, not hidden buttons. **CORS** is off unless
+  `api.cors_origins` lists an origin: the SPA is same-origin in both prod and dev, so no browser
+  preflights, and `OPTIONS` is a 405 by design. `*` is refused — credentials are enabled.
 - **Tests block sockets** (autouse fixture in `tests/conftest.py`), including loopback; use
   recorded fixtures under `tests/fixtures/<provider_id>/` and httpx `ASGITransport`. `Clock` is
   injected — no test sleeps.
