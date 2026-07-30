@@ -47,6 +47,7 @@ from aggregato.domain.ratings import RatingOutOfScale, RatingScale, normalize_ra
 from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
 from aggregato.ingest.failures import capture_failure
 from aggregato.ingest.resolve_creator import resolve_creators
+from aggregato.ingest.resolve_queue import queue_work_ambiguity
 from aggregato.ingest.resolve_work import resolve_work
 from aggregato.ingest.titles import normalize_title
 
@@ -133,6 +134,14 @@ async def _write_one(
     resolution = await resolve_work(conn, batch, now=ctx.now)
     work_id = resolution.work_id
     item_id = await _upsert_provider_item(conn, ctx, raw, batch, work_id)
+    await queue_work_ambiguity(
+        conn,
+        provider_id=ctx.provider_id,
+        provider_item_id=item_id,
+        batch=batch,
+        candidates=resolution.ambiguous_candidates,
+        now=ctx.now,
+    )
 
     for external in batch.external_ids:
         await _upsert_external_id(
