@@ -168,6 +168,7 @@ function ratingText(rating: Rating | null | undefined): string {
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
   gap: var(--space-4);
 }
 
