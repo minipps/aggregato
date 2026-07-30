@@ -430,6 +430,7 @@ async def _upsert_entry(
         "progress_unit": entry.progress_unit,
         "metadata": entry.metadata,
         "ingested_at": ctx.now,
+        "deleted_at": None,
     }
 
     if entry.native_id is not None:
@@ -453,6 +454,7 @@ async def _upsert_entry(
                     "progress_value",
                     "progress_unit",
                     "metadata",
+                    "deleted_at",
                 ],
             )
         )
@@ -520,6 +522,7 @@ async def _upsert_opinion(
                     "contains_spoilers": opinion.contains_spoilers,
                     "authored_at": opinion.authored_at,
                     "updated_at": ctx.now,
+                    "deleted_at": None,
                 }
             ],
             constraint="uq_opinions_provider_id_provider_item_id",
@@ -535,6 +538,7 @@ async def _upsert_opinion(
                 "contains_spoilers",
                 "authored_at",
                 "updated_at",
+                "deleted_at",
             ],
         )
     )

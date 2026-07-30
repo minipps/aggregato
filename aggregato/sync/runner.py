@@ -80,21 +80,27 @@ class RunRequest:
     state: dict[str, str] = field(default_factory=dict)
     import_path: Path | None = None
     provider_dir: Path | None = None
+    #: Stored raw records to normalize again after a provider schema-version bump.  This is kept
+    #: separate from ``fetch`` so replay is credential-free and makes no network request (FR-002).
+    replay_records: list[RawRecord] = field(default_factory=list)
     wall_clock_seconds: float = DEFAULT_WALL_CLOCK_SECONDS
 
     def payload(self) -> str:
         """The single JSON argument the child parses."""
-        return json.dumps(
-            {
-                "mode": str(self.mode),
-                "cursor": self.cursor.state if self.cursor else None,
-                "config": self.config,
-                "secrets": self.secrets,
-                "state": self.state,
-                "import_path": str(self.import_path) if self.import_path else None,
-                "provider_dir": str(self.provider_dir) if self.provider_dir else None,
-            }
-        )
+        payload: dict[str, Any] = {
+            "mode": str(self.mode),
+            "cursor": self.cursor.state if self.cursor else None,
+            "config": self.config,
+            "secrets": self.secrets,
+            "state": self.state,
+            "import_path": str(self.import_path) if self.import_path else None,
+            "provider_dir": str(self.provider_dir) if self.provider_dir else None,
+        }
+        if self.replay_records:
+            payload["replay_records"] = [
+                record.model_dump(mode="json") for record in self.replay_records
+            ]
+        return json.dumps(payload)
 
 
 async def execute_run(request: RunRequest, *, now: datetime | None = None) -> RunOutcome:

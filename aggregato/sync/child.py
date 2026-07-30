@@ -61,6 +61,7 @@ async def run(
     state: dict[str, str],
     import_path: Path | None,
     provider_dir: Path | None = None,
+    replay_records: list[RawRecord] | None = None,
 ) -> int:
     """Fetch and normalize one run's worth of records.
 
@@ -93,12 +94,17 @@ async def run(
     )
 
     try:
-        async with client:
-            async for item in provider.fetch(ctx, cursor, mode):
-                if isinstance(item, Checkpoint):
-                    emit(CheckpointMessage(cursor=item.cursor))
-                    continue
-                _emit_normalized(provider, item)
+        if replay_records is not None:
+            # Replay never calls fetch: the durable raw payload is the source of truth.
+            for record in replay_records:
+                _emit_normalized(provider, record)
+        else:
+            async with client:
+                async for item in provider.fetch(ctx, cursor, mode):
+                    if isinstance(item, Checkpoint):
+                        emit(CheckpointMessage(cursor=item.cursor))
+                        continue
+                    _emit_normalized(provider, item)
     except ProviderError as exc:
         # The child classifies, because only the child saw the exception. The parent still owns
         # retry policy (contract §4).
@@ -186,6 +192,11 @@ def main(argv: list[str] | None = None) -> int:
             state=payload.get("state", {}),
             import_path=Path(import_path) if import_path else None,
             provider_dir=Path(payload["provider_dir"]) if payload.get("provider_dir") else None,
+            replay_records=[
+                RawRecord.model_validate(record) for record in payload["replay_records"]
+            ]
+            if "replay_records" in payload
+            else None,
         )
     )
 

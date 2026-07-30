@@ -24,12 +24,20 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.config import Config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import import_jobs, provider_state, sync_runs
+from aggregato.db.schema import (
+    entries,
+    import_jobs,
+    opinions,
+    provider_items,
+    provider_state,
+    providers,
+    sync_runs,
+)
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.domain.enums import (
     Capability,
@@ -39,7 +47,7 @@ from aggregato.domain.enums import (
     ProviderStatus,
     RunStatus,
 )
-from aggregato.domain.models import Cursor
+from aggregato.domain.models import Cursor, RawRecord
 from aggregato.ingest.failures import capture_failure
 from aggregato.ingest.writer import WriteContext, ensure_rating_scales, infer_deletes, write_batches
 from aggregato.providers.registry import load_provider
@@ -165,6 +173,29 @@ async def run_once(
         now=now,
     )
 
+    replay_records = await _records_needing_replay(
+        engine, provider_id=provider_id, schema_version=int(getattr(provider, "schema_version", 1))
+    )
+    replay_outcome: RunOutcome | None = None
+    if replay_records:
+        replay_outcome = await execute_run(
+            RunRequest(
+                provider_id=provider_id,
+                mode=mode,
+                config=dict(provider_config.settings) if provider_config else {},
+                secrets={},
+                provider_dir=config.provider_dir,
+                replay_records=replay_records,
+            )
+        )
+        if replay_outcome.status is RunStatus.SUCCESS:
+            await _tombstone_replay_derivatives(
+                engine,
+                provider_id=provider_id,
+                native_ids=[record.native_id for record in replay_records],
+                now=now,
+            )
+
     outcome = await execute_run(
         RunRequest(
             provider_id=provider_id,
@@ -180,9 +211,22 @@ async def run_once(
         )
     )
 
+    if replay_outcome is not None and replay_outcome.status is RunStatus.SUCCESS:
+        # A single ingest transaction writes both replayed and freshly fetched batches.  This avoids
+        # a crash half-way through a migration from marking only part of a provider as current.
+        outcome.records = replay_outcome.records + outcome.records
+        outcome.failures = replay_outcome.failures + outcome.failures
+
     written = await _ingest(
         engine, provider, outcome, provider_id=provider_id, run_id=run_id, now=now
     )
+    if replay_outcome is None or replay_outcome.status is RunStatus.SUCCESS:
+        await _record_provider_schema_version(
+            engine,
+            provider_id=provider_id,
+            schema_version=int(getattr(provider, "schema_version", 1)),
+            now=now,
+        )
     sanity_passed = await _apply_full_run_guards(
         engine,
         provider=provider,
@@ -206,6 +250,62 @@ async def run_once(
         sanity_passed=sanity_passed,
     )
     return outcome
+
+
+async def _records_needing_replay(
+    engine: AsyncEngine, *, provider_id: str, schema_version: int
+) -> list[RawRecord]:
+    """Return retained payloads only when the provider advanced beyond the stored maximum.
+
+    Checking the maximum is intentionally cheap and makes an unchanged provider a no-op. A schema
+    bump replays every stored item for that provider, so all derived facts use one normalizer.
+    """
+    async with transaction(engine) as conn:
+        maximum = (
+            await conn.execute(
+                select(func.max(provider_items.c.schema_version)).where(
+                    provider_items.c.provider_id == provider_id
+                )
+            )
+        ).scalar_one()
+        if maximum is None or int(maximum) >= schema_version:
+            return []
+        rows = await conn.execute(
+            select(provider_items.c.native_id, provider_items.c.raw_payload).where(
+                provider_items.c.provider_id == provider_id
+            )
+        )
+    return [RawRecord(native_id=str(row.native_id), payload=dict(row.raw_payload)) for row in rows]
+
+
+async def _tombstone_replay_derivatives(
+    engine: AsyncEngine, *, provider_id: str, native_ids: list[str], now: datetime
+) -> None:
+    """Retire old derived facts before a successful replay revives the facts still emitted."""
+    if not native_ids:
+        return
+    item_ids = select(provider_items.c.id).where(
+        provider_items.c.provider_id == provider_id,
+        provider_items.c.native_id.in_(native_ids),
+    )
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(entries).where(entries.c.provider_item_id.in_(item_ids)).values(deleted_at=now)
+        )
+        await conn.execute(
+            update(opinions).where(opinions.c.provider_item_id.in_(item_ids)).values(deleted_at=now)
+        )
+
+
+async def _record_provider_schema_version(
+    engine: AsyncEngine, *, provider_id: str, schema_version: int, now: datetime
+) -> None:
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id == provider_id)
+            .values(schema_version=schema_version, updated_at=now)
+        )
 
 
 async def _open_run(

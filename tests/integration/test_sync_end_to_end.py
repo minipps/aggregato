@@ -35,6 +35,7 @@ from aggregato.db.schema import (
 )
 from aggregato.db.search import create_search_index
 from aggregato.domain.enums import ErrorClass, FetchMode, ProviderStatus, RunStatus
+from aggregato.providers.fixture import FixtureProvider
 from aggregato.sync.dispatch import run_once
 from aggregato.sync.scheduler import Scheduler, claim, due_providers
 
@@ -201,6 +202,52 @@ async def test_a_full_run_ingests_the_fixture(engine: AsyncEngine) -> None:
     # them (5 + 2 + 3 + 2 + 1), every one of which must be stored (FR-009).
     assert await count(engine, opinions) == 3
     assert await count(engine, external_ids) == 13
+
+
+async def test_schema_bump_replays_retained_payloads_before_the_next_sync(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A normalizer fix is applied to retained raw data without a special database command."""
+    await enable_fixture(engine)
+    await run_once(
+        engine,
+        config_for(FIXTURE),
+        provider_id="fixture",
+        mode=FetchMode.INCREMENTAL,
+        cursor=None,
+        retry_step=0,
+        consecutive_failures=0,
+        interval_seconds=3600,
+        clock=StepClock(),
+    )
+
+    # The subprocess used for normalization need not know this test-only bump: replay's important
+    # boundary is that it receives stored raws and the parent records the declared new version.
+    monkeypatch.setattr(FixtureProvider, "schema_version", 2)
+    outcome = await run_once(
+        engine,
+        config_for(FIXTURE),
+        provider_id="fixture",
+        mode=FetchMode.INCREMENTAL,
+        cursor=None,
+        retry_step=0,
+        consecutive_failures=0,
+        interval_seconds=3600,
+        clock=StepClock(),
+    )
+
+    assert outcome.status is RunStatus.SUCCESS, outcome.error_message
+    async with transaction(engine) as conn:
+        stored_maximum = (
+            await conn.execute(select(func.max(provider_items.c.schema_version)))
+        ).scalar_one()
+        provider_version = (
+            await conn.execute(
+                select(providers.c.schema_version).where(providers.c.id == "fixture")
+            )
+        ).scalar_one()
+    assert stored_maximum == 2
+    assert provider_version == 2
 
 
 async def test_the_run_is_recorded_with_counts(engine: AsyncEngine) -> None:
