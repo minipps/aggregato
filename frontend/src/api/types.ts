@@ -334,6 +334,8 @@ export interface EntryQuery {
   media_family?: MediaFamily
   provider?: string
   kind?: EntryKind
+  /** Convenience over `kind`: every kind that means the work was finished. */
+  status?: 'completed'
   from?: string
   to?: string
   q?: string

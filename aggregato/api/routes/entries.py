@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Query
 from sqlalchemy import ColumnElement, func, or_, select
@@ -42,7 +42,7 @@ from aggregato.api.queries import (
 from aggregato.api.schemas import Entry, PageResponse, entry_from_row, work_from_row
 from aggregato.db.engine import transaction
 from aggregato.db.schema import entries, works
-from aggregato.domain.enums import EntryKind, MediaFamily, MediaType, Role
+from aggregato.domain.enums import COMPLETED_KINDS, EntryKind, MediaFamily, MediaType, Role
 
 router = APIRouter(tags=["log"])
 
@@ -54,6 +54,7 @@ async def list_entries(
     media_family: Annotated[list[MediaFamily] | None, Query()] = None,
     provider: Annotated[list[str] | None, Query()] = None,
     kind: EntryKind | None = None,
+    status: Literal["completed"] | None = None,
     creator: uuid.UUID | None = None,
     role: Role | None = None,
     # ``from`` is a Python keyword, so the contract's name lives in the alias.
@@ -74,8 +75,9 @@ async def list_entries(
 
     Inputs: every filter the contract declares. ``media_family`` expands to its member media types
     (FR-029); repeated ``media_type``/``media_family``/``provider`` values are ORed within a
-    parameter and ANDed across parameters. ``q`` searches indexed work titles and review text
-    (FR-028).
+    parameter and ANDed across parameters. ``status=completed`` expands the same way over
+    ``kind`` (``COMPLETED_KINDS``), and ANDs with ``kind`` if both are given. ``q`` searches
+    indexed work titles and review text (FR-028).
 
     Failure modes: 400 problem+json for a cursor this API did not issue — never a silent restart;
     422 problem+json for a value outside a closed vocabulary; 401 without credentials.
@@ -99,6 +101,14 @@ async def list_entries(
         conditions.append(entries.c.provider_id.in_(provider))
     if kind is not None:
         conditions.append(entries.c.kind == str(kind))
+    if status == "completed":
+        # Possible refactor while the API is still unstable: make ``kind`` a repeated parameter
+        # like ``media_type``/``provider`` and drop ``status`` entirely — clients would then send
+        # the four (five, with ``rewatch``) kinds themselves. It removes a parameter and a
+        # server-side vocabulary, at the price of moving the definition of "completed" into every
+        # client, each of which re-decides whether ``rewatch`` belongs. Keep ``status`` if that
+        # definition should stay one thing; drop it if callers want arbitrary kind sets more.
+        conditions.append(entries.c.kind.in_([str(value) for value in COMPLETED_KINDS]))
     credited = credit_filter(entries.c.work_id, creator, role)
     if credited is not None:
         conditions.append(credited)

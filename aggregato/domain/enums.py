@@ -46,6 +46,17 @@ class EntryKind(StrEnum):
     DROP = "drop"
 
 
+COMPLETED_KINDS = frozenset(
+    {EntryKind.WATCH, EntryKind.REWATCH, EntryKind.LISTEN, EntryKind.READ, EntryKind.FINISH}
+)
+"""The kinds a ``status=completed`` filter expands to — a finished consumption of the work.
+
+Not a stored column, for the same reason ``media_family`` is not one (``domain/families.py``): the
+grouping is a property of the kind, so storing it would mean two sources of truth. ``progress`` and
+``drop`` are the deliberate exclusions — neither says the work was consumed to the end.
+"""
+
+
 class LoggedPrecision(StrEnum):
     """How much of ``logged_at`` the platform actually knew (FR-004).
 

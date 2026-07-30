@@ -116,6 +116,12 @@ paths:
         - $ref: "#/components/parameters/mediaFamily"
         - $ref: "#/components/parameters/provider"
         - { name: kind, in: query, schema: { $ref: "#/components/schemas/EntryKind" } }
+        - name: status
+          in: query
+          description: >-
+            Convenience over kind; completed expands to watch, rewatch, listen, read and finish.
+            Individual kinds stay separately addressable.
+          schema: { type: string, enum: [completed] }
         - { name: creator, in: query, schema: { type: string, format: uuid } }
         - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
         - { name: from, in: query, schema: { type: string, format: date-time } }
