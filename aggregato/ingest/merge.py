@@ -40,6 +40,7 @@ async def merge_works(
     snapshot = await _work_snapshot(conn, ids)
     losers = ids[1:]
     for loser in losers:
+        await _remove_work_credit_collisions(conn, loser, winner_id)
         await conn.execute(
             update(entries).where(entries.c.work_id == loser).values(work_id=winner_id)
         )
@@ -86,6 +87,7 @@ async def merge_creators(
     snapshot = await _creator_snapshot(conn, ids)
     losers = ids[1:]
     for loser in losers:
+        await _remove_creator_credit_collisions(conn, loser, winner_id)
         await conn.execute(
             update(work_credits)
             .where(work_credits.c.creator_id == loser)
@@ -192,3 +194,43 @@ async def _require_rows(
     found = set((await conn.execute(select(table.c.id).where(table.c.id.in_(ids)))).scalars())
     if found != set(ids):
         raise LookupError(f"unknown {label}")
+
+
+async def _remove_work_credit_collisions(
+    conn: AsyncConnection, loser_id: uuid.UUID, winner_id: uuid.UUID
+) -> None:
+    """Avoid collapsing a unique credit key when the same credit exists on both works."""
+    loser_credits = await conn.execute(
+        select(work_credits).where(work_credits.c.work_id == loser_id)
+    )
+    for credit in loser_credits:
+        exists = await conn.execute(
+            select(work_credits.c.id).where(
+                work_credits.c.work_id == winner_id,
+                work_credits.c.creator_id == credit.creator_id,
+                work_credits.c.role == credit.role,
+                work_credits.c.source == credit.source,
+            )
+        )
+        if exists.first() is not None:
+            await conn.execute(delete(work_credits).where(work_credits.c.id == credit.id))
+
+
+async def _remove_creator_credit_collisions(
+    conn: AsyncConnection, loser_id: uuid.UUID, winner_id: uuid.UUID
+) -> None:
+    """Keep one logical source credit when merging duplicate creator identities."""
+    loser_credits = await conn.execute(
+        select(work_credits).where(work_credits.c.creator_id == loser_id)
+    )
+    for credit in loser_credits:
+        exists = await conn.execute(
+            select(work_credits.c.id).where(
+                work_credits.c.work_id == credit.work_id,
+                work_credits.c.creator_id == winner_id,
+                work_credits.c.role == credit.role,
+                work_credits.c.source == credit.source,
+            )
+        )
+        if exists.first() is not None:
+            await conn.execute(delete(work_credits).where(work_credits.c.id == credit.id))

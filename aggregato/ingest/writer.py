@@ -52,7 +52,7 @@ from aggregato.ingest.resolve_queue import (
     queue_cross_family_creator_suggestions,
     queue_work_ambiguity,
 )
-from aggregato.ingest.resolve_work import resolve_work
+from aggregato.ingest.resolve_work import WorkResolution, resolve_work
 from aggregato.ingest.titles import normalize_title
 
 
@@ -166,7 +166,22 @@ async def _write_one(
     """Write one normalized batch. Raises rather than half-writing."""
     _validate(ctx, batch)
 
-    resolution = await resolve_work(conn, batch, now=ctx.now)
+    # A manual queue decision changes the provider item's durable work link.  Honor it before
+    # reevaluating automatic evidence on resync: otherwise a cautious operator correction would be
+    # overwritten by the exact heuristic it was made to correct (FR-014).
+    existing_work_id = (
+        await conn.execute(
+            select(provider_items.c.work_id).where(
+                provider_items.c.provider_id == ctx.provider_id,
+                provider_items.c.native_id == raw.native_id,
+            )
+        )
+    ).scalar_one_or_none()
+    resolution = (
+        WorkResolution(existing_work_id, Confidence.MANUAL)
+        if existing_work_id is not None
+        else await resolve_work(conn, batch, now=ctx.now)
+    )
     work_id = resolution.work_id
     item_id = await _upsert_provider_item(conn, ctx, raw, batch, work_id)
     if batch.work.image_url:
