@@ -48,7 +48,10 @@ from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
 from aggregato.images.cache import register_source_on_connection
 from aggregato.ingest.failures import capture_failure
 from aggregato.ingest.resolve_creator import resolve_creators
-from aggregato.ingest.resolve_queue import queue_work_ambiguity
+from aggregato.ingest.resolve_queue import (
+    queue_cross_family_creator_suggestions,
+    queue_work_ambiguity,
+)
 from aggregato.ingest.resolve_work import resolve_work
 from aggregato.ingest.titles import normalize_title
 
@@ -153,6 +156,15 @@ async def _write_one(
 
     creators = await resolve_creators(
         conn, batch, family_of(batch.work.media_type), source=ctx.provider_id, now=ctx.now
+    )
+    await queue_cross_family_creator_suggestions(
+        conn,
+        provider_id=ctx.provider_id,
+        provider_item_id=item_id,
+        batch=batch,
+        resolutions=creators,
+        family=family_of(batch.work.media_type),
+        now=ctx.now,
     )
     for credit, creator in zip(batch.credits, creators, strict=True):
         await conn.execute(

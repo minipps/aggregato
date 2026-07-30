@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
-from aggregato.db.schema import creator_aliases, creator_external_ids, creators, metadata
+from aggregato.db.schema import (
+    creator_aliases,
+    creator_external_ids,
+    creators,
+    metadata,
+    resolution_queue,
+)
 from aggregato.domain.enums import AliasKind, Confidence, CreatorKind, MediaFamily, Role
 from aggregato.domain.models import (
     NormalizedBatch,
@@ -19,6 +25,7 @@ from aggregato.domain.models import (
     NormalizedWork,
 )
 from aggregato.ingest.resolve_creator import resolve_creators
+from aggregato.ingest.resolve_queue import queue_cross_family_creator_suggestions
 from aggregato.ingest.titles import normalize_title
 from tests.unit._sync_connection import SyncConnectionAdapter
 
@@ -113,6 +120,34 @@ async def test_name_match_stays_in_its_media_family(conn: SyncConnectionAdapter)
     print_creator = await add_creator(conn, "Alex Example", MediaFamily.PRINT)
     result = await resolve_creators(conn, batch(), MediaFamily.SCREEN, source="test", now=NOW)
     assert result[0].creator_id != print_creator
+
+
+async def test_cross_family_name_is_suggested_not_auto_linked(conn: SyncConnectionAdapter) -> None:
+    print_creator = await add_creator(conn, "Alex Example", MediaFamily.PRINT)
+    result = await resolve_creators(conn, batch(), MediaFamily.SCREEN, source="test", now=NOW)
+
+    await queue_cross_family_creator_suggestions(
+        conn,
+        provider_id="test",
+        provider_item_id=None,
+        batch=batch(),
+        resolutions=result,
+        family=MediaFamily.SCREEN,
+        now=NOW,
+    )
+
+    row = (await conn.execute(resolution_queue.select())).one()
+    assert row.subject == "creator"
+    assert row.suggestion_kind == "cross_family_name"
+    assert row.proposed["creator_id"] == str(result[0].creator_id)
+    assert row.candidates == [
+        {
+            "id": str(print_creator),
+            "reason": "same normalized name in another media family",
+            "name": "Alex Example",
+            "media_family": "print",
+        }
+    ]
 
 
 async def test_unique_name_match_is_marked_matched(conn: SyncConnectionAdapter) -> None:
