@@ -45,6 +45,11 @@ export AGGREGATO_TOKEN=$(openssl rand -hex 32)   # keep this — it is your logi
 docker compose -f docker/compose.yml up -d
 ```
 
+That runs the published image, `ghcr.io/minipps/aggregato:latest` (amd64 and arm64). Pin a release
+with `AGGREGATO_VERSION=0.2.0`, upgrade with `docker compose -f docker/compose.yml pull && docker
+compose -f docker/compose.yml up -d`, and if you would rather build from your checkout, that is what
+`docker compose -f docker/compose.yml build` is for.
+
 Open <http://localhost:8000> and sign in with that token. One image, one volume, two processes (the
 API and the scheduler). No database server, no message broker, no other services.
 
