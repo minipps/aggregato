@@ -17,18 +17,20 @@ import { ref } from 'vue'
 import {
   checkProvider,
   importProviderFile,
+  providerConfigSchema,
   providers,
   setProviderEnabled,
   syncProvider,
   toProblem,
 } from '@/api/client'
-import type { Problem } from '@/api/types'
+import type { JsonSchema, Problem } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
 import ProviderStatus from '@/components/ProviderStatus.vue'
+import SchemaForm from '@/components/SchemaForm.vue'
 
 const list = useRequest(providers)
 
@@ -41,6 +43,8 @@ const busy = ref('')
 const notice = ref<{ id: string; text: string } | undefined>(undefined)
 const failure = ref<{ id: string; problem: Problem } | undefined>(undefined)
 const importFile = ref<File | undefined>(undefined)
+const configSchemas = ref<Record<string, JsonSchema | undefined>>({})
+const configSchemaFailure = ref<{ id: string; problem: Problem } | undefined>(undefined)
 
 async function act(id: string, label: string, action: () => Promise<string>): Promise<void> {
   busy.value = id
@@ -92,6 +96,22 @@ function importExport(id: string): Promise<void> {
     return 'Export uploaded; import queued.'
   })
 }
+
+async function showConfigSchema(id: string): Promise<void> {
+  configSchemaFailure.value = undefined
+  if (configSchemas.value[id]) {
+    configSchemas.value = { ...configSchemas.value, [id]: undefined }
+    return
+  }
+  busy.value = id
+  try {
+    configSchemas.value = { ...configSchemas.value, [id]: await providerConfigSchema(id) }
+  } catch (caught) {
+    configSchemaFailure.value = { id, problem: toProblem(caught) }
+  } finally {
+    busy.value = ''
+  }
+}
 </script>
 
 <template>
@@ -126,6 +146,13 @@ function importExport(id: string): Promise<void> {
             · {{ provider.consecutive_failures }} consecutive failures
           </template>
         </p>
+
+        <div v-if="!provider.reviewed" class="provider-warning" role="alert">
+          This is a local drop-in provider. Review its code and configuration before enabling it.
+        </div>
+        <div v-if="provider.acquisition === 'scrape'" class="provider-warning" role="note">
+          Scraping can trigger rate limits or blocks. Use only an account you control; Aggregato does not bypass CAPTCHA.
+        </div>
 
         <!-- SC-005: the required action leads, before any error text. -->
         <div v-if="provider.last_error?.action_required" class="action-required" role="alert">
@@ -180,7 +207,20 @@ function importExport(id: string): Promise<void> {
           <button type="button" :disabled="busy === provider.id" @click="check(provider.id)">
             Check credentials
           </button>
+          <button type="button" :disabled="busy === provider.id" @click="showConfigSchema(provider.id)">
+            {{ configSchemas[provider.id] ? 'Hide configuration' : 'View configuration' }}
+          </button>
         </p>
+
+        <section v-if="configSchemas[provider.id]" class="configuration" :aria-label="`${provider.name} configuration`">
+          <h3>Configuration fields</h3>
+          <SchemaForm :schema="configSchemas[provider.id]!" disabled />
+          <p class="muted">Configuration is managed in the local config file; these fields document what this provider accepts.</p>
+        </section>
+        <ErrorState
+          v-if="configSchemaFailure && configSchemaFailure.id === provider.id"
+          :problem="configSchemaFailure.problem"
+        />
 
         <div v-if="provider.capabilities.includes('file_import')" class="import-export">
           <label :for="`import-${provider.id}`">Import personal export</label>
@@ -288,4 +328,13 @@ function importExport(id: string): Promise<void> {
 .import-export p {
   margin: 0;
 }
+
+.provider-warning, .configuration {
+  border-left: 4px solid var(--warn);
+  background: var(--surface);
+  padding: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.configuration h3 { margin-bottom: var(--space-2); }
 </style>

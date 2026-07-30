@@ -16,6 +16,7 @@ import type {
   Entry,
   EntryQuery,
   Health,
+  JsonSchema,
   Page,
   Problem,
   Provider,
@@ -233,6 +234,11 @@ export function providers(): Promise<Provider[]> {
   return request<Provider[]>('GET', '/providers')
 }
 
+/** JSON Schema for the configuration model declared by one provider. */
+export function providerConfigSchema(id: string): Promise<JsonSchema> {
+  return request<JsonSchema>('GET', `/providers/${encodeURIComponent(id)}/config-schema`)
+}
+
 /**
  * Enable or disable a provider.
  *
@@ -260,7 +266,7 @@ export async function importProviderFile(
 ): Promise<{ lineage_id?: string }> {
   const data = new FormData()
   data.append('file', file)
-  const response = await fetch(buildUrl(`/providers/${encodeURIComponent(id)}/import`), {
+  const response = await fetch(buildUrl(`/providers/${encodeURIComponent(id)}/import`, undefined), {
     method: 'POST',
     headers: {
       Accept: 'application/json',

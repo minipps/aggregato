@@ -239,6 +239,19 @@ export interface CheckResult {
   detail?: string
 }
 
+/** The useful, renderable subset of the JSON Schema returned for provider configuration. */
+export interface JsonSchema {
+  title?: string
+  description?: string
+  type?: string
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  enum?: Array<string | number>
+  default?: string | number | boolean | null
+  format?: string
+  writeOnly?: boolean
+}
+
 export interface ProviderHealth {
   id?: string
   status?: ProviderStatus
