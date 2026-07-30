@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal
 from pathlib import Path
 
-from aggregato.domain.enums import CreatorKind, Role, ScaleKind
+import httpx
+
+from aggregato.domain.enums import CreatorKind, FetchMode, Role, ScaleKind
+from aggregato.domain.models import RawRecord
 from aggregato.providers.anilist import AniListProvider
+from aggregato.providers.base import ProviderContext
 
 
 def test_anilist_fixture_has_season_staff_studio_and_ordinal_rating() -> None:
@@ -26,3 +31,33 @@ def test_anilist_fixture_has_season_staff_studio_and_ordinal_rating() -> None:
     scale = AniListProvider().rating_scales[0]
     assert scale.kind is ScaleKind.ORDINAL
     assert scale.labels is not None and scale.labels["8"] == 80
+
+
+async def test_anilist_fetches_anime_and_manga_collections_separately() -> None:
+    requests: list[dict[str, object]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        variables = json.loads(request.content)["variables"]
+        requests.append(dict(variables))
+        media_type = variables["type"]
+        item = {"id": media_type, "media": {"type": media_type}}
+        return httpx.Response(
+            200, json={"data": {"MediaListCollection": {"lists": [{"entries": [item]}]}}}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        context = ProviderContext(
+            http=http,  # type: ignore[arg-type]
+            config=AniListProvider.config_model(username="mini"),
+            secrets={},
+            log=logging.getLogger(__name__),
+            state={},
+        )
+        records = [
+            item
+            async for item in AniListProvider().fetch(context, None, FetchMode.INCREMENTAL)
+            if isinstance(item, RawRecord)
+        ]
+
+    assert requests == [{"name": "mini", "type": "ANIME"}, {"name": "mini", "type": "MANGA"}]
+    assert [record.native_id for record in records] == ["ANIME", "MANGA"]

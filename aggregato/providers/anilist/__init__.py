@@ -87,20 +87,29 @@ class AniListProvider:
             yield Checkpoint(cursor=cursor)
             return
         config = _config(ctx)
-        response = await ctx.http.post(
-            config.api_url,
-            json={"query": _QUERY, "variables": {"name": config.username}},
-            headers=_headers(config),
-        )
-        if response.status_code == 401:
-            raise AuthError("AniList rejected the configured OAuth token")
-        if response.status_code != 200:
-            raise ProviderError(f"AniList answered HTTP {response.status_code}")
-        body = response.json()
-        entries = body.get("data", {}).get("MediaListCollection", {}).get("lists", [])
-        for group in entries:
-            for item in group.get("entries", []):
-                yield RawRecord(native_id=str(item["id"]), payload=item)
+        # AniList now requires the collection media type.  Query both kinds so an account's anime
+        # and manga history remain one provider stream and one cursor.
+        for media_type in ("ANIME", "MANGA"):
+            response = await ctx.http.post(
+                config.api_url,
+                json={
+                    "query": _QUERY,
+                    "variables": {"name": config.username, "type": media_type},
+                },
+                headers=_headers(config),
+            )
+            if response.status_code == 401:
+                raise AuthError("AniList rejected the configured OAuth token")
+            if response.status_code != 200:
+                raise ProviderError(f"AniList answered HTTP {response.status_code}")
+            body = response.json()
+            entries = body.get("data", {}).get("MediaListCollection", {}).get("lists", [])
+            for group in entries:
+                for item in group.get("entries", []):
+                    # The API does this filtering, but retain it at the boundary so a compatible
+                    # endpoint cannot duplicate one collection in both requests.
+                    if item.get("media", {}).get("type") == media_type:
+                        yield RawRecord(native_id=str(item["id"]), payload=item)
         yield Checkpoint(cursor=Cursor(state={"complete": True}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
@@ -245,7 +254,8 @@ def _role(raw: str) -> Role:
 
 
 _QUERY = (
-    "query ($name: String) { MediaListCollection(userName: $name) { lists { "
+    "query ($name: String, $type: MediaType!) { "
+    "MediaListCollection(userName: $name, type: $type) { lists { "
     "entries { id score notes updatedAt media { id type format seasonYear title { romaji english "
     "native } coverImage { large } staff { edges { role node { id name { full } } } } "
     "studios { nodes { id name } } } } } } }"
