@@ -25,8 +25,10 @@ jobs:
           fetch-depth: 0
 
       - name: Tag matches the declared version
-        # Two files state the version and a release names a third thing; disagreement means an
+        # Three files state the version and a release names a fourth thing; disagreement means an
         # operator cannot tell what they are running. Caught here rather than after publishing.
+        # Kept identical to the gate in scripts/release.sh, which exists to fail before the tag is
+        # public — one of the two being laxer is how a stale uv.lock reached v0.1.1.
         run: |
           tag="${GITHUB_REF_NAME#v}"
           python -c "
@@ -34,8 +36,10 @@ jobs:
           tag = '$tag'
           project = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
           frontend = json.loads(pathlib.Path('frontend/package.json').read_text())['version']
-          if {project, frontend} != {tag}:
-              sys.exit(f'tag v{tag} disagrees: pyproject {project}, frontend {frontend}')
+          packages = tomllib.loads(pathlib.Path('uv.lock').read_text())['package']
+          locked = next(p['version'] for p in packages if p['name'] == 'aggregato')
+          if {project, frontend, locked} != {tag}:
+              sys.exit(f'tag v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}')
           "
 
       - name: Build the release archive
