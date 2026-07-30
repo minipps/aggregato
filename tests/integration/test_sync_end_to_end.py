@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.config import Config, load_config
@@ -36,7 +36,7 @@ from aggregato.db.schema import (
 from aggregato.db.search import create_search_index
 from aggregato.domain.enums import ErrorClass, FetchMode, ProviderStatus, RunStatus
 from aggregato.providers.fixture import FixtureProvider
-from aggregato.sync.dispatch import run_once
+from aggregato.sync.dispatch import build_dispatch, run_once
 from aggregato.sync.scheduler import Scheduler, claim, due_providers, recover_interrupted_runs
 
 FIXTURE = (Path(__file__).parent.parent / "fixtures/fixture/log-two-pages.jsonl").resolve()
@@ -254,6 +254,42 @@ async def test_a_full_run_ingests_the_fixture(engine: AsyncEngine) -> None:
     # them (5 + 2 + 3 + 2 + 1), every one of which must be stored (FR-009).
     assert await count(engine, opinions) == 3
     assert await count(engine, external_ids) == 13
+
+
+async def test_a_requested_full_mode_is_honoured_once_and_then_consumed(
+    engine: AsyncEngine,
+) -> None:
+    """An operator's "full resync" must reach the provider, and must not become permanent.
+
+    Two failures live here. The mode has to survive the hop from the API — which cannot spawn a run
+    — to whichever dispatch picks the provider up, or it is silently downgraded to the scheduler's
+    incremental default. And it has to be consumed, or one click would re-walk the platform's whole
+    history on every poll from then on, including on each rung of the retry ladder.
+    """
+    await enable_fixture(engine)
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(requested_mode="full")
+        )
+
+    dispatch = build_dispatch(engine, config_for(FIXTURE), clock=StepClock())
+    (due,) = await due_providers(engine, now=NOW)
+    await dispatch(due)
+
+    async with transaction(engine) as conn:
+        modes = [row.mode for row in await conn.execute(select(sync_runs.c.mode))]
+        left = (await conn.execute(select(provider_state.c.requested_mode))).scalar_one()
+    assert modes == [str(FetchMode.FULL)]
+    assert left is None
+
+    # The next scheduled poll is an ordinary incremental run again.
+    (due,) = await due_providers(engine, now=NOW + timedelta(hours=2))
+    await dispatch(due)
+    async with transaction(engine) as conn:
+        modes = [row.mode for row in await conn.execute(select(sync_runs.c.mode))]
+    assert modes == [str(FetchMode.FULL), str(FetchMode.INCREMENTAL)]
 
 
 async def test_schema_bump_replays_retained_payloads_before_the_next_sync(

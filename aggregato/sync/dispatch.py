@@ -72,11 +72,14 @@ def build_dispatch(
 
     async def dispatch(due: DueProvider) -> None:
         job = await _next_import_job(engine, due.provider_id)
+        # Cleared before the run, not after: a full run that crashed would otherwise be full again
+        # on every retry, re-walking an entire history each time the ladder fires.
+        requested = await _claim_requested_mode(engine, due)
         await run_once(
             engine,
             config,
             provider_id=due.provider_id,
-            mode=FetchMode.IMPORT if job is not None else FetchMode.INCREMENTAL,
+            mode=FetchMode.IMPORT if job is not None else requested,
             cursor=None if job is not None else (Cursor(state=due.cursor) if due.cursor else None),
             retry_step=due.retry_step,
             consecutive_failures=due.consecutive_failures,
@@ -88,6 +91,29 @@ def build_dispatch(
             await _finish_import_job(engine, job[0])
 
     return dispatch
+
+
+async def _claim_requested_mode(engine: AsyncEngine, due: DueProvider) -> FetchMode:
+    """The mode this run should use, consuming an operator's one-shot request.
+
+    A scheduled run is always ``incremental``: the schedule is a timestamp column and carries no
+    mode (research.md R1). ``POST /providers/{id}/sync {"mode": "full"}`` therefore leaves its
+    request on ``provider_state.requested_mode`` for whichever dispatch picks the provider up, and
+    this consumes it — a request honored twice would mean an operator's single click re-walked a
+    platform's whole history on every subsequent poll.
+
+    Only ``full`` is accepted from the column. ``import`` is driven by a queued job rather than a
+    mode request, and an unrecognized value must not be able to reach a provider's ``fetch``.
+    """
+    if due.requested_mode is None:
+        return FetchMode.INCREMENTAL
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == due.provider_id)
+            .values(requested_mode=None)
+        )
+    return FetchMode.FULL if due.requested_mode == str(FetchMode.FULL) else FetchMode.INCREMENTAL
 
 
 async def _next_import_job(engine: AsyncEngine, provider_id: str) -> tuple[int, Path] | None:

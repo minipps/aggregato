@@ -44,6 +44,11 @@ def _names(path: Path, kind: str) -> set[str]:
     return {name for (name,) in rows}
 
 
+def _columns(path: Path, table: str) -> set[str]:
+    with closing(sqlite3.connect(path)) as conn:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def test_upgrade_creates_every_table_in_metadata_plus_the_search_index(tmp_path: Path) -> None:
     db = tmp_path / "aggregato.db"
     upgrade_to_head(_url(db))
@@ -74,6 +79,13 @@ def test_revision_matches_schema_py(tmp_path: Path) -> None:
 
     assert _names(migrated, "table") - {"alembic_version"} == _names(expected, "table")
     assert _names(migrated, "index") == _names(expected, "index")
+    # Columns too, not just table and index names: a revision that adds a column to an existing
+    # table drifts invisibly otherwise — every table still exists, so the assertions above pass
+    # while the column the code reads is missing from a migrated database.
+    for table in _names(expected, "table"):
+        assert _columns(migrated, table) == _columns(expected, table), (
+            f"{table} columns differ between the revisions and schema.py"
+        )
 
 
 def test_upgrade_is_idempotent(tmp_path: Path) -> None:

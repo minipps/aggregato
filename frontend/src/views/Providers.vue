@@ -80,6 +80,23 @@ function sync(id: string): Promise<void> {
   })
 }
 
+/**
+ * Re-read a platform from the beginning, rather than from where the last run stopped.
+ *
+ * The distinction matters more than the wording suggests: an incremental sync asks only for what
+ * is new, so a provider whose normalization changed leaves every older record exactly as it was
+ * first stored. This is the only way to make the archive reflect a corrected mapping — and the
+ * reason it is a separate button is that it re-walks an entire history, which is a great many
+ * requests to someone else's server.
+ */
+function fullResync(id: string): Promise<void> {
+  return act(id, 'Queueing a full resync', async () => {
+    await syncProvider(id, 'full')
+    await list.reload()
+    return 'Full resync queued. It re-reads the whole history, so it may take a while.'
+  })
+}
+
 function check(id: string): Promise<void> {
   return act(id, 'Checking credentials', async () => {
     const result = await checkProvider(id)
@@ -216,6 +233,14 @@ function saveConfiguration(id: string): Promise<void> {
           </button>
           <button type="button" :disabled="busy === provider.id || !provider.enabled" @click="sync(provider.id)">
             Sync now
+          </button>
+          <button
+            type="button"
+            :disabled="busy === provider.id || !provider.enabled"
+            :title="`Re-read ${provider.name} from the beginning, ignoring the saved cursor`"
+            @click="fullResync(provider.id)"
+          >
+            Full resync
           </button>
           <button type="button" :disabled="busy === provider.id" @click="check(provider.id)">
             Check credentials
