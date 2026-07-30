@@ -46,7 +46,9 @@ class AniListConfig(BaseModel):
         min_length=1, description="AniList username whose media lists are synchronized."
     )
     token: SecretStr | None = Field(
-        default=None, description="Optional AniList OAuth token for private lists."
+        default=None,
+        description="Optional AniList OAuth token for private lists.",
+        json_schema_extra={"writeOnly": True},
     )
     api_url: str = Field(default=API_URL, description="AniList-compatible GraphQL endpoint URL.")
 
@@ -78,6 +80,9 @@ class AniListProvider:
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: object
     ) -> AsyncIterator[RawRecord | Checkpoint]:
+        if cursor is not None and cursor.state.get("complete"):
+            yield Checkpoint(cursor=cursor)
+            return
         config = _config(ctx)
         response = await ctx.http.post(
             config.api_url,

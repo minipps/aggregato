@@ -1,0 +1,21 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [{"entries": [{
+        "id": 101,
+        "score": 8,
+        "notes": "Recorded fixture",
+        "updatedAt": 1700000000,
+        "media": {
+          "id": 1001,
+          "type": "ANIME",
+          "format": "TV",
+          "seasonYear": 2024,
+          "title": {"romaji": "Fixture Season", "english": "Fixture Season", "native": "フィクスチャ"},
+          "coverImage": {"large": "https://images.example/fixture.jpg"},
+          "staff": {"edges": [{"role": "Animation Studio", "node": {"id": 10, "name": {"full": "Fixture Studio"}}}]}
+        }
+      }]}]
+    }
+  }
+}

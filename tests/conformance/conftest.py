@@ -67,6 +67,16 @@ REGISTERED = [
         config=lambda path: {"path": path},
     ),
     Registration(
+        provider_id="anilist",
+        records="records.json",
+        invalid="invalid.json",
+        config=lambda path: {
+            "username": "fixture-user",
+            "token": "invalid" if path.name == "invalid.json" else "valid",
+            "api_url": "https://anilist.fixture/graphql",
+        },
+    ),
+    Registration(
         provider_id="listenbrainz",
         records="page-1.json",
         invalid="credentials-invalid.json",
@@ -126,6 +136,8 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
     http: AsyncClient
     if registration.provider_id == "listenbrainz":
         http = httpx.AsyncClient(transport=httpx.MockTransport(_listenbrainz_fixture(path)))
+    elif registration.provider_id == "anilist":
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_anilist_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -156,6 +168,17 @@ def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Respons
             else "page-3-empty.json"
         )
         return httpx.Response(200, json=json.loads((directory / name).read_text()))
+
+    return respond
+
+
+def _anilist_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("Authorization") == "Bearer invalid":
+            return httpx.Response(401, json=json.loads(path.read_text()))
+        return httpx.Response(
+            200, json=json.loads(path.parent.joinpath("records.json").read_text())
+        )
 
     return respond
 
