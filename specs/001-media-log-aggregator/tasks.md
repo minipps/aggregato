@@ -167,28 +167,28 @@ items stay distinct, ambiguous ones queue.
 
 ### Tests for User Story 2 (MANDATORY - Constitution Principle II) ⚠️
 
-- [ ] T064 [P] [US2] Build the benchmark harness and 1M-entry seed script in `tests/bench/` — Constitution VI requires budgets measured, and the design requires this before AniList lands
-- [ ] T065 [P] [US2] Integration test for cross-provider identity in `tests/integration/test_us2_cross_provider_identity.py` — shared identifier unifies, title+year unifies only when unambiguous, ambiguous queues, same-titled different works stay separate
-- [ ] T066 [P] [US2] Unit tests for every work-resolution branch in `tests/unit/test_resolve_work.py`
-- [ ] T067 [P] [US2] Unit tests for creator resolution in `tests/unit/test_resolve_creator.py` — asserted identifiers unscoped, name matching family-scoped, fuzzy never auto-linked
-- [ ] T068 [P] [US2] Benchmark test for batched creator resolution in `tests/bench/test_creator_resolution.py` (≥20,000 lookups/min, flat as creators grow)
-- [ ] T069 [P] [US2] Benchmark tests for first-page and deep-page latency in `tests/bench/test_query_latency.py` (SC-007)
+- [X] T064 [P] [US2] Build the benchmark harness and 1M-entry seed script in `tests/bench/` — Constitution VI requires budgets measured, and the design requires this before AniList lands
+- [X] T065 [P] [US2] Integration test for cross-provider identity in `tests/integration/test_us2_cross_provider_identity.py` — shared identifier unifies, title+year unifies only when unambiguous, ambiguous queues, same-titled different works stay separate
+- [X] T066 [P] [US2] Unit tests for every work-resolution branch in `tests/unit/test_resolve_work.py`
+- [X] T067 [P] [US2] Unit tests for creator resolution in `tests/unit/test_resolve_creator.py` — asserted identifiers unscoped, name matching family-scoped, fuzzy never auto-linked
+- [X] T068 [P] [US2] Benchmark test for batched creator resolution in `tests/bench/test_creator_resolution.py` (≥20,000 lookups/min, flat as creators grow)
+- [X] T069 [P] [US2] Benchmark tests for first-page and deep-page latency in `tests/bench/test_query_latency.py` (SC-007)
 
 ### Implementation for User Story 2
 
-- [ ] T070 [US2] Implement title normalization in `aggregato/ingest/titles.py` — case folding, accent stripping, article handling, punctuation, common edition suffixes — with `tests/unit/test_titles.py`
-- [ ] T071 [US2] Implement work resolution in `aggregato/ingest/resolve_work.py` — asserted → matched → create, duplicate preferred over uncertain merge
-- [ ] T072 [US2] Implement batched, memo-cached creator resolution in `aggregato/ingest/resolve_creator.py` per research.md R8
-- [ ] T073 [US2] Implement resolution queue creation in `aggregato/ingest/resolve_queue.py`, including cross-family creator suggestions tagged with `suggestion_kind`
-- [ ] T074 [US2] Implement `GET /creators` and `GET /creators/{id}` with credits grouped by role and logged counts in `aggregato/api/routes/creators.py`
-- [ ] T075 [P] [US2] Record AniList fixtures in `tests/fixtures/anilist/`, including a season-level entry and staff/studio credits
-- [ ] T076 [US2] Implement the AniList provider in `aggregato/providers/anilist/` — OAuth, GraphQL, ordinal rating scales, staff and studio credits with identifiers, season-level works (depends on T075)
-- [ ] T077 [US2] Implement the content-addressed lazy image cache in `aggregato/images/cache.py`
-- [ ] T078 [US2] Implement `GET /media/image/{hash}` with the placeholder path when caching is off in `aggregato/api/routes/images.py`
-- [ ] T079 [P] [US2] Implement the Creators list and detail views in `frontend/src/views/Creators.vue` and `frontend/src/views/Creator.vue`
-- [ ] T080 [US2] Add side-by-side cross-provider opinions to `frontend/src/views/Work.vue`, with the within-scale-only caveat visible rather than documented
-- [ ] T081 [US2] Add the composite indexes each permitted `sort` value needs and verify plans in `tests/bench/test_query_plans.py`
-- [ ] T082 [US2] Record the performance baseline in `tests/bench/baseline.json`
+- [X] T070 [US2] Implement title normalization in `aggregato/ingest/titles.py` — case folding, accent stripping, article handling, punctuation, common edition suffixes — with `tests/unit/test_titles.py`
+- [X] T071 [US2] Implement work resolution in `aggregato/ingest/resolve_work.py` — asserted → matched → create, duplicate preferred over uncertain merge
+- [X] T072 [US2] Implement batched, memo-cached creator resolution in `aggregato/ingest/resolve_creator.py` per research.md R8
+- [X] T073 [US2] Implement resolution queue creation in `aggregato/ingest/resolve_queue.py`, including cross-family creator suggestions tagged with `suggestion_kind`
+- [X] T074 [US2] Implement `GET /creators` and `GET /creators/{id}` with credits grouped by role and logged counts in `aggregato/api/routes/creators.py`
+- [X] T075 [P] [US2] Record AniList fixtures in `tests/fixtures/anilist/`, including a season-level entry and staff/studio credits
+- [X] T076 [US2] Implement the AniList provider in `aggregato/providers/anilist/` — OAuth, GraphQL, ordinal rating scales, staff and studio credits with identifiers, season-level works (depends on T075)
+- [X] T077 [US2] Implement the content-addressed lazy image cache in `aggregato/images/cache.py`
+- [X] T078 [US2] Implement `GET /media/image/{hash}` with the placeholder path when caching is off in `aggregato/api/routes/images.py`
+- [X] T079 [P] [US2] Implement the Creators list and detail views in `frontend/src/views/Creators.vue` and `frontend/src/views/Creator.vue`
+- [X] T080 [US2] Add side-by-side cross-provider opinions to `frontend/src/views/Work.vue`, with the within-scale-only caveat visible rather than documented
+- [X] T081 [US2] Add the composite indexes each permitted `sort` value needs and verify plans in `tests/bench/test_query_plans.py`
+- [X] T082 [US2] Record the performance baseline in `tests/bench/baseline.json`
 
 **Checkpoint**: Two platforms, one unified log, with the declared budgets measured.
 
