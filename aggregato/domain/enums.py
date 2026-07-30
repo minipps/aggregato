@@ -190,15 +190,15 @@ class IngestStage(StrEnum):
     WRITE = "write"
 
 
-def check_constraint(table: str, column: str, enum: type[StrEnum]) -> CheckConstraint:
+def check_constraint(column: str, enum: type[StrEnum]) -> CheckConstraint:
     """Build the ``CHECK`` constraint that pins a text column to one vocabulary.
 
     Emitting these from the enum rather than writing the value lists into the schema by hand is
     what keeps a widened vocabulary from silently passing the database while failing the API.
 
     Args:
-        table: Name of the table the column belongs to, so the constraint name is unambiguous.
-        column: Name of the text column to constrain.
+        column: Name of the text column to constrain. It is also the constraint's name; the
+            table prefix comes from the metadata naming convention.
         enum: The vocabulary it must hold.
 
     Returns:
@@ -207,4 +207,7 @@ def check_constraint(table: str, column: str, enum: type[StrEnum]) -> CheckConst
         batch mode, which rebuilds the table and needs to know what to put back.
     """
     values = ", ".join(f"'{member.value}'" for member in enum)
-    return CheckConstraint(f"{column} IN ({values})", name=f"ck_{table}_{column}")
+    # Named with the COLUMN only. schema.py's naming convention is
+    # ck_%(table_name)s_%(constraint_name)s, so it supplies the prefix; spelling it here too
+    # produced names like ck_creators_ck_creators_kind.
+    return CheckConstraint(f"{column} IN ({values})", name=column)

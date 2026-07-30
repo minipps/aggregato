@@ -28,7 +28,17 @@ AUTO_FK: TypeEngine[int] = BigInteger().with_variant(sqlite.INTEGER(), "sqlite")
 TIMESTAMP = DateTime(timezone=True)
 
 #: JSON with a ``JSONB`` variant on Postgres, where it is both smaller and indexable.
-JSON_COL: TypeEngine[Any] = JSON().with_variant(postgresql.JSONB(), "postgresql")
+#:
+#: ``none_as_null=True`` is not a preference — it is load-bearing. By default SQLAlchemy's JSON type
+#: stores Python ``None`` as the JSON text ``'null'``, which is a *value*, so ``col IS NULL`` is
+#: false for it. Every aggregate in this system filters ``subject_ref IS NULL`` to exclude sub-unit
+#: records (FR-007, research.md R18), and the writer deduplicates unidentified entries on a
+#: ``subject_ref`` comparison that includes the null case. With the default, both would silently
+#: stop working: statistics would count episodes as whole works, and a feed without event ids would
+#: duplicate its history on every resync. Neither failure announces itself.
+JSON_COL: TypeEngine[Any] = JSON(none_as_null=True).with_variant(
+    postgresql.JSONB(none_as_null=True), "postgresql"
+)
 
 #: Ratings and progress values. Never float: a 0.5-step scale compared against a float is how a
 #: rating lands "between steps" for no reason a user could explain.

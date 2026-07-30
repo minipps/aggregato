@@ -177,6 +177,46 @@ def search_condition(
     return target.in_(subquery.columns(column("ref_id", Text)))
 
 
+async def matching_ref_ids(
+    conn: AsyncConnection, kind: SearchKind, term: str, *, limit: int = 500
+) -> list[str]:
+    """The ``ref_id``s matching ``term``, as text.
+
+    Use this instead of :func:`search_condition` when the id being filtered is a **UUID**. The two
+    dialects render a UUID to text differently — SQLite stores ``CHAR(32)`` with no dashes, Postgres
+    casts to the canonical dashed form — so a ``CAST(id AS TEXT) IN (SELECT ref_id ...)`` subquery
+    silently matches nothing on one of them. Fetching the ids and parsing them in Python is
+    dialect-neutral, and the result set is bounded by ``limit`` anyway.
+
+    Args:
+        conn: Any connection.
+        kind: Which documents to search.
+        term: Raw operator input; sanitized the same way as in :func:`search_condition`.
+        limit: Maximum ids to return.
+
+    Returns:
+        Matching ``ref_id`` values, as stored.
+
+    Raises:
+        ValueError: Unsupported dialect.
+    """
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        statement = text(
+            "SELECT ref_id FROM search_index WHERE kind = :kind AND search_index MATCH :term "
+            "LIMIT :limit"
+        ).bindparams(kind=str(kind), term=_sanitize_sqlite_term(term), limit=limit)
+    elif dialect == "postgresql":
+        statement = text(
+            "SELECT ref_id FROM search_index WHERE kind = :kind "
+            "AND tsv @@ websearch_to_tsquery('simple', :term) LIMIT :limit"
+        ).bindparams(kind=str(kind), term=term, limit=limit)
+    else:
+        raise ValueError(f"unsupported dialect {dialect!r}; expected sqlite or postgresql")
+    result = await conn.execute(statement)
+    return [row[0] for row in result]
+
+
 def _sanitize_sqlite_term(term: str) -> str:
     """Turn operator input into a literal FTS5 phrase query.
 

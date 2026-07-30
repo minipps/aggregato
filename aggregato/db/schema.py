@@ -86,7 +86,7 @@ works = Table(
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("updated_at", TIMESTAMP, nullable=False),
-    check_constraint("works", "media_type", MediaType),
+    check_constraint("media_type", MediaType),
     # The name-matching lookup (FR-011): media type scopes it, sort_title selects,
     # release_year disambiguates.
     Index(
@@ -108,7 +108,7 @@ external_ids = Table(
     Column("confidence", String(16), nullable=False),
     Column("created_at", TIMESTAMP, nullable=False),
     UniqueConstraint("namespace", "value", "work_id", name="uq_external_ids_namespace_value_work"),
-    check_constraint("external_ids", "confidence", Confidence),
+    check_constraint("confidence", Confidence),
     # The resolution lookup (FR-009) — the cheapest and most reliable way two providers agree.
     Index("ix_external_ids_namespace_value", "namespace", "value"),
     Index("ix_external_ids_work_id", "work_id"),
@@ -162,13 +162,13 @@ entries = Table(
     Column("ingested_at", TIMESTAMP, nullable=False),
     # Soft delete. Tombstoned rows are never hard-deleted (FR-024).
     Column("deleted_at", TIMESTAMP),
-    check_constraint("entries", "kind", EntryKind),
-    check_constraint("entries", "logged_precision", LoggedPrecision),
+    check_constraint("kind", EntryKind),
+    check_constraint("logged_precision", LoggedPrecision),
     # "40" of what? A progress value without its unit is unreadable, so the pairing is a database
     # constraint rather than a writer convention.
     CheckConstraint(
         "(progress_value IS NULL) = (progress_unit IS NULL)",
-        name="ck_entries_progress_value_needs_unit",
+        name="progress_value_needs_unit",
     ),
     # The idempotency key for events the platform *does* identify. Partial, because a null
     # native_id must not collide with another null — both dialects support this.
@@ -217,19 +217,19 @@ opinions = Table(
     UniqueConstraint(
         "provider_id", "provider_item_id", name="uq_opinions_provider_id_provider_item_id"
     ),
-    check_constraint("opinions", "review_format", ReviewFormat),
+    check_constraint("review_format", ReviewFormat),
     # A raw rating means nothing without the scale it came from (FR-003).
     CheckConstraint(
         "rating_raw IS NULL OR rating_scale_id IS NOT NULL",
-        name="ck_opinions_rating_needs_scale",
+        name="rating_needs_scale",
     ),
     CheckConstraint(
         "review_text IS NULL OR review_format IS NOT NULL",
-        name="ck_opinions_review_needs_format",
+        name="review_needs_format",
     ),
     CheckConstraint(
         "rating_normalized IS NULL OR (rating_normalized BETWEEN 0 AND 100)",
-        name="ck_opinions_rating_normalized_range",
+        name="rating_normalized_range",
     ),
     Index("ix_opinions_rating_normalized", "rating_normalized"),
     Index("ix_opinions_work_id", "work_id"),
@@ -246,7 +246,7 @@ rating_scales = Table(
     # The explicit value -> normalized map. Required when kind is ordinal, because interpolating
     # between labels invents precision the platform never had.
     Column("labels", JSON_COL),
-    check_constraint("rating_scales", "kind", ScaleKind),
+    check_constraint("kind", ScaleKind),
 )
 
 
@@ -263,7 +263,7 @@ creators = Table(
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("updated_at", TIMESTAMP, nullable=False),
-    check_constraint("creators", "kind", CreatorKind),
+    check_constraint("kind", CreatorKind),
     Index("ix_creators_sort_name", "sort_name"),
 )
 
@@ -282,7 +282,7 @@ creator_aliases = Table(
     UniqueConstraint(
         "creator_id", "normalized", "media_family", name="uq_creator_aliases_creator_normalized"
     ),
-    check_constraint("creator_aliases", "kind", AliasKind),
+    check_constraint("kind", AliasKind),
     # The hot lookup (research.md R8): one batched SELECT per run, never one per credit.
     Index("ix_creator_aliases_normalized_media_family", "normalized", "media_family"),
 )
@@ -299,7 +299,7 @@ creator_external_ids = Table(
     UniqueConstraint(
         "namespace", "value", "creator_id", name="uq_creator_external_ids_namespace_value_creator"
     ),
-    check_constraint("creator_external_ids", "confidence", Confidence),
+    check_constraint("confidence", Confidence),
     # Deliberately **unscoped by family**, unlike aliases: an asserted identifier is identity
     # everywhere (FR-009 against FR-015).
     Index("ix_creator_external_ids_namespace_value", "namespace", "value"),
@@ -326,8 +326,8 @@ work_credits = Table(
     UniqueConstraint(
         "work_id", "creator_id", "role", "source", name="uq_work_credits_work_creator_role_source"
     ),
-    check_constraint("work_credits", "role", Role),
-    check_constraint("work_credits", "link_confidence", Confidence),
+    check_constraint("role", Role),
+    check_constraint("link_confidence", Confidence),
     Index("ix_work_credits_creator_id_role", "creator_id", "role"),
     Index("ix_work_credits_work_id", "work_id"),
 )
@@ -352,8 +352,8 @@ resolution_queue = Table(
     # Distinguishes a genuine ambiguity from a proactive cross-family creator suggestion (FR-015).
     # The two must not be counted together, or queue depth stops being a risk signal (SC-002).
     Column("suggestion_kind", String(32)),
-    check_constraint("resolution_queue", "subject", ResolutionSubject),
-    check_constraint("resolution_queue", "decision", ResolutionDecision),
+    check_constraint("subject", ResolutionSubject),
+    check_constraint("decision", ResolutionDecision),
     # The open-queue query is WHERE decided_at IS NULL.
     Index("ix_resolution_queue_decided_at", "decided_at"),
 )
@@ -372,7 +372,7 @@ merge_log = Table(
     # The pre-operation row state. This is what makes undo possible (FR-017) without event-sourcing
     # the whole database.
     Column("snapshot", JSON_COL, nullable=False),
-    check_constraint("merge_log", "subject", ResolutionSubject),
+    check_constraint("subject", ResolutionSubject),
     Index("ix_merge_log_performed_at", text("performed_at DESC")),
 )
 
@@ -395,8 +395,8 @@ providers = Table(
     Column("last_error", JSON_COL),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("updated_at", TIMESTAMP, nullable=False),
-    check_constraint("providers", "status", ProviderStatus),
-    check_constraint("providers", "acquisition", Acquisition),
+    check_constraint("status", ProviderStatus),
+    check_constraint("acquisition", Acquisition),
 )
 
 provider_state = Table(
@@ -445,8 +445,8 @@ sync_runs = Table(
     Column("log_excerpt", Text),
     Column("cursor_before", JSON_COL),
     Column("cursor_after", JSON_COL),
-    check_constraint("sync_runs", "status", RunStatus),
-    check_constraint("sync_runs", "error_class", ErrorClass),
+    check_constraint("status", RunStatus),
+    check_constraint("error_class", ErrorClass),
     Index("ix_sync_runs_provider_id_started_at", "provider_id", text("started_at DESC")),
     Index("ix_sync_runs_lineage_id", "lineage_id"),
 )
@@ -464,7 +464,7 @@ ingest_failures = Table(
     Column("stage", String(16), nullable=False),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("resolved_at", TIMESTAMP),
-    check_constraint("ingest_failures", "stage", IngestStage),
+    check_constraint("stage", IngestStage),
     Index("ix_ingest_failures_provider_id_created_at", "provider_id", text("created_at DESC")),
     Index("ix_ingest_failures_resolved_at", "resolved_at"),
 )

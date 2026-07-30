@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sqlalchemy import Table
+from sqlalchemy import ColumnElement, Table
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql.dml import Insert
@@ -25,6 +25,7 @@ def upsert_stmt(
     *,
     index_elements: Sequence[str] | None = None,
     constraint: str | None = None,
+    index_where: ColumnElement[bool] | None = None,
     update_columns: Sequence[str] | None = None,
 ) -> Insert:
     """Build an "insert these rows, or update these columns on conflict" statement.
@@ -38,6 +39,10 @@ def upsert_stmt(
       unique index or constraint. Exactly one of the two is required. A named target works on both
       dialects: SQLite has no ``ON CONFLICT ON CONSTRAINT``, so the name is resolved to its columns
       from ``table``.
+      ``index_where`` — the predicate of a PARTIAL unique index, when the conflict target is one.
+      Both dialects require the ON CONFLICT target to repeat a partial index's WHERE clause;
+      without it SQLite raises "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
+      constraint" even though the index exists and the columns are right.
       ``update_columns`` — columns to overwrite from the incoming row on conflict. Omit or pass an
       empty sequence for ``ON CONFLICT DO NOTHING``, which the ingest writer needs for rows that
       must never be revised once stored.
@@ -58,10 +63,13 @@ def upsert_stmt(
     if dialect == "postgresql":
         pg = postgresql.insert(table).values(list(rows))
         if not update_columns:
-            return pg.on_conflict_do_nothing(index_elements=index_elements, constraint=constraint)
+            return pg.on_conflict_do_nothing(
+                index_elements=index_elements, constraint=constraint, index_where=index_where
+            )
         return pg.on_conflict_do_update(
             index_elements=index_elements,
             constraint=constraint,
+            index_where=index_where,
             # ``excluded`` is the row that would have been inserted, so the update takes the
             # incoming values without naming them twice.
             set_={name: pg.excluded[name] for name in update_columns},
@@ -72,9 +80,10 @@ def upsert_stmt(
         target = index_elements if constraint is None else _columns_of(table, constraint)
         lite = sqlite.insert(table).values(list(rows))
         if not update_columns:
-            return lite.on_conflict_do_nothing(index_elements=target)
+            return lite.on_conflict_do_nothing(index_elements=target, index_where=index_where)
         return lite.on_conflict_do_update(
             index_elements=target,
+            index_where=index_where,
             set_={name: lite.excluded[name] for name in update_columns},
         )
     raise ValueError(f"unsupported dialect {dialect!r}; expected sqlite or postgresql")
