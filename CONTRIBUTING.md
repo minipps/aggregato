@@ -88,3 +88,15 @@ delete inference is how an archive gets erased (FR-024, FR-026).
       foreign keys off around a SQLite table rebuild, a test that seeds rows at the previous revision
       and asserts they survive, and no edits to a revision that has already been applied
 - [ ] Any new dependency justified against stdlib, native platform features, and what is already installed
+
+## Cutting a release
+
+`scripts/release.sh 0.1.1` — bumps `pyproject.toml` and `frontend/package.json` (plus the lockfile),
+commits, and pushes the tag. Pushing the tag *is* the release
+([release.yml](.github/workflows/release.yml)): it runs the same CI gates as a push to main, then
+publishes a source archive, a GitHub release, and multi-arch images tagged `x.y.z`, `x.y`, `latest`.
+
+The script exists for one reason worth knowing: the workflow refuses a tag whose version disagrees
+with those two files, and by then the tag is already public. It runs that same check locally first,
+alongside refusing a dirty tree, a branch other than main, a main that differs from origin, and a tag
+that already exists. It shows what will ship and asks before pushing anything.

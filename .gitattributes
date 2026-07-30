@@ -17,6 +17,8 @@
 .codex/           export-ignore
 .codegraph/       export-ignore
 CONTRIBUTING.md   export-ignore
+# Cuts releases from a checkout; useless inside the artefact it produces.
+scripts/          export-ignore
 
 # The specification tree is normative for reviews, not needed to run the service. tests/ carries
 # recorded fixtures and would roughly double the archive.
