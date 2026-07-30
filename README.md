@@ -35,6 +35,32 @@ platform yourself.
 
 Anything else is a plugin away: see [docs/writing-a-provider.md](docs/writing-a-provider.md).
 
+### Candidates
+
+None of these exist yet — this is the shortlist and what each would cost. "Surface" is the
+acquisition ladder every provider declares, `api` > `feed` > `export` > `scrape`, best to worst
+(FR-042): a platform with an API is mostly mapping work, while one without gets the Goodreads
+treatment — a file the operator downloads, imported by hand.
+
+| Platform | What it would add | Surface |
+|---|---|---|
+| **MyAnimeList** | anime + manga, with scores | `api` — official v2 API, OAuth2 |
+| **Kitsu** (kitsu.app) | anime + manga, with ratings | `api` — public JSON:API |
+| **Last.fm** | scrobbles (tracks) + loved tracks | `api` — documented, API key. A third listens provider beside ListenBrainz and Koito |
+| **AOTY** | album ratings + reviews | unconfirmed — no official public API found; likely `export` or `scrape` |
+| **RateYourMusic** | album ratings + reviews | **no API** — `export` at best |
+| **Hardcover** | books, with ratings and reviews | `api` — public GraphQL, token |
+| **The StoryGraph** | books, with ratings and reviews | **no API** — `export`, the same shape Goodreads already uses |
+
+RateYourMusic and The StoryGraph have no API to read, so they would arrive as Goodreads did: an
+operator-supplied export, with the automatic-sync config present but inert until the platform
+publishes something documented, rather than polling an endpoint nobody supports. See
+[docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md) for how a provider keeps
+one id while its surface improves.
+
+What a platform offers changes. Re-check the surface before starting work rather than trusting this
+table — it records what was true when it was written, not what is true today.
+
 ## Quickstart
 
 Docker and Docker Compose are all you need.
