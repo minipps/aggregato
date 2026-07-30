@@ -45,6 +45,7 @@ from aggregato.domain.families import family_of
 from aggregato.domain.models import NormalizedBatch, RawRecord
 from aggregato.domain.ratings import RatingOutOfScale, RatingScale, normalize_rating
 from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
+from aggregato.images.cache import register_source_on_connection
 from aggregato.ingest.failures import capture_failure
 from aggregato.ingest.resolve_creator import resolve_creators
 from aggregato.ingest.resolve_queue import queue_work_ambiguity
@@ -134,6 +135,8 @@ async def _write_one(
     resolution = await resolve_work(conn, batch, now=ctx.now)
     work_id = resolution.work_id
     item_id = await _upsert_provider_item(conn, ctx, raw, batch, work_id)
+    if batch.work.image_url:
+        await register_source_on_connection(conn, batch.work.image_url)
     await queue_work_ambiguity(
         conn,
         provider_id=ctx.provider_id,
