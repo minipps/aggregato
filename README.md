@@ -38,6 +38,16 @@ uv run python -m aggregato.worker            # scheduler process, separate on pu
 cd frontend && npm install && npm run dev    # dev server proxies /api to :8000
 ```
 
+To develop the frontend entirely in Docker, start the normal service plus the development overlay:
+
+```bash
+docker compose -f docker/compose.yml -f docker/compose.dev.yml up
+```
+
+Open <http://localhost:5173>. The `frontend/` directory is bind-mounted into Vite, so source edits
+reload immediately; API calls proxy to the `aggregato` Compose service. The production compose file
+is unchanged and continues to serve the built frontend at port 8000.
+
 Migrations run automatically at startup; `uv run alembic upgrade head` if you want them separately.
 
 ### Quality gates

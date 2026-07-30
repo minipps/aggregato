@@ -1,0 +1,20 @@
+# Development overlay: mount the Vue source into a Vite container for live updates. Keep this
+# separate from compose.yml so production remains one built image, one volume, and no Node runtime.
+services:
+  frontend:
+    image: node:22-slim
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_API_TARGET: http://aggregato:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+      # Do not write Linux container dependencies into the bind-mounted checkout.
+      - frontend-node-modules:/app/node_modules
+    depends_on:
+      - aggregato
+
+volumes:
+  frontend-node-modules:
