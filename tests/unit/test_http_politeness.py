@@ -259,7 +259,7 @@ async def test_retries_are_bounded() -> None:
     assert response.status_code == 503
 
 
-async def test_transport_errors_are_retried_then_raised() -> None:
+async def test_transport_errors_are_retried_then_classified() -> None:
     attempts = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -271,7 +271,9 @@ async def test_transport_errors_are_retried_then_raised() -> None:
     async with client_for(policy, handler) as client:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(asyncio, "sleep", _no_sleep)
-            with pytest.raises(httpx.ConnectError):
+            from aggregato.providers.errors import TransportError
+
+            with pytest.raises(TransportError, match="no route to host"):
                 await client.get("https://example.test/")
 
     assert attempts == MAX_ATTEMPTS

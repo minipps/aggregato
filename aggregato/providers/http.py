@@ -31,7 +31,7 @@ import httpx
 
 from aggregato import __version__
 from aggregato.domain.enums import Acquisition
-from aggregato.providers.errors import BlockedError, RateLimited
+from aggregato.providers.errors import BlockedError, RateLimited, TransportError
 
 #: Where to reach whoever is running this. Part of the User-Agent so a platform operator has
 #: somewhere to complain other than a block list.
@@ -193,7 +193,10 @@ class PoliteClient:
                 except httpx.TransportError as exc:
                     last_transport_error = exc
                     if attempt == MAX_ATTEMPTS:
-                        raise
+                        raise TransportError(
+                            f"{target.host} could not be reached after "
+                            f"{MAX_ATTEMPTS} attempts: {exc}"
+                        ) from exc
                     await self._sleep_before_retry(attempt, None)
                     continue
 

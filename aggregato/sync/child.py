@@ -23,12 +23,13 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from aggregato.domain.enums import ErrorClass, FetchMode
+from aggregato.domain.enums import FetchMode
 from aggregato.domain.models import Checkpoint, Cursor, RawRecord
 from aggregato.providers.base import ProviderContext
 from aggregato.providers.errors import ProviderError, RateLimited
 from aggregato.providers.http import PoliteClient, PolitenessPolicy
 from aggregato.providers.registry import load_provider
+from aggregato.sync.errors import classify
 from aggregato.sync.protocol import (
     BatchMessage,
     CheckpointMessage,
@@ -121,7 +122,7 @@ async def run(
         # The boundary catches everything: anything not a ProviderError is `internal`.
         emit(
             ErrorMessage(
-                error_class=ErrorClass.INTERNAL,
+                error_class=classify(exc),
                 message=f"{type(exc).__name__}: {exc}",
                 detail=_tail(traceback.format_exc()),
             )

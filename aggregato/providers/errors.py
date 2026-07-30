@@ -46,6 +46,12 @@ class BlockedError(ProviderError):
     error_class: ClassVar[ErrorClass] = ErrorClass.BLOCKED
 
 
+class TransportError(ProviderError):
+    """The provider endpoint could not be reached after the host's bounded retries."""
+
+    error_class: ClassVar[ErrorClass] = ErrorClass.TRANSPORT
+
+
 class StructureChangedError(ProviderError):
     """The payload no longer looks like what this provider was written against.
 

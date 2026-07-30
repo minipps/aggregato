@@ -40,7 +40,7 @@ from aggregato.sync.protocol import (
 
 #: How long one run may take before it is killed. Generous, because a first backfill of a decade of
 #: history is legitimately slow; finite, because "no output and no exit" must not be forever (§6.7).
-DEFAULT_WALL_CLOCK_SECONDS = 60 * 30
+DEFAULT_WALL_CLOCK_SECONDS = 60 * 5
 
 #: Grace between SIGTERM and SIGKILL. A child mid-write gets a moment to finish its line; a child
 #: that is genuinely wedged does not get to ignore us.
