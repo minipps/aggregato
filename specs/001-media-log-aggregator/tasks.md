@@ -206,22 +206,22 @@ operator-facing message for each.
 
 - [ ] T083 [P] [US3] Integration test covering the full failure matrix in `tests/integration/test_us3_failure_matrix.py` — all ten cases from quickstart.md, one parametrized case per row
 - [ ] T084 [P] [US3] Integration test asserting no inferred deletion for a provider without `reports_deletes` in `tests/integration/test_no_inferred_deletes.py` (SC-014)
-- [ ] T085 [P] [US3] Unit test for the sanity threshold in `tests/unit/test_sanity_threshold.py`
+- [X] T085 [P] [US3] Unit test for the sanity threshold in `tests/unit/test_sanity_threshold.py`
 - [ ] T086 [P] [US3] Integration test asserting a killed or hung provider child leaves the API serving and other providers syncing in `tests/integration/test_provider_containment.py` (FR-025)
 
 ### Implementation for User Story 3
 
-- [ ] T087 [US3] Implement the sanity threshold and `last_window_item_count` tracking in `aggregato/sync/sanity.py`
-- [ ] T088 [US3] Implement the triple-guarded delete-inference path in `aggregato/ingest/writer.py` — `reports_deletes` absent, `infer_deletes` true, completed `full` run, sanity threshold passed
-- [ ] T089 [US3] Implement partial-run status and checkpoint-bounded cursor advance in `aggregato/sync/runner.py`
-- [ ] T090 [US3] Implement `action_required` messages per error class in `aggregato/sync/errors.py` so no failure surfaces generically (SC-005)
-- [ ] T091 [US3] Implement rate-limit session-interval stretching in `aggregato/sync/retry.py`
-- [ ] T092 [US3] Implement ingest-failure replay from stored payloads in `aggregato/ingest/failures.py`
-- [ ] T093 [US3] Implement `GET /providers/{id}/runs` and `GET /ingest-failures` in `aggregato/api/routes/runs.py`
-- [ ] T094 [US3] Extend `GET /health` with per-provider status, last success, and consecutive failures in `aggregato/api/routes/health.py`
-- [ ] T095 [P] [US3] Implement the Sync history view with retry-lineage grouping in `frontend/src/views/SyncHistory.vue`
-- [ ] T096 [P] [US3] Implement the Ingest failures view with payload detail and replay in `frontend/src/views/IngestFailures.vue`
-- [ ] T097 [P] [US3] Implement the degraded banner and per-provider status chips in `frontend/src/components/ProviderStatus.vue`
+- [X] T087 [US3] Implement the sanity threshold and `last_window_item_count` tracking in `aggregato/sync/sanity.py`
+- [X] T088 [US3] Implement the triple-guarded delete-inference path in `aggregato/ingest/writer.py` — `reports_deletes` absent, `infer_deletes` true, completed `full` run, sanity threshold passed
+- [X] T089 [US3] Implement partial-run status and checkpoint-bounded cursor advance in `aggregato/sync/runner.py`
+- [X] T090 [US3] Implement `action_required` messages per error class in `aggregato/sync/errors.py` so no failure surfaces generically (SC-005)
+- [X] T091 [US3] Implement rate-limit session-interval stretching in `aggregato/sync/retry.py`
+- [X] T092 [US3] Implement ingest-failure replay from stored payloads in `aggregato/ingest/failures.py`
+- [X] T093 [US3] Implement `GET /providers/{id}/runs` and `GET /ingest-failures` in `aggregato/api/routes/runs.py`
+- [X] T094 [US3] Extend `GET /health` with per-provider status, last success, and consecutive failures in `aggregato/api/routes/health.py`
+- [X] T095 [P] [US3] Implement the Sync history view with retry-lineage grouping in `frontend/src/views/SyncHistory.vue`
+- [X] T096 [P] [US3] Implement the Ingest failures view with payload detail and replay in `frontend/src/views/IngestFailures.vue`
+- [X] T097 [P] [US3] Implement the degraded banner and per-provider status chips in `frontend/src/components/ProviderStatus.vue`
 
 **Checkpoint**: The service can be left alone.
 
