@@ -16,7 +16,7 @@ change with a migration.
 
 | Enum | Values |
 |---|---|
-| `media_type` | `film`, `tv_series`, `tv_season`, `book`, `comic`, `manga`, `anime_series`, `anime_season`, `album`, `track`, `game`, `podcast`, `podcast_episode`, `other` |
+| `media_type` | `film`, `tv_series`, `book`, `comic`, `manga`, `anime_series`, `album`, `track`, `game`, `podcast`, `podcast_episode`, `other` |
 | `media_family` | `screen`, `print`, `audio`, `interactive`, `other` |
 | `entry_kind` | `watch`, `rewatch`, `listen`, `read`, `finish`, `progress`, `drop` |
 | `logged_precision` | `exact`, `day`, `month`, `year`, `unknown` |
@@ -35,7 +35,7 @@ change with a migration.
 | `resolution_decision` | `linked`, `created`, `split`, `ignored` |
 
 **`media_type` → `media_family`** is a pure function in `domain/families.py`, not a stored column:
-`screen` = film, tv_series, tv_season, anime_series, anime_season · `print` = book, comic, manga ·
+`screen` = film, tv_series, anime_series · `print` = book, comic, manga ·
 `audio` = album, track, podcast, podcast_episode · `interactive` = game · `other` = other.
 API `media_family` filters expand to a `media_type IN (…)` predicate (FR-029).
 
@@ -314,6 +314,51 @@ database (FR-049). Alembic owns its own version table; no hand-rolled `schema_mi
 
 **There is no `user_id` column anywhere** (FR-006). Adding one is a v2 schema break, accepted
 knowingly.
+
+#### Rebuilding a table on SQLite deletes its children
+
+SQLite cannot `ALTER` a column or drop a constraint, so `render_as_batch=True` handles those by
+rebuilding the table: create a copy, copy the rows, **`DROP` the original**, rename. `DROP TABLE`
+performs an implicit `DELETE FROM` first, and that delete fires every `ON DELETE CASCADE` pointing
+at the table. `engine.py` connects with `foreign_keys=ON`, so rebuilding `works` empties `entries`,
+`opinions`, `work_credits`, and `external_ids`, and nulls `provider_items.work_id` — the migration
+deletes the log it meant to alter. Alembic reports nothing wrong; the rebuild succeeds.
+
+Any revision that alters a column or a constraint on a table other tables reference must therefore
+turn foreign keys off around the rebuild:
+
+```python
+context = op.get_context()
+with context.autocommit_block():
+    op.execute("PRAGMA foreign_keys=OFF")
+try:
+    with op.batch_alter_table("works") as batch:
+        batch.create_check_constraint("media_type", expression)
+finally:
+    with context.autocommit_block():
+        op.execute("PRAGMA foreign_keys=ON")
+```
+
+`autocommit_block` is not optional: `PRAGMA foreign_keys` is silently ignored inside a transaction,
+and env.py runs migrations in one. `PRAGMA defer_foreign_keys` is not a substitute — it defers
+constraint *checking*, while the implicit delete still runs cascade *actions*.
+`0005_merge_seasons_into_series.py` is the worked example.
+
+#### Every data-touching revision lands with a survival test
+
+A revision that rewrites or retypes rows gets a test that seeds rows **at the previous revision**,
+upgrades to head, and asserts they are still there — not just that the DDL applied. Use
+`command.upgrade(config, "0004")` to stop at a revision;
+`tests/unit/test_migrations.py::test_0005_keeps_the_log_it_retypes` is the pattern. A test that only
+upgrades an empty database proves nothing about cascade damage, because there is nothing to cascade.
+
+#### An applied revision is never deleted or renumbered
+
+Once a revision has run anywhere — including a development container — its id is written to
+`alembic_version`. Deleting the file, renaming it, or rewriting its `down_revision` leaves that
+database pointing at a revision that no longer exists, and startup dies with `Can't locate revision
+identified by '…'` on every boot. Reverting a schema change means **a new revision forward**, never
+editing history. See the recovery runbook in [docs/operations.md](../../docs/operations.md).
 
 ---
 

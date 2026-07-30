@@ -84,4 +84,7 @@ delete inference is how an archive gets erased (FR-024, FR-026).
 - [ ] Fixtures recorded per [tests/fixtures/README.md](tests/fixtures/README.md), redacted, no credentials
 - [ ] `config_model` fields documented; secrets marked so the settings form renders them write-only
 - [ ] New behaviour has a test that failed before the change (Constitution II)
+- [ ] Any migration follows [data-model.md §6](specs/001-media-log-aggregator/data-model.md#migrations):
+      foreign keys off around a SQLite table rebuild, a test that seeds rows at the previous revision
+      and asserts they survive, and no edits to a revision that has already been applied
 - [ ] Any new dependency justified against stdlib, native platform features, and what is already installed

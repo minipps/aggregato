@@ -659,7 +659,7 @@ components:
 
     MediaType:
       type: string
-      enum: [film, tv_series, tv_season, book, comic, manga, anime_series, anime_season,
+      enum: [film, tv_series, book, comic, manga, anime_series,
              album, track, game, podcast, podcast_episode, other]
     MediaFamily:
       type: string

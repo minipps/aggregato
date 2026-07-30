@@ -17,9 +17,7 @@ _FAMILY_MEMBERS: dict[MediaFamily, frozenset[MediaType]] = {
         {
             MediaType.FILM,
             MediaType.TV_SERIES,
-            MediaType.TV_SEASON,
             MediaType.ANIME_SERIES,
-            MediaType.ANIME_SEASON,
         }
     ),
     MediaFamily.PRINT: frozenset({MediaType.BOOK, MediaType.COMIC, MediaType.MANGA}),

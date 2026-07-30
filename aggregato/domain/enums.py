@@ -16,12 +16,10 @@ from sqlalchemy import CheckConstraint
 class MediaType(StrEnum):
     FILM = "film"
     TV_SERIES = "tv_series"
-    TV_SEASON = "tv_season"
     BOOK = "book"
     COMIC = "comic"
     MANGA = "manga"
     ANIME_SERIES = "anime_series"
-    ANIME_SEASON = "anime_season"
     ALBUM = "album"
     TRACK = "track"
     GAME = "game"

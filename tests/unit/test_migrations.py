@@ -12,6 +12,8 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine as create_sync_engine
 
 from aggregato.db import migrate
@@ -24,6 +26,14 @@ REVISION = Path(migrate.__file__).parent / "migrations/versions/0001_initial_sch
 
 def _url(path: Path) -> str:
     return f"sqlite+aiosqlite:///{path}"
+
+
+def _config(url: str) -> Config:
+    """The same configuration ``upgrade_to_head`` builds, for tests that stop at a revision."""
+    config = Config()
+    config.set_main_option("script_location", str(migrate._SCRIPT_LOCATION))
+    config.set_main_option("sqlalchemy.url", url)
+    return config
 
 
 def _names(path: Path, kind: str) -> set[str]:
@@ -125,3 +135,53 @@ def test_downgrade_is_refused() -> None:
     spec.loader.exec_module(module)
     with pytest.raises(NotImplementedError):
         module.downgrade()
+
+
+def test_head_rejects_the_retired_season_media_types(tmp_path: Path) -> None:
+    """0005 narrows the vocabulary; under SQLite's batch rebuild the CHECK is easy to lose."""
+    db = tmp_path / "aggregato.db"
+    upgrade_to_head(_url(db))
+    with closing(sqlite3.connect(db)) as conn:
+        for media_type in ("tv_season", "anime_season"):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+                    " VALUES ('x', ?, 't', 't', '2026-01-01', '2026-01-01')",
+                    (media_type,),
+                )
+
+
+def test_0005_keeps_the_log_it_retypes(tmp_path: Path) -> None:
+    """A season's entries must survive the rebuild.
+
+    SQLite cannot alter a CHECK, so 0005 rebuilds ``works`` in batch mode — and a rebuild DROPs the
+    original table, whose implicit ``DELETE FROM`` fires every ON DELETE CASCADE aimed at it. With
+    engine.py's ``foreign_keys=ON`` that empties ``entries`` and ``opinions``: the migration deletes
+    the log it was only supposed to retype.
+    """
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0004")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+            " VALUES ('w', 'anime_season', 't', 't', '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO provider_items (id, provider_id, native_id, title_as_given, raw_payload,"
+            " schema_version, first_seen_at, last_seen_at)"
+            " VALUES (1, 'anilist', 'n', 't', '{}', 1, '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO entries (work_id, provider_id, provider_item_id, kind, logged_at,"
+            " logged_precision, ingested_at)"
+            " VALUES ('w', 'anilist', 1, 'watch', '2026-01-01', 'exact', '2026-01-01')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT count(*) FROM entries").fetchone() == (1,)
+        assert conn.execute("SELECT media_type FROM works").fetchall() == [("anime_series",)]

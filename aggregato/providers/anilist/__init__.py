@@ -56,7 +56,7 @@ class AniListConfig(BaseModel):
 class AniListProvider:
     id: str = "anilist"
     name: str = "AniList"
-    media_types: set[MediaType] = {MediaType.ANIME_SEASON, MediaType.MANGA}  # noqa: RUF012
+    media_types: set[MediaType] = {MediaType.ANIME_SERIES, MediaType.MANGA}  # noqa: RUF012
     capabilities: set[Capability] = {  # noqa: RUF012
         Capability.POLL,
         Capability.BACKFILL,
@@ -115,7 +115,7 @@ class AniListProvider:
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         item = raw.payload
         media = item["media"]
-        media_type = MediaType.MANGA if media.get("type") == "MANGA" else MediaType.ANIME_SEASON
+        media_type = MediaType.MANGA if media.get("type") == "MANGA" else MediaType.ANIME_SERIES
         title = media.get("title", {})
         score = item.get("score")
         staff = media.get("staff", {}).get("edges", [])
@@ -195,7 +195,7 @@ class AniListProvider:
             entries=[
                 NormalizedEntry(
                     kind=EntryKind.WATCH
-                    if media_type is MediaType.ANIME_SEASON
+                    if media_type is MediaType.ANIME_SERIES
                     else EntryKind.READ,
                     logged_at=timestamp,
                     logged_precision=LoggedPrecision.EXACT,

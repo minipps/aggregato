@@ -20,12 +20,10 @@ import LoadingState from '@/components/LoadingState.vue'
 const MEDIA_TYPES: MediaType[] = [
   'film',
   'tv_series',
-  'tv_season',
   'book',
   'comic',
   'manga',
   'anime_series',
-  'anime_season',
   'album',
   'track',
   'game',

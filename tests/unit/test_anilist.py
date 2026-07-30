@@ -21,7 +21,7 @@ def test_anilist_fixture_has_season_staff_studio_and_ordinal_rating() -> None:
     item = payload["data"]["MediaListCollection"]["lists"][0]["entries"][0]
     batch = AniListProvider().normalize(type("Raw", (), {"native_id": "101", "payload": item})())
 
-    assert batch.work.media_type == "anime_season"
+    assert batch.work.media_type == "anime_series"
     assert batch.opinions[0].rating_raw == Decimal(8)
     assert {credit.role for credit in batch.credits} == {Role.DIRECTOR, Role.STUDIO}
     assert {credit.creator_kind for credit in batch.credits} == {
