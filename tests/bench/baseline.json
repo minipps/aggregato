@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "environment": "SQLite WAL, local SSD, Python 3.14",
+  "budgets": {
+    "creator_resolution_per_minute": 20000,
+    "entries_first_page_ms": 200,
+    "entries_deep_page_ms": 300
+  }
+}
