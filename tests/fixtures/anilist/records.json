@@ -1,6 +1,11 @@
 {
   "data": {
     "MediaListCollection": {
+      "user": {
+        "mediaListOptions": {
+          "scoreFormat": "POINT_10"
+        }
+      },
       "lists": [
         {
           "entries": [

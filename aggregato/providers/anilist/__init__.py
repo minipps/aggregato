@@ -39,6 +39,67 @@ from aggregato.providers.errors import AuthError, ProviderError
 
 API_URL = "https://graphql.anilist.co"
 
+#: The key ``fetch`` stamps the account's ``scoreFormat`` onto each retained payload under.
+#: ``normalize`` is pure over one record, so anything it needs about the account has to travel
+#: inside the record — and it has to be retained, or replay could not recompute the rating.
+SCORE_FORMAT_KEY = "_aggregato_score_format"
+
+#: AniList reports ``score`` in whichever format the *account* selected, and says nothing about
+#: which one in the score itself: an 8 is 8/10 for one account and out of scale for another whose
+#: format is POINT_5. Declaring a single scale (this provider declared ``anilist-10`` for every
+#: account) silently multiplies every rating from a POINT_5 or POINT_3 account by the wrong span.
+#:
+#: ``anilist-10`` keeps its id and definition so the rows already written under it stay
+#: interpretable and their normalized values do not move.
+_SCALES: dict[str, RatingScale] = {
+    "POINT_100": RatingScale(
+        id="anilist-100",
+        kind=ScaleKind.LINEAR,
+        min_value=Decimal(1),
+        max_value=Decimal(100),
+        step=Decimal(1),
+    ),
+    "POINT_10_DECIMAL": RatingScale(
+        id="anilist-10-decimal",
+        kind=ScaleKind.LINEAR,
+        min_value=Decimal("0.1"),
+        max_value=Decimal(10),
+        step=Decimal("0.1"),
+    ),
+    "POINT_10": RatingScale(
+        id="anilist-10",
+        # AniList's selected score format is a discrete set of labels.  Keep that fact rather
+        # than claiming that a user's 7 is arithmetic evidence about the distance to an 8.
+        kind=ScaleKind.ORDINAL,
+        min_value=Decimal(0),
+        max_value=Decimal(10),
+        step=Decimal(1),
+        labels={str(value): value * 10 for value in range(11)},
+    ),
+    "POINT_5": RatingScale(
+        id="anilist-5",
+        kind=ScaleKind.LINEAR,
+        min_value=Decimal(1),
+        max_value=Decimal(5),
+        step=Decimal(1),
+    ),
+    "POINT_3": RatingScale(
+        id="anilist-3",
+        # Three smiley faces. There is no arithmetic between them at all, so they carry an explicit
+        # map rather than a span the domain would interpolate across.
+        kind=ScaleKind.ORDINAL,
+        min_value=Decimal(1),
+        max_value=Decimal(3),
+        step=Decimal(1),
+        labels={"1": 0, "2": 50, "3": 100},
+    ),
+}
+
+#: AniList's own default, and what a payload retained before this provider asked for the format was
+#: normalized under. Assuming it for those is not a guess about the account — it is the only reading
+#: that leaves an old payload's rating where it already was until a fetch supplies the real format.
+DEFAULT_SCORE_FORMAT = "POINT_10"
+
 
 class AniListConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -65,19 +126,8 @@ class AniListProvider:
     }
     acquisition: Acquisition = Acquisition.API
     config_model: type[BaseModel] = AniListConfig
-    rating_scales: list[RatingScale] = [  # noqa: RUF012
-        RatingScale(
-            id="anilist-10",
-            # AniList's selected score format is a discrete set of labels.  Keep that fact rather
-            # than claiming that a user's 7 is arithmetic evidence about the distance to an 8.
-            kind=ScaleKind.ORDINAL,
-            min_value=Decimal(0),
-            max_value=Decimal(10),
-            step=Decimal(1),
-            labels={str(value): value * 10 for value in range(11)},
-        )
-    ]
-    schema_version: int = 1
+    rating_scales: list[RatingScale] = list(_SCALES.values())  # noqa: RUF012
+    schema_version: int = 2
     default_poll_interval: timedelta = timedelta(hours=1)
 
     async def fetch(
@@ -113,13 +163,17 @@ class AniListProvider:
             if response.status_code != 200:
                 raise ProviderError(f"AniList answered HTTP {response.status_code}")
             body = response.json()
-            entries = body.get("data", {}).get("MediaListCollection", {}).get("lists", [])
-            for group in entries:
+            collection = body.get("data", {}).get("MediaListCollection", {})
+            score_format = _score_format(collection)
+            for group in collection.get("lists", []):
                 for item in group.get("entries", []):
                     # The API does this filtering, but retain it at the boundary so a compatible
                     # endpoint cannot duplicate one collection in both requests.
                     if item.get("media", {}).get("type") == media_type:
-                        yield RawRecord(native_id=str(item["id"]), payload=item)
+                        yield RawRecord(
+                            native_id=str(item["id"]),
+                            payload={**item, SCORE_FORMAT_KEY: score_format},
+                        )
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         item = raw.payload
@@ -186,7 +240,7 @@ class AniListProvider:
             else [
                 NormalizedOpinion(
                     rating_raw=Decimal(str(score)),
-                    rating_scale_id="anilist-10",
+                    rating_scale_id=_scale_for(item).id,
                     review_text=item.get("notes"),
                     review_format=ReviewFormat.PLAIN if item.get("notes") else None,
                     authored_at=timestamp,
@@ -233,6 +287,30 @@ def _config(ctx: ProviderContext) -> AniListConfig:
     if not isinstance(ctx.config, AniListConfig):
         raise ProviderError("AniList received an invalid configuration model")
     return ctx.config
+
+
+def _score_format(collection: dict[str, object]) -> str:
+    """The account's selected score format, as the collection response reports it.
+
+    An endpoint that omits ``mediaListOptions`` gets AniList's own default rather than an error:
+    the account has ratings either way, and refusing the whole collection over the field would lose
+    the entries, the works and the credits too.
+    """
+    user = collection.get("user")
+    options = user.get("mediaListOptions") if isinstance(user, dict) else None
+    selected = options.get("scoreFormat") if isinstance(options, dict) else None
+    return selected if selected in _SCALES else DEFAULT_SCORE_FORMAT
+
+
+def _scale_for(item: dict[str, object]) -> RatingScale:
+    """The scale a retained payload's ``score`` is expressed in.
+
+    A payload stored before this provider asked for the format carries no key at all, which is not
+    the same as an account whose format is unknown: it was written under ``anilist-10`` and stays
+    there until a fetch re-reads the entry with the real format attached. This provider re-reads the
+    whole collection every run, so that is one run away.
+    """
+    return _SCALES.get(str(item.get(SCORE_FORMAT_KEY)), _SCALES[DEFAULT_SCORE_FORMAT])
 
 
 def _headers(config: AniListConfig) -> dict[str, str]:
@@ -317,7 +395,8 @@ def _role(raw: str) -> Role:
 
 _QUERY = (
     "query ($name: String, $type: MediaType!) { "
-    "MediaListCollection(userName: $name, type: $type) { lists { "
+    "MediaListCollection(userName: $name, type: $type) { "
+    "user { mediaListOptions { scoreFormat } } lists { "
     "entries { id status progress score notes updatedAt media { id type format seasonYear "
     "title { romaji english "
     "native } coverImage { large } staff { edges { role node { id name { full } } } } "
