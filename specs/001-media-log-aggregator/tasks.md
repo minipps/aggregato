@@ -236,20 +236,20 @@ the UI.
 
 ### Tests for User Story 4 (MANDATORY - Constitution Principle II) ⚠️
 
-- [ ] T098 [P] [US4] Integration test for merge, split, and undo in `tests/integration/test_us4_merge_split.py`
-- [ ] T099 [P] [US4] Unit tests for `merge_log` snapshot and restore in `tests/unit/test_merge_log.py`
-- [ ] T100 [P] [US4] Integration test asserting a manual decision survives a resync of both providers in `tests/integration/test_manual_durability.py` (FR-014)
+- [X] T098 [P] [US4] Integration test for merge, split, and undo in `tests/integration/test_us4_merge_split.py`
+- [X] T099 [P] [US4] Unit tests for `merge_log` snapshot and restore in `tests/unit/test_merge_log.py`
+- [X] T100 [P] [US4] Integration test asserting a manual decision survives a resync of both providers in `tests/integration/test_manual_durability.py` (FR-014)
 
 ### Implementation for User Story 4
 
-- [ ] T101 [US4] Implement work merge in `aggregato/ingest/merge.py` — entries, opinions, and identifiers combine with nothing lost
-- [ ] T102 [US4] Implement creator merge in `aggregato/ingest/merge.py`, retaining aliases from every family
-- [ ] T103 [US4] Implement credit-granular creator split in `aggregato/ingest/split.py`, exposing `link_confidence` per credit
-- [ ] T104 [US4] Implement `merge_log` writes and `POST /merge-log/{id}/undo` in `aggregato/api/routes/identity.py`
-- [ ] T105 [US4] Implement `POST /works/{id}/merge`, `POST /creators/{id}/merge`, `POST /creators/{id}/split` in `aggregato/api/routes/identity.py`
-- [ ] T106 [US4] Implement `GET /resolution-queue` and `POST /resolution-queue/{id}/decide` recording `manual` confidence in `aggregato/api/routes/resolution.py`
-- [ ] T107 [US4] Implement the keyboard-driven Resolution view with candidate reasons in `frontend/src/views/Resolution.vue`
-- [ ] T108 [P] [US4] Implement the merge and split UI with side-by-side comparison and `link_confidence` display in `frontend/src/components/MergeDialog.vue` and `frontend/src/components/SplitDialog.vue`
+- [X] T101 [US4] Implement work merge in `aggregato/ingest/merge.py` — entries, opinions, and identifiers combine with nothing lost
+- [X] T102 [US4] Implement creator merge in `aggregato/ingest/merge.py`, retaining aliases from every family
+- [X] T103 [US4] Implement credit-granular creator split in `aggregato/ingest/split.py`, exposing `link_confidence` per credit
+- [X] T104 [US4] Implement `merge_log` writes and `POST /merge-log/{id}/undo` in `aggregato/api/routes/identity.py`
+- [X] T105 [US4] Implement `POST /works/{id}/merge`, `POST /creators/{id}/merge`, `POST /creators/{id}/split` in `aggregato/api/routes/identity.py`
+- [X] T106 [US4] Implement `GET /resolution-queue` and `POST /resolution-queue/{id}/decide` recording `manual` confidence in `aggregato/api/routes/resolution.py`
+- [X] T107 [US4] Implement the keyboard-driven Resolution view with candidate reasons in `frontend/src/views/Resolution.vue`
+- [X] T108 [P] [US4] Implement the merge and split UI with side-by-side comparison and `link_confidence` display in `frontend/src/components/MergeDialog.vue` and `frontend/src/components/SplitDialog.vue`
 - [ ] T109 [P] [US4] Implement undo affordance and keyboard shortcuts, with an accessibility test in `frontend/src/views/__tests__/Resolution.spec.ts`
 
 **Checkpoint**: Automatic matching is correctable, which is what makes the no-enrichment trade viable.

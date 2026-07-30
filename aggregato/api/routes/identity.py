@@ -197,11 +197,9 @@ def _typed(row: dict[str, Any]) -> dict[str, Any]:
     for key, value in row.items():
         if value is None:
             result[key] = None
-        elif (key == "id" and len(str(value)) in {32, 36}) or (
-            key.endswith("_id")
-            and key not in {"provider_id", "rating_scale_id"}
-            and len(str(value)) in {32, 36}
-        ):
+        elif key in {"id", "work_id", "creator_id", "parent_work_id", "winner_id"} and len(
+            str(value)
+        ) in {32, 36}:
             result[key] = _uuid(value)
         elif key.endswith("_at") and isinstance(value, str):
             result[key] = datetime.fromisoformat(value)
