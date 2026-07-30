@@ -511,6 +511,55 @@ async def test_a_captured_failure_keeps_its_payload(conn: AsyncConnection) -> No
     assert captured[0].raw_payload == {"keep": "me"}
 
 
+# --- Artwork backfill ---------------------------------------------------------------------------
+
+
+def _with_image(source: NormalizedBatch, url: str | None) -> NormalizedBatch:
+    return source.model_copy(update={"work": source.work.model_copy(update={"image_url": url})})
+
+
+async def _image_url(conn: AsyncConnection) -> str | None:
+    return (await conn.execute(select(works.c.image_url))).scalar_one()
+
+
+async def test_artwork_reaches_a_work_this_run_did_not_create(conn: AsyncConnection) -> None:
+    """A work created before the provider read artwork must still get it on the next sync.
+
+    ``image_url`` used to be written only by the insert in ``resolve_work``, so any work that
+    resolved to an existing row kept NULL forever and its entries never linked an image.
+    """
+    plain = (RawRecord(native_id="i-1", payload={"a": 1}), batch())
+    await write_batches(conn, ctx(), [plain])
+    assert await _image_url(conn) is None
+
+    art = "https://example.invalid/rain.jpg"
+    await write_batches(
+        conn, ctx(), [(RawRecord(native_id="i-1", payload={"a": 1}), _with_image(batch(), art))]
+    )
+
+    assert await _image_url(conn) == art
+
+
+async def test_artwork_already_stated_is_not_overwritten(conn: AsyncConnection) -> None:
+    """An existing URL is some provider's stated payload; a resync must not churn it (FR-010)."""
+    first = "https://example.invalid/first.jpg"
+    record = (RawRecord(native_id="i-1", payload={"a": 1}), _with_image(batch(), first))
+    await write_batches(conn, ctx(), [record])
+
+    await write_batches(
+        conn,
+        ctx(),
+        [
+            (
+                RawRecord(native_id="i-2", payload={"a": 2}),
+                _with_image(batch(), "https://example.invalid/second.jpg"),
+            )
+        ],
+    )
+
+    assert await _image_url(conn) == first
+
+
 # --- sort_title ---------------------------------------------------------------------------------
 
 

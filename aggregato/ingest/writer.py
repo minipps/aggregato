@@ -37,6 +37,7 @@ from aggregato.db.schema import (
     opinions,
     provider_items,
     work_credits,
+    works,
 )
 from aggregato.db.search import SearchKind, index_document
 from aggregato.db.upsert import upsert_stmt
@@ -185,6 +186,14 @@ async def _write_one(
     work_id = resolution.work_id
     item_id = await _upsert_provider_item(conn, ctx, raw, batch, work_id)
     if batch.work.image_url:
+        # Backfill artwork onto a work this run did not create: a matched, manually linked, or
+        # pre-artwork-support work carries NULL forever otherwise. Only when NULL — an existing
+        # URL is another provider's stated payload, and resync must not churn it (FR-010).
+        await conn.execute(
+            update(works)
+            .where(works.c.id == work_id, works.c.image_url.is_(None))
+            .values(image_url=batch.work.image_url, updated_at=ctx.now)
+        )
         await register_source_on_connection(conn, batch.work.image_url)
     await queue_work_ambiguity(
         conn,
