@@ -14,9 +14,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from html import unescape
+from pathlib import Path
 from typing import Any, ClassVar
 
-from defusedxml import ElementTree as ET
+from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from aggregato.domain.enums import (
@@ -24,6 +25,7 @@ from aggregato.domain.enums import (
     Capability,
     Confidence,
     EntryKind,
+    ErrorClass,
     FetchMode,
     LoggedPrecision,
     MediaType,
@@ -60,6 +62,10 @@ class LetterboxdConfig(BaseModel):
         default=None,
         description="Optional full public RSS URL; overrides the URL derived from username.",
     )
+    export_path: Path | None = Field(
+        default=None,
+        description="Optional local RSS/XML export for a manually requested full sync.",
+    )
 
 
 class LetterboxdProvider:
@@ -89,7 +95,9 @@ class LetterboxdProvider:
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: FetchMode
     ) -> AsyncIterator[RawRecord | Checkpoint]:
-        del cursor
+        if cursor is not None and cursor.state.get("feed_complete"):
+            yield Checkpoint(cursor=cursor)
+            return
         if mode is FetchMode.IMPORT:
             if ctx.import_path is None:
                 raise ProviderError("Letterboxd import mode requires an RSS or XML export")
@@ -98,13 +106,20 @@ class LetterboxdProvider:
             except OSError as exc:
                 raise ProviderError(f"cannot read Letterboxd export: {exc}") from exc
         else:
-            url = _rss_url(_config(ctx))
-            if url is None:
-                return
-            response = await ctx.http.get(url)
-            if response.status_code != 200:
-                raise ProviderError(f"Letterboxd RSS answered HTTP {response.status_code}")
-            payload = response.content
+            config = _config(ctx)
+            if config.export_path is not None:
+                try:
+                    payload = config.export_path.read_bytes()
+                except OSError as exc:
+                    raise ProviderError(f"cannot read Letterboxd export: {exc}") from exc
+            else:
+                url = _rss_url(config)
+                if url is None:
+                    return
+                response = await ctx.http.get(url)
+                if response.status_code != 200:
+                    raise ProviderError(f"Letterboxd RSS answered HTTP {response.status_code}")
+                payload = response.content
         for item in _items(payload):
             yield RawRecord(native_id=item["guid"], payload=item)
         yield Checkpoint(cursor=Cursor(state={"feed_complete": True}))
@@ -160,7 +175,14 @@ class LetterboxdProvider:
         )
 
     async def check(self, ctx: ProviderContext) -> CheckResult:
-        if _rss_url(_config(ctx)) is None:
+        config = _config(ctx)
+        if config.export_path is not None:
+            try:
+                _items(config.export_path.read_bytes())
+            except (OSError, ProviderError) as exc:
+                return CheckResult(ok=False, error_class=ErrorClass.PARSE, detail=str(exc))
+            return CheckResult(ok=True, detail="Letterboxd local RSS export is valid")
+        if _rss_url(config) is None:
             return CheckResult(
                 ok=False, detail="set username or rss_url to enable automatic Letterboxd RSS sync"
             )

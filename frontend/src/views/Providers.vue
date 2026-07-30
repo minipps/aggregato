@@ -14,7 +14,14 @@
 
 import { ref } from 'vue'
 
-import { checkProvider, providers, setProviderEnabled, syncProvider, toProblem } from '@/api/client'
+import {
+  checkProvider,
+  importProviderFile,
+  providers,
+  setProviderEnabled,
+  syncProvider,
+  toProblem,
+} from '@/api/client'
 import type { Problem } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -33,6 +40,7 @@ const list = useRequest(providers)
 const busy = ref('')
 const notice = ref<{ id: string; text: string } | undefined>(undefined)
 const failure = ref<{ id: string; problem: Problem } | undefined>(undefined)
+const importFile = ref<File | undefined>(undefined)
 
 async function act(id: string, label: string, action: () => Promise<string>): Promise<void> {
   busy.value = id
@@ -69,6 +77,19 @@ function check(id: string): Promise<void> {
     const result = await checkProvider(id)
     if (result.ok) return 'Credentials accepted.'
     return `Credentials rejected (${result.error_class ?? 'unknown'}): ${result.detail ?? 'no detail given'}`
+  })
+}
+
+function chooseImport(event: Event): void {
+  importFile.value = (event.target as HTMLInputElement).files?.[0]
+}
+
+function importExport(id: string): Promise<void> {
+  return act(id, 'Uploading export', async () => {
+    if (!importFile.value) throw new Error('Choose an export file first.')
+    await importProviderFile(id, importFile.value)
+    importFile.value = undefined
+    return 'Export uploaded; import queued.'
   })
 }
 </script>
@@ -161,6 +182,25 @@ function check(id: string): Promise<void> {
           </button>
         </p>
 
+        <div v-if="provider.capabilities.includes('file_import')" class="import-export">
+          <label :for="`import-${provider.id}`">Import personal export</label>
+          <input
+            :id="`import-${provider.id}`"
+            type="file"
+            accept=".csv,.rss,.xml,text/csv,application/rss+xml,application/xml,text/xml"
+            :disabled="busy === provider.id || !provider.enabled"
+            @change="chooseImport"
+          >
+          <button
+            type="button"
+            :disabled="busy === provider.id || !provider.enabled || !importFile"
+            @click="importExport(provider.id)"
+          >
+            Upload and import
+          </button>
+          <p class="muted">Exports stay local to this archive and are processed by the sync worker.</p>
+        </div>
+
         <!-- Always present, so the live region announces rather than being inserted mid-update. -->
         <p class="notice" role="status" aria-live="polite">
           {{ notice && notice.id === provider.id ? notice.text : '' }}
@@ -237,5 +277,15 @@ function check(id: string): Promise<void> {
   margin: 0;
   color: var(--text-muted);
   min-height: 1.5em;
+}
+
+.import-export {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.import-export p {
+  margin: 0;
 }
 </style>

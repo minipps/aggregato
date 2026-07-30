@@ -253,6 +253,26 @@ export function syncProvider(
   })
 }
 
+/** Upload a personal export without assigning a JSON content type to multipart form data. */
+export async function importProviderFile(
+  id: string,
+  file: File,
+): Promise<{ lineage_id?: string }> {
+  const data = new FormData()
+  data.append('file', file)
+  const response = await fetch(buildUrl(`/providers/${encodeURIComponent(id)}/import`), {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      ...(readCookie(CSRF_COOKIE) === null ? {} : { [CSRF_HEADER]: readCookie(CSRF_COOKIE)! }),
+    },
+    credentials: 'same-origin',
+    body: data,
+  })
+  if (!response.ok) throw new ProblemError(await problemFrom(response))
+  return (await response.json()) as { lineage_id?: string }
+}
+
 export function checkProvider(id: string): Promise<CheckResult> {
   return request<CheckResult>('POST', `/providers/${encodeURIComponent(id)}/check`)
 }

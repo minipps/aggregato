@@ -76,15 +76,15 @@ def build_dispatch(
             consecutive_failures=due.consecutive_failures,
             interval_seconds=due.interval_seconds,
             clock=clock,
-            import_path=Path(job.path) if job is not None else None,
+            import_path=job[1] if job is not None else None,
         )
         if job is not None:
-            await _finish_import_job(engine, job.id)
+            await _finish_import_job(engine, job[0])
 
     return dispatch
 
 
-async def _next_import_job(engine: AsyncEngine, provider_id: str) -> object | None:
+async def _next_import_job(engine: AsyncEngine, provider_id: str) -> tuple[int, Path] | None:
     """Claim the oldest queued upload for a provider already claimed by the scheduler."""
     async with transaction(engine) as conn:
         job = (
@@ -96,12 +96,15 @@ async def _next_import_job(engine: AsyncEngine, provider_id: str) -> object | No
             )
         ).first()
         if job is not None:
+            job_id = int(job._mapping["id"])
+            path = Path(str(job._mapping["path"]))
             await conn.execute(
                 update(import_jobs)
-                .where(import_jobs.c.id == job.id)
+                .where(import_jobs.c.id == job_id)
                 .values(started_at=SYSTEM_CLOCK.now())
             )
-        return job
+            return job_id, path
+        return None
 
 
 async def _finish_import_job(engine: AsyncEngine, job_id: int) -> None:

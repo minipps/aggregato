@@ -69,7 +69,7 @@ def test_conventions_hold_for_the_bundled_provider() -> None:
 
 def test_unknown_provider_id_is_a_lookup_error() -> None:
     with pytest.raises(LookupError):
-        load_provider("letterboxd")
+        load_provider("not-a-provider")
 
 
 def test_importing_a_provider_module_has_no_side_effects() -> None:

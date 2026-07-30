@@ -59,6 +59,10 @@ class GoodreadsConfig(BaseModel):
             "it is intentionally not fetched until that surface is documented and implemented."
         ),
     )
+    export_path: Path | None = Field(
+        default=None,
+        description="Optional local library-export CSV for a manually requested full sync.",
+    )
 
 
 class GoodreadsProvider:
@@ -88,15 +92,18 @@ class GoodreadsProvider:
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: FetchMode
     ) -> AsyncIterator[RawRecord | Checkpoint]:
-        del cursor
+        if cursor is not None and cursor.state.get("import_complete"):
+            yield Checkpoint(cursor=cursor)
+            return
         if mode is not FetchMode.IMPORT:
             if _config(ctx).automatic_feed_url is not None:
                 raise ProviderError(
                     "Goodreads automatic sync is planned but not implemented "
                     "for the configured feed"
                 )
-            return
-        path = ctx.import_path
+            path = _config(ctx).export_path
+        else:
+            path = ctx.import_path
         if path is None:
             raise ProviderError("Goodreads import mode requires an export file")
         rows = _rows(path)
@@ -182,6 +189,11 @@ class GoodreadsProvider:
                     "supported endpoint"
                 ),
             )
+        if config.export_path is not None:
+            try:
+                _rows(config.export_path)
+            except ProviderError as exc:
+                return CheckResult(ok=False, error_class=exc.error_class, detail=str(exc))
         return CheckResult(ok=True, detail="Goodreads is ready to import a library-export CSV")
 
 

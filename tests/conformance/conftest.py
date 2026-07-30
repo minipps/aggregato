@@ -86,6 +86,18 @@ REGISTERED = [
             "base_url": "https://listenbrainz.fixture",
         },
     ),
+    Registration(
+        provider_id="goodreads",
+        records="library_export.csv",
+        invalid="structure-changed.csv",
+        config=lambda path: {"export_path": path},
+    ),
+    Registration(
+        provider_id="letterboxd",
+        records="activity.rss",
+        invalid="structure-changed.rss",
+        config=lambda path: {"export_path": path},
+    ),
 ]
 """Every bundled provider. ``test_every_bundled_provider_is_registered`` fails if one is missing, so
 shipping a provider without entering it into the gate is not possible (contract §5)."""
