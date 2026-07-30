@@ -22,6 +22,10 @@ class CreatorResolution:
     confidence: Confidence
 
 
+CreatorResolutionMemo = dict[tuple[str, str, tuple[tuple[str, str], ...]], CreatorResolution]
+"""Sync-scoped cache keyed by family, normalized credit name, and asserted identifiers."""
+
+
 async def resolve_creators(
     conn: AsyncConnection,
     batch: NormalizedBatch,
@@ -29,6 +33,7 @@ async def resolve_creators(
     *,
     source: str,
     now: datetime,
+    memo: CreatorResolutionMemo | None = None,
 ) -> list[CreatorResolution]:
     """Resolve all credits using two bounded lookups, then create unmatched creators.
 
@@ -40,6 +45,14 @@ async def resolve_creators(
         ids_by_name.setdefault(identifier.creator_name, []).append(
             (identifier.namespace, identifier.value)
         )
+    keys = [
+        _memo_key(family, credit.creator_name, ids_by_name.get(credit.creator_name, []))
+        for credit in batch.credits
+    ]
+    if memo is not None:
+        cached = [memo.get(key) for key in keys]
+        if all(resolution is not None for resolution in cached):
+            return [resolution for resolution in cached if resolution is not None]
     identifiers = [pair for pairs in ids_by_name.values() for pair in pairs]
     id_matches: dict[tuple[str, str], set[uuid.UUID]] = {}
     if identifiers:
@@ -128,4 +141,13 @@ async def resolve_creators(
                 )
             )
         resolved.append(resolution)
+    if memo is not None:
+        memo.update(zip(keys, resolved, strict=True))
     return resolved
+
+
+def _memo_key(
+    family: MediaFamily, creator_name: str, identifiers: list[tuple[str, str]]
+) -> tuple[str, str, tuple[tuple[str, str], ...]]:
+    """Keep identifier-backed and name-only results separate in the sync-scoped memo."""
+    return (str(family), normalize_title(creator_name), tuple(sorted(identifiers)))

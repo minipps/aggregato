@@ -24,7 +24,7 @@ from aggregato.domain.models import (
     NormalizedCredit,
     NormalizedWork,
 )
-from aggregato.ingest.resolve_creator import resolve_creators
+from aggregato.ingest.resolve_creator import CreatorResolutionMemo, resolve_creators
 from aggregato.ingest.resolve_queue import queue_cross_family_creator_suggestions
 from aggregato.ingest.titles import normalize_title
 from tests.unit._sync_connection import SyncConnectionAdapter
@@ -155,3 +155,16 @@ async def test_unique_name_match_is_marked_matched(conn: SyncConnectionAdapter) 
     result = await resolve_creators(conn, batch(), MediaFamily.SCREEN, source="test", now=NOW)
     assert result[0].creator_id == existing
     assert result[0].confidence is Confidence.MATCHED
+
+
+async def test_resolution_memo_reuses_a_repeated_credit_set(conn: SyncConnectionAdapter) -> None:
+    memo: CreatorResolutionMemo = {}
+    first = await resolve_creators(
+        conn, batch(), MediaFamily.SCREEN, source="test", now=NOW, memo=memo
+    )
+    second = await resolve_creators(
+        conn, batch(), MediaFamily.SCREEN, source="test", now=NOW, memo=memo
+    )
+
+    assert second == first
+    assert len(memo) == 1

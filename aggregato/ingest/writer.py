@@ -47,7 +47,7 @@ from aggregato.domain.ratings import RatingOutOfScale, RatingScale, normalize_ra
 from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
 from aggregato.images.cache import register_source_on_connection
 from aggregato.ingest.failures import capture_failure
-from aggregato.ingest.resolve_creator import resolve_creators
+from aggregato.ingest.resolve_creator import CreatorResolutionMemo, resolve_creators
 from aggregato.ingest.resolve_queue import (
     queue_cross_family_creator_suggestions,
     queue_work_ambiguity,
@@ -103,10 +103,11 @@ async def write_batches(
         Counts for the run row.
     """
     counts = WriteCounts()
+    creator_memo: CreatorResolutionMemo = {}
     for raw, batch in records:
         counts.seen += 1
         try:
-            await _write_one(conn, ctx, raw, batch, counts)
+            await _write_one(conn, ctx, raw, batch, counts, creator_memo)
         except (ValidationRejection, RatingOutOfScale, ValueError) as exc:
             # One poisoned record must never cost the operator the rest of the run (FR-023).
             counts.failed += 1
@@ -131,6 +132,7 @@ async def _write_one(
     raw: RawRecord,
     batch: NormalizedBatch,
     counts: WriteCounts,
+    creator_memo: CreatorResolutionMemo,
 ) -> None:
     """Write one normalized batch. Raises rather than half-writing."""
     _validate(ctx, batch)
@@ -155,7 +157,12 @@ async def _write_one(
         )
 
     creators = await resolve_creators(
-        conn, batch, family_of(batch.work.media_type), source=ctx.provider_id, now=ctx.now
+        conn,
+        batch,
+        family_of(batch.work.media_type),
+        source=ctx.provider_id,
+        now=ctx.now,
+        memo=creator_memo,
     )
     await queue_cross_family_creator_suggestions(
         conn,
