@@ -15,9 +15,13 @@ shutdown() {
 }
 trap shutdown TERM INT
 
+# AGGREGATO_RELOAD is the development overlay's switch (docker/compose.dev.yml), which bind-mounts
+# the source over /app/aggregato. Empty or unset in production: a watcher there is overhead, and a
+# code change means a new image.
 uvicorn aggregato.main:app \
     --host "${AGGREGATO_HOST:-0.0.0.0}" \
-    --port "${AGGREGATO_PORT:-8000}" &
+    --port "${AGGREGATO_PORT:-8000}" \
+    ${AGGREGATO_RELOAD:+--reload} &
 api_pid=$!
 
 python -m aggregato.worker &

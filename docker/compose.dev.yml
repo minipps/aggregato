@@ -1,6 +1,41 @@
-# Development overlay: mount the Vue source into a Vite container for live updates. Keep this
+# Development overlay: run both halves from this checkout instead of the published image. Keep this
 # separate from compose.yml so production remains one built image, one volume, and no Node runtime.
+#
+#   docker compose -f compose.yml -f compose.dev.yml up --build
+#
+# compose.yml names a published `image:`, which is what makes a plain `up` pull a release rather than
+# build this checkout — correct for an operator, wrong for development. This overlay renames the tag
+# and pins `pull_policy: build`, so there is no registry lookup and no chance of testing a change
+# against last release's code.
 services:
+  # Same service compose.yml declares, rebuilt from source with the Python package bind-mounted, so
+  # an edit is live without a rebuild. Everything else — ports, environment, the data volume — is
+  # inherited rather than restated.
+  aggregato:
+    image: aggregato:dev
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      # Turns on uvicorn's reloader in the entrypoint. Unset in production, where a watcher is
+      # overhead and a code change means a new image.
+      AGGREGATO_RELOAD: "1"
+    volumes:
+      # The image installs the package editable against /app, so this is all live-code takes.
+      # Read-only: the container has no business writing to the checkout.
+      - ../aggregato:/app/aggregato:ro
+      # ponytail: only the API reloads. The scheduler is a plain `python -m`, so a change to worker
+      # or provider code needs `docker compose restart aggregato` — worth a supervisor watching both
+      # only if that restart becomes the common case.
+    develop:
+      watch:
+        # Dependency changes are the one edit a bind mount cannot carry: rebuild instead.
+        - path: ../pyproject.toml
+          action: rebuild
+        - path: ../uv.lock
+          action: rebuild
+
   frontend:
     image: node:22-slim
     working_dir: /app
