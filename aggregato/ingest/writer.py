@@ -36,7 +36,6 @@ from aggregato.db.schema import (
     external_ids,
     opinions,
     provider_items,
-    works,
 )
 from aggregato.db.search import SearchKind, index_document
 from aggregato.db.upsert import upsert_stmt
@@ -45,6 +44,8 @@ from aggregato.domain.models import NormalizedBatch, RawRecord
 from aggregato.domain.ratings import RatingOutOfScale, RatingScale, normalize_rating
 from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
 from aggregato.ingest.failures import capture_failure
+from aggregato.ingest.resolve_work import resolve_work
+from aggregato.ingest.titles import normalize_title
 
 
 @dataclass
@@ -126,7 +127,8 @@ async def _write_one(
     """Write one normalized batch. Raises rather than half-writing."""
     _validate(ctx, batch)
 
-    work_id = await _resolve_work_placeholder(conn, ctx, batch)
+    resolution = await resolve_work(conn, batch, now=ctx.now)
+    work_id = resolution.work_id
     item_id = await _upsert_provider_item(conn, ctx, raw, batch, work_id)
 
     for external in batch.external_ids:
@@ -206,53 +208,6 @@ def _title_document(batch: NormalizedBatch) -> str:
     return " ".join(forms)
 
 
-async def _resolve_work_placeholder(
-    conn: AsyncConnection, ctx: WriteContext, batch: NormalizedBatch
-) -> uuid.UUID:
-    """Find or create the work this batch concerns.
-
-    ponytail: identity resolution proper is T071 (asserted identifier -> title+year match -> create,
-    queueing on ambiguity, FR-011/FR-012). Until it lands, this does the *asserted* half only —
-    match on a shared external identifier, otherwise create — which is enough for one provider and
-    is exactly the branch US1 needs. It deliberately does NOT title-match, because a wrong
-    auto-merge is the expensive mistake and a duplicate is the cheap one (FR-012's own preference).
-    """
-    for external in batch.external_ids:
-        existing = await conn.execute(
-            select(external_ids.c.work_id).where(
-                and_(
-                    external_ids.c.namespace == external.namespace,
-                    external_ids.c.value == external.value,
-                )
-            )
-        )
-        row = existing.first()
-        if row is not None:
-            found: uuid.UUID = row.work_id
-            return found
-
-    work_id = uuid.uuid4()
-    await conn.execute(
-        works.insert().values(
-            id=work_id,
-            media_type=str(batch.work.media_type),
-            title=batch.work.title,
-            sort_title=sort_title_for(batch.work.title),
-            original_title=batch.work.original_title,
-            release_year=batch.work.release_year,
-            sequence_number=batch.work.sequence_number,
-            image_url=batch.work.image_url,
-            metadata=batch.work.metadata,
-            created_at=ctx.now,
-            updated_at=ctx.now,
-        )
-    )
-    return work_id
-
-
-_LEADING_ARTICLES = ("the ", "a ", "an ")
-
-
 def sort_title_for(title: str) -> str:
     """Casefold and strip a leading article, for the sort and name-matching index.
 
@@ -260,11 +215,7 @@ def sort_title_for(title: str) -> str:
     project, and this value is a sort key rather than an identity: getting it wrong reorders a list,
     it does not merge two works. T070 replaces it with the normalizer resolution shares.
     """
-    folded = title.casefold().strip()
-    for article in _LEADING_ARTICLES:
-        if folded.startswith(article):
-            return folded.removeprefix(article).strip()
-    return folded
+    return normalize_title(title)
 
 
 async def _upsert_provider_item(
