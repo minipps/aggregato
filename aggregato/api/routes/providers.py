@@ -242,7 +242,9 @@ async def sync_now(
         id: Provider id.
         body: Optional ``{"mode": "incremental" | "full"}``. A ``full`` request clears the cursor,
             because that is what "full" means and a full run that resumed from a cursor would not be
-            one.
+            one, and records the mode on ``provider_state.requested_mode`` so the dispatch that
+            picks the provider up runs it as ``full`` rather than as the scheduler's incremental
+            default — the run's recorded mode and the full-run guards both depend on that.
 
     Returns:
         The ``lineage_id`` the run and its retries share, so a caller follows the attempts as one
@@ -287,7 +289,7 @@ async def sync_now(
                 type=error_type("sync-in-flight"),
             )
 
-        values: dict[str, Any] = {"next_run_at": now}
+        values: dict[str, Any] = {"next_run_at": now, "requested_mode": mode}
         if mode == "full":
             # A "full" run that resumed from a cursor would not be full.
             values["cursor"] = None

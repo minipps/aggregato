@@ -229,6 +229,42 @@ async def test_a_full_sync_clears_the_cursor(client: httpx.AsyncClient) -> None:
     assert cursor is None
 
 
+async def test_a_full_sync_request_reaches_the_dispatcher(client: httpx.AsyncClient) -> None:
+    """Clearing the cursor is not enough on its own.
+
+    The scheduler has no mode of its own — it is a timestamp column — so a run dispatched from it
+    was always ``incremental``, whatever the operator asked for. That downgrade is invisible: the
+    cursor clearing makes most providers re-read anyway, while the run is *recorded* as incremental
+    and the full-run guards (window sanity, inferred deletes) never fire.
+    """
+    from datetime import UTC, datetime
+
+    from aggregato.sync.scheduler import due_providers
+
+    await client.post("/api/v1/providers/fixture/enable")
+    await client.post("/api/v1/providers/fixture/sync", json={"mode": "full"})
+
+    engine = await _engine_for(client)
+    (due,) = await due_providers(engine, now=datetime.now(UTC))  # type: ignore[arg-type]
+    assert due.requested_mode == "full"
+
+
+async def test_an_incremental_sync_leaves_no_mode_request_behind(
+    client: httpx.AsyncClient,
+) -> None:
+    """A scheduled run is incremental, so the ordinary case stores nothing to consume."""
+    from datetime import UTC, datetime
+
+    from aggregato.sync.scheduler import due_providers
+
+    await client.post("/api/v1/providers/fixture/enable")
+    await client.post("/api/v1/providers/fixture/sync")
+
+    engine = await _engine_for(client)
+    (due,) = await due_providers(engine, now=datetime.now(UTC))  # type: ignore[arg-type]
+    assert due.requested_mode == "incremental"
+
+
 async def test_an_incremental_sync_keeps_the_cursor(client: httpx.AsyncClient) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     engine = await _engine_for(client)

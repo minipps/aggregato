@@ -62,6 +62,9 @@ class DueProvider:
     retry_step: int
     consecutive_failures: int
     cursor: dict[str, object] | None
+    requested_mode: str | None = None
+    """What an operator asked for via ``POST /providers/{id}/sync``, if anything. ``None`` is the
+    ordinary scheduled run, which is always incremental."""
 
 
 async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvider]:
@@ -84,6 +87,7 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
             provider_state.c.retry_step,
             provider_state.c.consecutive_failures,
             provider_state.c.cursor,
+            provider_state.c.requested_mode,
         )
         .join(providers, providers.c.id == provider_state.c.provider_id)
         .where(
@@ -106,6 +110,7 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
                 retry_step=row.retry_step,
                 consecutive_failures=row.consecutive_failures,
                 cursor=row.cursor,
+                requested_mode=row.requested_mode,
             )
             for row in result
         ]

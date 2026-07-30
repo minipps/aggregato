@@ -446,6 +446,11 @@ provider_state = Table(
     Column("consecutive_failures", Integer, nullable=False, server_default=text("0")),
     Column("retry_step", Integer, nullable=False, server_default=text("0")),
     Column("last_success_at", TIMESTAMP),
+    # Set when an operator asks for a specific mode, read and cleared by the next dispatch. The
+    # schedule itself has no mode: a scheduled run is always incremental, so "full" is a one-shot
+    # request that has to outlive the request that made it — the API cannot spawn the run itself
+    # (research.md R1), and without this the mode was silently downgraded on the way to the child.
+    Column("requested_mode", String(16)),
     # The sanity baseline (research.md R21): the previous run's item count for the same window.
     # This is the guard that makes a broken scraper look like a broken scraper rather than like an
     # emptied history.
