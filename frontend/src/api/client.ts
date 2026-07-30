@@ -243,6 +243,14 @@ export function providerConfigSchema(id: string): Promise<JsonSchema> {
   return request<JsonSchema>('GET', `/providers/${encodeURIComponent(id)}/config-schema`)
 }
 
+/** Persist settings validated by the provider's declared schema; responses never expose them. */
+export function updateProviderConfig(
+  id: string,
+  settings: Record<string, string | number | boolean | null>,
+): Promise<Provider> {
+  return request<Provider>('PUT', `/providers/${encodeURIComponent(id)}/config`, { body: settings })
+}
+
 /**
  * Enable or disable a provider.
  *

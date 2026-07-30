@@ -21,6 +21,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: Record<string, string | number | boolean | null>]
+  submit: []
 }>()
 
 const values = ref<Record<string, string | number | boolean | null>>({})
@@ -48,7 +49,7 @@ function update(name: string, field: JsonSchema, event: Event): void {
 </script>
 
 <template>
-  <form class="schema-form" @submit.prevent>
+  <form class="schema-form" @submit.prevent="emit('submit')">
     <p v-if="schema.description" class="muted">{{ schema.description }}</p>
     <div v-for="[name, field] in properties" :key="name" class="schema-form__field">
       <label :for="`config-${name}`">

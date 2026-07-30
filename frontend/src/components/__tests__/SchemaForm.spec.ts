@@ -26,4 +26,10 @@ describe('SchemaForm', () => {
     await wrapper.get('input[type="checkbox"]').setValue(true)
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toMatchObject({ include_notes: true })
   })
+
+  it('emits submit so a parent can persist schema-driven settings', async () => {
+    const wrapper = mount(SchemaForm, { props: { schema } })
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('submit')).toHaveLength(1)
+  })
 })

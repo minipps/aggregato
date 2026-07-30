@@ -22,6 +22,7 @@ import {
   setProviderEnabled,
   syncProvider,
   toProblem,
+  updateProviderConfig,
 } from '@/api/client'
 import type { JsonSchema, Problem } from '@/api/types'
 import { useRequest } from '@/api/useApi'
@@ -45,6 +46,8 @@ const failure = ref<{ id: string; problem: Problem } | undefined>(undefined)
 const importFile = ref<File | undefined>(undefined)
 const configSchemas = ref<Record<string, JsonSchema | undefined>>({})
 const configSchemaFailure = ref<{ id: string; problem: Problem } | undefined>(undefined)
+type ConfigValues = Record<string, string | number | boolean | null>
+const configValues = ref<Record<string, ConfigValues>>({})
 
 async function act(id: string, label: string, action: () => Promise<string>): Promise<void> {
   busy.value = id
@@ -106,11 +109,20 @@ async function showConfigSchema(id: string): Promise<void> {
   busy.value = id
   try {
     configSchemas.value = { ...configSchemas.value, [id]: await providerConfigSchema(id) }
+    configValues.value = { ...configValues.value, [id]: {} }
   } catch (caught) {
     configSchemaFailure.value = { id, problem: toProblem(caught) }
   } finally {
     busy.value = ''
   }
+}
+
+function saveConfiguration(id: string): Promise<void> {
+  return act(id, 'Saving configuration', async () => {
+    await updateProviderConfig(id, configValues.value[id] ?? {})
+    await list.reload()
+    return 'Configuration saved. Enable the provider when you are ready to sync.'
+  })
 }
 </script>
 
@@ -208,14 +220,27 @@ async function showConfigSchema(id: string): Promise<void> {
             Check credentials
           </button>
           <button type="button" :disabled="busy === provider.id" @click="showConfigSchema(provider.id)">
-            {{ configSchemas[provider.id] ? 'Hide configuration' : 'View configuration' }}
+            {{ configSchemas[provider.id] ? 'Hide configuration' : 'Configure provider' }}
           </button>
         </p>
 
         <section v-if="configSchemas[provider.id]" class="configuration" :aria-label="`${provider.name} configuration`">
           <h3>Configuration fields</h3>
-          <SchemaForm :schema="configSchemas[provider.id]!" disabled />
-          <p class="muted">Configuration is managed in the local config file; these fields document what this provider accepts.</p>
+          <SchemaForm
+            v-model="configValues[provider.id]"
+            :schema="configSchemas[provider.id]!"
+            :disabled="busy === provider.id || Boolean(provider.file_pinned_settings?.length)"
+            @submit="saveConfiguration(provider.id)"
+          />
+          <p v-if="provider.file_pinned_settings?.length" class="muted">
+            This provider is configured by the mounted file, so web edits are unavailable.
+          </p>
+          <template v-else>
+            <p class="muted">Existing values, including credentials, are never shown. Complete required fields to replace the saved configuration.</p>
+            <button type="button" :disabled="busy === provider.id" @click="saveConfiguration(provider.id)">
+              Save configuration
+            </button>
+          </template>
         </section>
         <ErrorState
           v-if="configSchemaFailure && configSchemaFailure.id === provider.id"
