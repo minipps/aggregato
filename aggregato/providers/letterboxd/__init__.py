@@ -71,7 +71,7 @@ class LetterboxdConfig(BaseModel):
 class LetterboxdProvider:
     id: str = "letterboxd"
     name: str = "Letterboxd"
-    media_types: set[MediaType] = {MediaType.FILM, MediaType.TV_SERIES}  # noqa: RUF012
+    media_types: set[MediaType] = {MediaType.FILM, MediaType.TV}  # noqa: RUF012
     capabilities: ClassVar[set[Capability]] = {
         Capability.POLL,
         Capability.FILE_IMPORT,
@@ -144,7 +144,7 @@ class LetterboxdProvider:
             )
         return NormalizedBatch(
             work=NormalizedWork(
-                media_type=MediaType.TV_SERIES if item.get("tmdb_tv_id") else MediaType.FILM,
+                media_type=MediaType.TV if item.get("tmdb_tv_id") else MediaType.FILM,
                 title=title,
                 release_year=_integer(item.get("film_year")),
                 image_url=item.get("image_url"),

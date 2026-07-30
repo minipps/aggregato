@@ -56,7 +56,7 @@ class AniListConfig(BaseModel):
 class AniListProvider:
     id: str = "anilist"
     name: str = "AniList"
-    media_types: set[MediaType] = {MediaType.ANIME_SERIES, MediaType.MANGA}  # noqa: RUF012
+    media_types: set[MediaType] = {MediaType.ANIME, MediaType.MANGA}  # noqa: RUF012
     capabilities: set[Capability] = {  # noqa: RUF012
         Capability.POLL,
         Capability.BACKFILL,
@@ -124,7 +124,7 @@ class AniListProvider:
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         item = raw.payload
         media = item["media"]
-        media_type = MediaType.MANGA if media.get("type") == "MANGA" else MediaType.ANIME_SERIES
+        media_type = MediaType.MANGA if media.get("type") == "MANGA" else MediaType.ANIME
         title = media.get("title", {})
         score = item.get("score")
         staff = media.get("staff", {}).get("edges", [])
@@ -260,7 +260,7 @@ def _entries(
     ``PLANNING`` retracts it (:func:`~aggregato.ingest.writer._retract_entries`). One list entry is
     one state, and the log shows the newest one — for anime and manga alike.
     """
-    screen = media_type is MediaType.ANIME_SERIES
+    screen = media_type is MediaType.ANIME
     # REPEATING covers a reread too: REWATCH is the only repeat kind the domain has, and calling a
     # reread a plain READ would lose the fact that it happened again.
     kind = {

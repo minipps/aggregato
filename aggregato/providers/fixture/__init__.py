@@ -137,7 +137,7 @@ class FixtureProvider:
     # than a lint preference. One instance per provider class, so the shared-default risk is moot.
     media_types: set[MediaType] = {  # noqa: RUF012
         MediaType.FILM,
-        MediaType.TV_SERIES,
+        MediaType.TV,
         MediaType.BOOK,
     }
     capabilities: set[Capability] = {  # noqa: RUF012

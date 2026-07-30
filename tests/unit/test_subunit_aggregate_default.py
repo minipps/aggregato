@@ -42,7 +42,7 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
                 },
                 {
                     "id": episode_work,
-                    "media_type": "tv_series",
+                    "media_type": "tv",
                     "title": "Season with episodes",
                     "sort_title": "season with episodes",
                     "created_at": NOW,

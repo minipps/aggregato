@@ -7,6 +7,7 @@ only proved by executing it.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -192,8 +193,100 @@ def test_0005_keeps_the_log_it_retypes(tmp_path: Path) -> None:
         )
         conn.commit()
 
-    command.upgrade(config, "head")
+    # Stops at 0005 rather than head: this pins 0005's own behaviour, and a later revision that
+    # renames the vocabulary again should not have to come back and edit this assertion.
+    command.upgrade(config, "0005")
 
     with closing(sqlite3.connect(db)) as conn:
         assert conn.execute("SELECT count(*) FROM entries").fetchone() == (1,)
         assert conn.execute("SELECT media_type FROM works").fetchall() == [("anime_series",)]
+
+
+def _seed_at_0006(db: Path, media_type: str) -> Config:
+    """A work of ``media_type``, an entry hanging off it, and a merge_log snapshot naming it."""
+    config = _config(_url(db))
+    command.upgrade(config, "0006")
+    snapshot = {"works": [{"id": "w", "media_type": media_type, "title": "t"}], "entries": []}
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+            " VALUES ('w', ?, 't', 't', '2026-01-01', '2026-01-01')",
+            (media_type,),
+        )
+        conn.execute(
+            "INSERT INTO provider_items (id, provider_id, native_id, title_as_given, raw_payload,"
+            " schema_version, first_seen_at, last_seen_at)"
+            " VALUES (1, 'letterboxd', 'n', 't', '{}', 1, '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO entries (work_id, provider_id, provider_item_id, kind, logged_at,"
+            " logged_precision, ingested_at)"
+            " VALUES ('w', 'letterboxd', 1, 'watch', '2026-01-01', 'exact', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, performed_at,"
+            " snapshot) VALUES (1, 'work', 'merge', 'w', '[]', '2026-01-01', ?)",
+            (json.dumps(snapshot),),
+        )
+        conn.commit()
+    return config
+
+
+@pytest.mark.parametrize(("old", "new"), [("tv_series", "tv"), ("anime_series", "anime")])
+def test_0007_renames_the_media_type_without_losing_the_log(
+    tmp_path: Path, old: str, new: str
+) -> None:
+    """The rename must not repeat 0005's mistake: the rebuild it needs must keep every child row."""
+    db = tmp_path / "aggregato.db"
+    config = _seed_at_0006(db, old)
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT media_type FROM works").fetchall() == [(new,)]
+        # The whole point of the guard around the batch rebuild.
+        assert conn.execute("SELECT count(*) FROM entries").fetchone() == (1,)
+        assert conn.execute("SELECT count(*) FROM provider_items").fetchone() == (1,)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+                " VALUES ('x', ?, 't', 't', '2026-01-01', '2026-01-01')",
+                (old,),
+            )
+
+
+@pytest.mark.parametrize(("old", "new"), [("tv_series", "tv"), ("anime_series", "anime")])
+def test_0007_renames_inside_merge_log_snapshots(tmp_path: Path, old: str, new: str) -> None:
+    """An undo restores the snapshotted rows verbatim, so a stale name there breaks the undo."""
+    db = tmp_path / "aggregato.db"
+    config = _seed_at_0006(db, old)
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        snapshot = json.loads(conn.execute("SELECT snapshot FROM merge_log").fetchone()[0])
+    assert snapshot["works"][0]["media_type"] == new
+    assert snapshot["works"][0]["title"] == "t", "the walk rewrote more than media_type"
+
+
+@pytest.mark.parametrize(("old", "new"), [("tv_series", "tv"), ("anime_series", "anime")])
+def test_0007_downgrade_restores_the_previous_names(tmp_path: Path, old: str, new: str) -> None:
+    """A pure rename is reversible, which is exactly what 0005's merge could not be."""
+    db = tmp_path / "aggregato.db"
+    config = _seed_at_0006(db, old)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, "0006")
+
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT media_type FROM works").fetchall() == [(old,)]
+        assert conn.execute("SELECT count(*) FROM entries").fetchone() == (1,)
+        snapshot = json.loads(conn.execute("SELECT snapshot FROM merge_log").fetchone()[0])
+        assert snapshot["works"][0]["media_type"] == old
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+                " VALUES ('x', ?, 't', 't', '2026-01-01', '2026-01-01')",
+                (new,),
+            )

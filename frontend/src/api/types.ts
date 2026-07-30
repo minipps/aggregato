@@ -8,11 +8,11 @@
 
 export type MediaType =
   | 'film'
-  | 'tv_series'
+  | 'tv'
   | 'book'
   | 'comic'
   | 'manga'
-  | 'anime_series'
+  | 'anime'
   | 'album'
   | 'track'
   | 'game'
