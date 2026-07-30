@@ -19,9 +19,10 @@ async def image(request: Request, hash: str) -> Response:
     # retrieval; the database setting is the operator-adjustable default.
     if not request.app.state.config.image_cache_enabled:
         return _placeholder()
-    if not (await get_settings(request.app.state.engine))["image_cache_enabled"]:
-        return _placeholder()
-    found = await cached_image(request.app.state.engine, request.app.state.config.data_dir, hash)
+    enabled = (await get_settings(request.app.state.engine))["image_cache_enabled"]
+    found = await cached_image(
+        request.app.state.engine, request.app.state.config.data_dir, hash, enabled=enabled
+    )
     if found is None:
         return _placeholder()
     path, content_type = found

@@ -35,8 +35,16 @@ async def register_source_on_connection(conn: AsyncConnection, source_url: str) 
     return digest
 
 
-async def cached_image(engine: AsyncEngine, data_dir: Path, digest: str) -> tuple[Path, str] | None:
-    """Return a cached image, lazily fetching a registered source on its first request."""
+async def cached_image(
+    engine: AsyncEngine, data_dir: Path, digest: str, *, enabled: bool = True
+) -> tuple[Path, str] | None:
+    """Return a cached image, or ``None`` when caching is disabled or unavailable.
+
+    The switch is checked before even looking up a source, keeping "images off" a true local
+    placeholder mode rather than a mode that accidentally reaches the remote host.
+    """
+    if not enabled:
+        return None
     async with transaction(engine) as conn:
         row = (
             await conn.execute(select(image_cache).where(image_cache.c.url_hash == digest))
