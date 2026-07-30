@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from aggregato.api.deps import register_auth, require_auth
 from aggregato.api.errors import register_error_handlers
-from aggregato.api.routes import auth, health, providers
+from aggregato.api.routes import auth, entries, health, opinions, providers, works
 from aggregato.config import Config, load_config
 from aggregato.db.engine import create_engine
 from aggregato.db.migrate import upgrade_to_head
@@ -84,6 +84,9 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
 
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(health.router, prefix=API_PREFIX)
+    app.include_router(entries.router, prefix=API_PREFIX)
+    app.include_router(works.router, prefix=API_PREFIX)
+    app.include_router(opinions.router, prefix=API_PREFIX)
     app.include_router(providers.router, prefix=API_PREFIX)
 
     _mount_frontend(app, settings)

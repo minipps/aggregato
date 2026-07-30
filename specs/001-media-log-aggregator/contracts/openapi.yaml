@@ -1,0 +1,841 @@
+openapi: 3.1.0
+info:
+  title: Aggregato API
+  version: 1.0.0
+  description: |
+    Single-user, self-hosted media log aggregator. Every endpoint requires authentication
+    (FR-032): either `Authorization: Bearer <api.token>` or the session cookie issued by
+    `POST /auth/session`. There is no unauthenticated mode.
+
+    Conventions (FR-003, FR-004, FR-030, spec §9.3):
+      * Timestamps are ISO 8601 with offset. `logged_at` is always accompanied by
+        `logged_precision`; clients must not render a fabricated time as exact.
+      * Ratings return raw value, scale, and normalized value. Normalized values are
+        comparable within a scale, not across platforms.
+      * Pagination is keyset-only via opaque `cursor`. There is no offset parameter.
+      * Sub-unit records (`subject_ref` non-null) are EXCLUDED from work-level aggregates
+        unless `include_subunits=true`.
+      * Soft-deleted rows are excluded unless `include_deleted=true`.
+      * Errors are RFC 9457 `application/problem+json`.
+servers:
+  - url: /api/v1
+
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+
+tags:
+  - name: log
+  - name: identity
+  - name: providers
+  - name: operations
+
+paths:
+  /auth/session:
+    post:
+      tags: [operations]
+      summary: Exchange the API token for a session cookie
+      description: Sets an HttpOnly, SameSite=Lax cookie and returns a CSRF token for
+        cookie-authenticated writes. Rotating `api.token` invalidates all sessions.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Session established; cookie and CSRF token set
+          headers:
+            Set-Cookie: { schema: { type: string } }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /works:
+    get:
+      tags: [log]
+      parameters:
+        - $ref: "#/components/parameters/mediaType"
+        - $ref: "#/components/parameters/mediaFamily"
+        - { name: q, in: query, schema: { type: string } }
+        - { name: year, in: query, schema: { type: integer } }
+        - $ref: "#/components/parameters/provider"
+        - { name: creator, in: query, schema: { type: string, format: uuid } }
+        - { name: has_opinion, in: query, schema: { type: boolean } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Page of works
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Work" } }
+        "400": { $ref: "#/components/responses/Problem" }
+
+  /works/{id}:
+    get:
+      tags: [log]
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Work with identifiers, credits, entries, opinions, parent and sibling seasons
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkDetail" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /entries:
+    get:
+      tags: [log]
+      summary: The primary log feed
+      parameters:
+        - $ref: "#/components/parameters/mediaType"
+        - $ref: "#/components/parameters/mediaFamily"
+        - $ref: "#/components/parameters/provider"
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/EntryKind" } }
+        - { name: creator, in: query, schema: { type: string, format: uuid } }
+        - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: score_min, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
+        - { name: score_max, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
+        - { name: has_review, in: query, schema: { type: boolean } }
+        - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
+        - { name: include_deleted, in: query, schema: { type: boolean, default: false } }
+        - { name: q, in: query, schema: { type: string }, description: Full text over titles and review text }
+        - { name: sort, in: query, schema: { type: string, enum: [logged_at, ingested_at, score], default: logged_at } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Page of entries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Entry" } }
+        "400": { $ref: "#/components/responses/Problem" }
+
+  /opinions:
+    get:
+      tags: [log]
+      parameters:
+        - $ref: "#/components/parameters/provider"
+        - { name: score_min, in: query, schema: { type: integer } }
+        - { name: score_max, in: query, schema: { type: integer } }
+        - { name: has_review, in: query, schema: { type: boolean } }
+        - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Page of opinions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Opinion" } }
+
+  /creators:
+    get:
+      tags: [identity]
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [person, group, studio, imprint, unknown] } }
+        - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
+        - { name: q, in: query, schema: { type: string } }
+        - $ref: "#/components/parameters/mediaType"
+        - $ref: "#/components/parameters/mediaFamily"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Page of creators
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Creator" } }
+
+  /creators/{id}:
+    get:
+      tags: [identity]
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200":
+          description: Creator with credits grouped by role and logged counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatorDetail" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /providers:
+    get:
+      tags: [providers]
+      responses:
+        "200":
+          description: Every discovered provider, enabled or not, with provenance and health
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Provider" } }
+
+  /providers/{id}/enable:
+    post:
+      tags: [providers]
+      summary: Enable a provider and schedule its first sync
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      responses:
+        "200":
+          description: Enabled provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /providers/{id}/disable:
+    post:
+      tags: [providers]
+      summary: Disable a provider without deleting its archive
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      responses:
+        "200":
+          description: Disabled provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Provider" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /providers/{id}/config-schema:
+    get:
+      tags: [providers]
+      summary: JSON Schema of the provider's configuration model
+      description: Drives the generated settings form (FR-039). Secret fields are marked
+        `writeOnly` and never returned with values.
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      responses:
+        "200":
+          description: JSON Schema
+          content:
+            application/json:
+              schema: { type: object }
+
+  /providers/{id}/runs:
+    get:
+      tags: [providers]
+      parameters:
+        - $ref: "#/components/parameters/providerId"
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/RunStatus" } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Sync run history, newest first, grouped by retry lineage
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/SyncRun" } }
+
+  /providers/{id}/sync:
+    post:
+      tags: [providers]
+      summary: Trigger a sync now
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode: { type: string, enum: [incremental, full], default: incremental }
+      responses:
+        "202":
+          description: Run queued
+          content:
+            application/json:
+              schema: { type: object, properties: { lineage_id: { type: string, format: uuid } } }
+        "409":
+          $ref: "#/components/responses/Problem"
+
+  /providers/{id}/check:
+    post:
+      tags: [providers]
+      summary: Verify credentials without ingesting
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      responses:
+        "200":
+          description: Check result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  error_class: { $ref: "#/components/schemas/ErrorClass" }
+                  detail: { type: string }
+
+  /providers/{id}/import:
+    post:
+      tags: [providers]
+      summary: Upload a user-supplied export file (import mode)
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: Import run queued
+        "415":
+          $ref: "#/components/responses/Problem"
+        "422":
+          description: File rejected; the archive is unchanged (US5 scenario 3)
+          $ref: "#/components/responses/Problem"
+
+  /resolution-queue:
+    get:
+      tags: [identity]
+      parameters:
+        - { name: subject, in: query, schema: { type: string, enum: [work, creator] } }
+        - { name: suggestion_kind, in: query, schema: { type: string } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Open resolution items with ranked candidates and the reason for each
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/ResolutionItem" } }
+
+  /resolution-queue/{id}/decide:
+    post:
+      tags: [identity]
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [linked, created, split, ignored] }
+                target_id: { type: string, format: uuid, description: Required when decision is `linked` }
+      responses:
+        "200":
+          description: Decision applied and recorded as `manual` confidence, durable against resync
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MergeLogEntry" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /works/{id}/merge:
+    post:
+      tags: [identity]
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [loser_ids]
+              properties:
+                loser_ids: { type: array, minItems: 1, items: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Works combined under this id; reversible
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MergeLogEntry" }
+
+  /creators/{id}/merge:
+    post:
+      tags: [identity]
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [loser_ids]
+              properties:
+                loser_ids: { type: array, minItems: 1, items: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Creators combined; aliases from all families retained
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MergeLogEntry" }
+
+  /creators/{id}/split:
+    post:
+      tags: [identity]
+      summary: Move selected credits to a new creator (credit-granular, FR-013)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credit_ids]
+              properties:
+                credit_ids:
+                  type: array
+                  minItems: 1
+                  items: { type: integer, format: int64 }
+                  description: The credits that move. Each credit exposes `link_confidence` so the
+                    operator can see which were joined by name rather than by asserted identifier.
+                new_name: { type: string }
+      responses:
+        "200":
+          description: New creator created holding the moved credits; reversible
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MergeLogEntry" }
+
+  /merge-log/{id}/undo:
+    post:
+      tags: [identity]
+      summary: Reverse a merge, split, or resolution decision (FR-017)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: Operation reversed }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /ingest-failures:
+    get:
+      tags: [operations]
+      parameters:
+        - $ref: "#/components/parameters/provider"
+        - { name: resolved, in: query, schema: { type: boolean, default: false } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Records that failed conversion, with enough context to file a plugin bug
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/IngestFailure" } }
+
+  /stats/summary:
+    get:
+      tags: [log]
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: [all, year, month, week] } }
+        - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Counts by media type, provider, and period
+          content:
+            application/json:
+              schema: { type: object }
+
+  /stats/top:
+    get:
+      tags: [log]
+      parameters:
+        - { name: group, in: query, required: true, schema: { type: string, enum: [work, creator] } }
+        - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
+        - { name: period, in: query, schema: { type: string } }
+        - $ref: "#/components/parameters/mediaType"
+        - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Ranked results
+          content:
+            application/json:
+              schema: { type: object }
+
+  /media/image/{hash}:
+    get:
+      tags: [operations]
+      summary: Cached platform-supplied image
+      description: Fetched lazily on first request, never during a sync. With caching disabled a
+        placeholder is returned; the API never redirects to the third-party host (FR-033).
+      parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            image/*: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /health:
+    get:
+      tags: [operations]
+      responses:
+        "200":
+          description: Per-provider status and last success time; degraded providers are named
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, providers]
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  providers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        status: { $ref: "#/components/schemas/ProviderStatus" }
+                        last_success_at: { type: string, format: date-time, nullable: true }
+                        consecutive_failures: { type: integer }
+
+  /export:
+    get:
+      tags: [operations]
+      summary: Portable backup archive (data + config, no secrets)
+      responses:
+        "200":
+          description: Archive stream
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    sessionCookie: { type: apiKey, in: cookie, name: aggregato_session }
+
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string } }
+    providerId: { name: id, in: path, required: true, schema: { type: string } }
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+      description: Opaque keyset cursor from the previous page. There is no offset parameter (FR-030).
+    provider:
+      name: provider
+      in: query
+      schema: { type: array, items: { type: string } }
+      explode: true
+    mediaType:
+      name: media_type
+      in: query
+      schema: { type: array, items: { $ref: "#/components/schemas/MediaType" } }
+      explode: true
+    mediaFamily:
+      name: media_family
+      in: query
+      description: Convenience over media_type; individual types stay separately addressable (FR-029).
+      schema: { type: array, items: { $ref: "#/components/schemas/MediaFamily" } }
+      explode: true
+
+  responses:
+    Problem:
+      description: RFC 9457 problem detail
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+
+    Page:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: {} }
+        next_cursor: { type: string, nullable: true }
+
+    MediaType:
+      type: string
+      enum: [film, tv_series, tv_season, book, comic, manga, anime_series, anime_season,
+             album, track, game, podcast, podcast_episode, other]
+    MediaFamily:
+      type: string
+      enum: [screen, print, audio, interactive, other]
+    EntryKind:
+      type: string
+      enum: [watch, rewatch, listen, read, finish, progress, drop]
+    Role:
+      type: string
+      enum: [author, illustrator, translator, editor, director, writer, composer, performer,
+             featured_performer, voice, narrator, studio, publisher, developer, other]
+    Confidence: { type: string, enum: [asserted, matched, manual] }
+    ErrorClass:
+      type: string
+      enum: [auth, rate_limit, transport, parse, structure_changed, blocked, internal]
+    RunStatus: { type: string, enum: [running, success, partial, failed] }
+    ProviderStatus: { type: string, enum: [disabled, idle, syncing, degraded, misconfigured] }
+    Acquisition: { type: string, enum: [api, feed, export, scrape] }
+
+    SubjectRef:
+      type: object
+      additionalProperties: false
+      description: Sub-unit of the work. Null means the whole work. Integers only.
+      properties:
+        season: { type: integer, minimum: 1 }
+        episode: { type: integer, minimum: 1 }
+        track: { type: integer, minimum: 1 }
+        disc: { type: integer, minimum: 1 }
+        chapter: { type: integer, minimum: 1 }
+        volume: { type: integer, minimum: 1 }
+
+    Rating:
+      type: object
+      description: Raw and normalized are both returned; normalized is not a cross-platform
+        equivalence claim (FR-003).
+      properties:
+        raw: { type: number, nullable: true }
+        scale_id: { type: string, nullable: true }
+        normalized: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+
+    ExternalId:
+      type: object
+      properties:
+        namespace: { type: string }
+        value: { type: string }
+        source: { type: string }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+
+    Work:
+      type: object
+      required: [id, media_type, media_family, title]
+      properties:
+        id: { type: string, format: uuid }
+        media_type: { $ref: "#/components/schemas/MediaType" }
+        media_family: { $ref: "#/components/schemas/MediaFamily" }
+        title: { type: string }
+        original_title: { type: string, nullable: true }
+        release_year: { type: integer, nullable: true }
+        parent_work_id: { type: string, format: uuid, nullable: true }
+        sequence_number: { type: integer, nullable: true }
+        image: { type: string, nullable: true, description: Local cached image path, never a third-party URL }
+        entry_count: { type: integer }
+        providers: { type: array, items: { type: string } }
+
+    WorkDetail:
+      allOf:
+        - $ref: "#/components/schemas/Work"
+        - type: object
+          properties:
+            external_ids: { type: array, items: { $ref: "#/components/schemas/ExternalId" } }
+            credits: { type: array, items: { $ref: "#/components/schemas/Credit" } }
+            entries: { type: array, items: { $ref: "#/components/schemas/Entry" } }
+            opinions: { type: array, items: { $ref: "#/components/schemas/Opinion" } }
+            parent: { $ref: "#/components/schemas/Work" }
+            siblings:
+              type: array
+              description: Sibling seasons, so clients navigate the hierarchy without a second query
+              items: { $ref: "#/components/schemas/Work" }
+
+    Entry:
+      type: object
+      required: [id, work_id, provider_id, kind, logged_at, logged_precision]
+      properties:
+        id: { type: integer, format: int64 }
+        work_id: { type: string, format: uuid }
+        work: { $ref: "#/components/schemas/Work" }
+        provider_id: { type: string }
+        kind: { $ref: "#/components/schemas/EntryKind" }
+        logged_at: { type: string, format: date-time }
+        logged_precision: { type: string, enum: [exact, day, month, year, unknown] }
+        subject_ref: { $ref: "#/components/schemas/SubjectRef" }
+        progress:
+          type: object
+          nullable: true
+          properties:
+            value: { type: number }
+            unit: { type: string }
+        ingested_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+
+    Opinion:
+      type: object
+      required: [id, work_id, provider_id]
+      properties:
+        id: { type: integer, format: int64 }
+        work_id: { type: string, format: uuid }
+        provider_id: { type: string }
+        rating: { $ref: "#/components/schemas/Rating" }
+        subject_ref: { $ref: "#/components/schemas/SubjectRef" }
+        is_liked: { type: boolean, nullable: true }
+        review_text: { type: string, nullable: true }
+        review_format: { type: string, nullable: true, enum: [plain, markdown, html] }
+        contains_spoilers: { type: boolean, nullable: true }
+        authored_at: { type: string, format: date-time, nullable: true }
+
+    Credit:
+      type: object
+      required: [id, creator_id, role, position, source, link_confidence]
+      properties:
+        id: { type: integer, format: int64 }
+        creator_id: { type: string, format: uuid }
+        creator_name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        role_raw: { type: string, nullable: true }
+        credited_as: { type: string, nullable: true }
+        position: { type: integer }
+        source: { type: string }
+        link_confidence: { $ref: "#/components/schemas/Confidence" }
+
+    Creator:
+      type: object
+      required: [id, kind, name]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [person, group, studio, imprint, unknown] }
+        name: { type: string }
+        image: { type: string, nullable: true }
+        families: { type: array, items: { $ref: "#/components/schemas/MediaFamily" } }
+        credit_count: { type: integer }
+        logged_count: { type: integer }
+
+    CreatorDetail:
+      allOf:
+        - $ref: "#/components/schemas/Creator"
+        - type: object
+          properties:
+            aliases:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  media_family: { $ref: "#/components/schemas/MediaFamily" }
+                  kind: { type: string, enum: [primary, alias, romanization, native, credited_as] }
+            external_ids: { type: array, items: { $ref: "#/components/schemas/ExternalId" } }
+            credits_by_role:
+              type: object
+              additionalProperties:
+                type: array
+                items: { $ref: "#/components/schemas/Credit" }
+
+    Provider:
+      type: object
+      required: [id, name, enabled, status, acquisition, reviewed, capabilities, media_types]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        enabled: { type: boolean }
+        status: { $ref: "#/components/schemas/ProviderStatus" }
+        acquisition:
+          $ref: "#/components/schemas/Acquisition"
+        reviewed:
+          type: boolean
+          description: False for drop-in development providers, which the UI labels `unreviewed` (FR-041)
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [poll, backfill, file_import, reports_deletes, has_ratings, has_reviews,
+                   has_credits, scrapes, push]
+        media_types: { type: array, items: { $ref: "#/components/schemas/MediaType" } }
+        poll_interval_seconds: { type: integer }
+        next_run_at: { type: string, format: date-time, nullable: true }
+        last_success_at: { type: string, format: date-time, nullable: true }
+        consecutive_failures: { type: integer }
+        last_error:
+          type: object
+          nullable: true
+          properties:
+            error_class: { $ref: "#/components/schemas/ErrorClass" }
+            message: { type: string }
+            action_required: { type: string, description: What the operator must do (FR-021, SC-005) }
+        file_pinned_settings:
+          type: array
+          items: { type: string }
+          description: Settings fixed by the config file, which the UI must show as uneditable (R15)
+
+    SyncRun:
+      type: object
+      required: [id, provider_id, lineage_id, attempt, status, started_at]
+      properties:
+        id: { type: integer, format: int64 }
+        provider_id: { type: string }
+        lineage_id: { type: string, format: uuid }
+        attempt: { type: integer }
+        mode: { type: string, enum: [incremental, full, import] }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        items_seen: { type: integer }
+        items_written: { type: integer }
+        items_failed: { type: integer }
+        error_class: { $ref: "#/components/schemas/ErrorClass" }
+        error_message: { type: string, nullable: true }
+        next_retry_at: { type: string, format: date-time, nullable: true }
+        log_excerpt: { type: string, nullable: true, description: Application logs, not user log data }
+
+    ResolutionItem:
+      type: object
+      required: [id, subject, candidates, proposed]
+      properties:
+        id: { type: integer, format: int64 }
+        subject: { type: string, enum: [work, creator] }
+        provider_id: { type: string }
+        suggestion_kind:
+          type: string
+          nullable: true
+          description: Distinguishes a genuine ambiguity from a proactive cross-family suggestion (FR-015)
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              score: { type: number }
+              reason: { type: string, description: Why this candidate was proposed (US4 scenario 1) }
+        proposed: { type: object, description: What is created if every candidate is rejected }
+        created_at: { type: string, format: date-time }
+
+    IngestFailure:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        provider_id: { type: string }
+        sync_run_id: { type: integer, format: int64 }
+        stage: { type: string, enum: [fetch, validate, normalize, write] }
+        error: { type: string }
+        raw_payload: { type: object }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time, nullable: true }
+
+    MergeLogEntry:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        subject: { type: string, enum: [work, creator] }
+        operation: { type: string, enum: [merge, split] }
+        winner_id: { type: string }
+        loser_ids: { type: array, items: { type: string } }
+        performed_at: { type: string, format: date-time }
+        undo_url: { type: string, description: FR-017 — every such operation is reversible }

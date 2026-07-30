@@ -13,12 +13,14 @@ conformance suite that parsed the fixtures itself would be asserting against its
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 import pytest
 
 from aggregato.domain.enums import Acquisition, Capability, FetchMode
@@ -63,6 +65,16 @@ REGISTERED = [
         records="log-two-pages.jsonl",
         invalid="unreadable-not-json.jsonl",
         config=lambda path: {"path": path},
+    ),
+    Registration(
+        provider_id="listenbrainz",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "username": "listener-0001",
+            "token": "invalid" if path.name == "credentials-invalid.json" else "valid",
+            "base_url": "https://listenbrainz.fixture",
+        },
     ),
 ]
 """Every bundled provider. ``test_every_bundled_provider_is_registered`` fails if one is missing, so
@@ -111,14 +123,41 @@ def records_path(registration: Registration, provider_fixtures: Path) -> Path:
 
 def build_ctx(registration: Registration, path: Path, **overrides: Any) -> ProviderContext:
     """A context holding only what contract §2 says the host hands over."""
+    http: AsyncClient
+    if registration.provider_id == "listenbrainz":
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_listenbrainz_fixture(path)))
+    else:
+        http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
-        http=cast("AsyncClient", _InertHTTP()),
+        http=http,
         config=load_provider(registration.provider_id).config_model(**registration.config(path)),
         secrets=dict(registration.secrets),
         log=logging.getLogger(f"conformance.{registration.provider_id}"),
         state={},
         **overrides,
     )
+
+
+def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    """Serve the recorded ListenBrainz pages without exposing provider code to httpx."""
+    directory = path.parent
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("Authorization") == "Token invalid":
+            return httpx.Response(
+                401, json=json.loads((directory / "credentials-invalid.json").read_text())
+            )
+        max_ts = request.url.params.get("max_ts")
+        name = (
+            "page-1.json"
+            if max_ts is None
+            else "page-2.json"
+            if max_ts == "1700000200"
+            else "page-3-empty.json"
+        )
+        return httpx.Response(200, json=json.loads((directory / name).read_text()))
+
+    return respond
 
 
 @pytest.fixture

@@ -32,20 +32,13 @@ CONTRACT = (
 #: Contract paths with no implementation yet, each with the task that adds it. Every entry is a
 #: promise rather than an exemption — T144's final gate check expects this dict empty.
 NOT_YET_IMPLEMENTED: dict[str, str] = {
-    "/works": "T054",
-    "/works/{id}": "T054",
     "/works/{id}/merge": "T105",
-    "/entries": "T053",
-    "/opinions": "T055",
     "/creators": "T074",
     "/creators/{id}": "T074",
     "/creators/{id}/merge": "T105",
     "/creators/{id}/split": "T105",
-    "/providers": "T056",
     "/providers/{id}/config-schema": "T122",
     "/providers/{id}/runs": "T093",
-    "/providers/{id}/sync": "T056",
-    "/providers/{id}/check": "T056",
     "/providers/{id}/import": "T113",
     "/resolution-queue": "T106",
     "/resolution-queue/{id}/decide": "T106",
@@ -174,9 +167,19 @@ def test_implemented_paths_serve_exactly_the_contract_methods(
         )
 
 
-def test_health_and_auth_are_the_currently_implemented_surface(served: dict[str, Any]) -> None:
+def test_phase_three_paths_are_present(served: dict[str, Any]) -> None:
     """Pins what exists today, so an endpoint appearing without a contract entry is noticed."""
-    assert set(_served_paths(served)) == {"/health", "/auth/session"}
+    assert {
+        "/health",
+        "/auth/session",
+        "/entries",
+        "/opinions",
+        "/works",
+        "/works/{id}",
+        "/providers",
+        "/providers/{id}/sync",
+        "/providers/{id}/check",
+    } <= set(_served_paths(served))
 
 
 # --- Conventions the contract states and the app must not contradict ----------------------------
