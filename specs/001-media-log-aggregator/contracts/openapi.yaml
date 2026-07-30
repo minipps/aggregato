@@ -7,6 +7,11 @@ info:
     (FR-032): either `Authorization: Bearer <api.token>` or the session cookie issued by
     `POST /auth/session`. There is no unauthenticated mode.
 
+    An optional second credential, `api.readonly_token`, authenticates reads only: any
+    POST/PUT/PATCH/DELETE it presents — directly or through the session cookie it exchanges
+    itself for — is refused with 403 `readonly-token`. `GET /auth/session` reports which
+    credential the caller holds.
+
     Conventions (FR-003, FR-004, FR-030, spec §9.3):
       * Timestamps are ISO 8601 with offset. `logged_at` is always accompanied by
         `logged_precision`; clients must not render a fabricated time as exact.
@@ -37,12 +42,30 @@ paths:
       summary: Exchange the API token for a session cookie
       description: Sets an HttpOnly, SameSite=Lax cookie and returns a CSRF token for
         cookie-authenticated writes. Rotating `api.token` invalidates all sessions.
+        Accepts `api.readonly_token` too, which yields a read-only session.
       security: [{ bearerAuth: [] }]
       responses:
         "204":
           description: Session established; cookie and CSRF token set
           headers:
             Set-Cookie: { schema: { type: string } }
+        "401": { $ref: "#/components/responses/Problem" }
+    get:
+      tags: [operations]
+      summary: Describe the current credential
+      description: What the caller is authenticated as. The web UI reads `readonly` to hide
+        every control it would only be refused for.
+      responses:
+        "200":
+          description: The current credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [via, readonly]
+                properties:
+                  via: { type: string, enum: [bearer, cookie] }
+                  readonly: { type: boolean }
         "401": { $ref: "#/components/responses/Problem" }
 
   /works:

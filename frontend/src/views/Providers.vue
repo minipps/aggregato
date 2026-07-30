@@ -24,6 +24,7 @@ import {
   toProblem,
   updateProviderConfig,
 } from '@/api/client'
+import { readonlyAccess } from '@/api/session'
 import type { JsonSchema, Problem } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -209,7 +210,7 @@ function saveConfiguration(id: string): Promise<void> {
           </ul>
         </fieldset>
 
-        <p class="actions">
+        <p v-if="!readonlyAccess" class="actions">
           <button type="button" :disabled="busy === provider.id" @click="toggle(provider.id, !provider.enabled)">
             {{ provider.enabled ? 'Disable' : 'Enable' }}
           </button>
@@ -247,7 +248,7 @@ function saveConfiguration(id: string): Promise<void> {
           :problem="configSchemaFailure.problem"
         />
 
-        <div v-if="provider.capabilities.includes('file_import')" class="import-export">
+        <div v-if="provider.capabilities.includes('file_import') && !readonlyAccess" class="import-export">
           <label :for="`import-${provider.id}`">Import personal export</label>
           <input
             :id="`import-${provider.id}`"

@@ -290,6 +290,12 @@ export interface TopStats {
   items: TopStat[]
 }
 
+/** `GET /auth/session`: how this browser is authenticated, and whether it may write. */
+export interface Session {
+  via: 'bearer' | 'cookie'
+  readonly: boolean
+}
+
 export interface Health {
   status: 'ok' | 'degraded'
   providers: ProviderHealth[]

@@ -20,6 +20,7 @@ import type {
   Page,
   Problem,
   Provider,
+  Session,
   SyncRun,
   IngestFailure,
   MergeLogEntry,
@@ -216,6 +217,11 @@ export function pager<T>(path: string, query: Record<string, QueryValue> = {}): 
  */
 export function login(token: string): Promise<void> {
   return request<void>('POST', LOGIN_PATH, { headers: { Authorization: `Bearer ${token}` } })
+}
+
+/** How this browser is authenticated. The SPA reads `readonly` to hide what it cannot do. */
+export function session(): Promise<Session> {
+  return request<Session>('GET', LOGIN_PATH)
 }
 
 export function entries(query: EntryQuery = {}): Pager<Entry> {

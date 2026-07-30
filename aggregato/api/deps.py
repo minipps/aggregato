@@ -80,6 +80,9 @@ _FORBIDDEN: Final = 403
 # presented with one; only cookie authentication does (R12).
 _UNSAFE_METHODS: Final = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
+_SESSION_PATH: Final = "/auth/session"
+"""Suffix of the session-exchange path — the one write a read-only credential may perform."""
+
 
 @dataclass(frozen=True, slots=True)
 class AuthContext:
@@ -131,51 +134,60 @@ async def require_auth(request: Request) -> AuthContext:
     rotated token; 403 when a cookie-authenticated state-changing request has no valid CSRF token.
     Never FastAPI's default ``{"detail": ...}`` 401 shape.
     """
-    token = _token(request)
     presented = _bearer(request)
     if presented is not None:
-        if _matches(presented, token):
-            return AuthContext(via="bearer")
-        readonly = _readonly_token(request)
-        if readonly is not None and _matches(presented, readonly):
-            if request.method in _UNSAFE_METHODS:
-                raise _readonly_forbidden(request.method)
-            return AuthContext(via="bearer", readonly=True)
-        raise _unauthorized("The bearer token is not valid.")
+        matched = _match_credential(request, presented)
+        if matched is None:
+            raise _unauthorized("The bearer token is not valid.")
+        _, readonly = matched
+        if readonly and _is_write(request):
+            raise _readonly_forbidden(request.method)
+        return AuthContext(via="bearer", readonly=readonly)
 
     cookie = request.cookies.get(SESSION_COOKIE)
     if cookie is None:
         raise _unauthorized(
             "This request needs an Authorization: Bearer header or a session cookie."
         )
-    session_id = await _valid_session_id(request, cookie, token)
+    session_id, credential, readonly = await _valid_session(request, cookie)
+    if readonly and _is_write(request):
+        raise _readonly_forbidden(request.method)
     if request.method in _UNSAFE_METHODS:
-        _check_csrf(request, session_id, token)
-    return AuthContext(via="cookie", session_id=session_id)
+        _check_csrf(request, session_id, credential)
+    return AuthContext(via="cookie", session_id=session_id, readonly=readonly)
 
 
 async def require_bearer(request: Request) -> None:
-    """Require the bearer token specifically — the credential ``POST /auth/session`` exchanges.
+    """Require a bearer credential specifically — what ``POST /auth/session`` exchanges.
 
-    Failure modes: 401 if the header is absent or the token does not match. A session cookie is
-    deliberately not accepted here: the endpoint's job is to turn the token into a cookie.
+    Either the API token or ``api.readonly_token`` is accepted; the session issued carries whatever
+    the presented credential grants.
+
+    Failure modes: 401 if the header is absent or matches neither token. A session cookie is
+    deliberately not accepted here: the endpoint's job is to turn a token into a cookie.
     """
     presented = _bearer(request)
-    if presented is None or not _matches(presented, _token(request)):
+    if presented is None or _match_credential(request, presented) is None:
         raise _unauthorized("POST /auth/session requires the API token as a bearer credential.")
 
 
 async def issue_session(request: Request) -> tuple[str, str]:
     """Create a session row and return ``(cookie_value, csrf_token)``.
 
-    Inputs: the request, for the app's engine and token. The session id is 256 bits from
-    :mod:`secrets`; the cookie value is ``<id>.<HMAC(api.token, id)>``, so a cookie that was not
-    issued by this server is rejected before any database round trip, and rotating the token
-    invalidates the signature as well as the row.
+    Inputs: the request, for the app's engine and the bearer credential it presented — a read-only
+    token yields a read-only session. The session id is 256 bits from :mod:`secrets`; the cookie
+    value is ``<id>.<HMAC(credential, id)>``, so a cookie that was not issued by this server is
+    rejected before any database round trip, rotating a token invalidates the signature as well as
+    the row, and which credential signed it is what marks the session read-only — no column and no
+    migration for a flag the signature already carries.
 
-    Failure modes: database errors propagate as a 500 problem detail.
+    Failure modes: database errors propagate as a 500 problem detail. Callers must gate on
+    :func:`require_bearer`, which is what guarantees a credential matched.
     """
-    token = _token(request)
+    matched = _match_credential(request, _bearer(request) or "")
+    if matched is None:  # pragma: no cover - require_bearer already rejected this request
+        raise _unauthorized("POST /auth/session requires the API token as a bearer credential.")
+    token, _ = matched
     session_id = secrets.token_urlsafe(32)
     now = datetime.now(UTC)
     async with transaction(_engine(request)) as conn:
@@ -202,6 +214,35 @@ def _readonly_token(request: Request) -> str | None:
     config: Config = request.app.state.config
     secret = config.api.readonly_token
     return None if secret is None else secret.get_secret_value()
+
+
+def _credentials(request: Request) -> list[tuple[str, bool]]:
+    """Every accepted bearer credential, most-privileged first, paired with its read-only flag."""
+    readonly = _readonly_token(request)
+    pairs = [(_token(request), False)]
+    if readonly is not None:
+        pairs.append((readonly, True))
+    return pairs
+
+
+def _match_credential(request: Request, presented: str) -> tuple[str, bool] | None:
+    """The configured credential ``presented`` equals, or ``None``. Every candidate is compared in
+    constant time, and the full token wins if both are somehow the same string."""
+    for candidate in _credentials(request):
+        if _matches(presented, candidate[0]):
+            return candidate
+    return None
+
+
+def _is_write(request: Request) -> bool:
+    """Whether this request changes state, for the purpose of refusing a read-only credential.
+
+    ``POST /auth/session`` is excluded: it mints a session no stronger than the credential
+    presented, so a read-only token exchanging itself for a read-only cookie escalates nothing —
+    and without that exchange the SPA could only work by keeping the token in page source, which
+    FR-032 forbids.
+    """
+    return request.method in _UNSAFE_METHODS and not request.url.path.endswith(_SESSION_PATH)
 
 
 def _engine(request: Request) -> AsyncEngine:
@@ -235,11 +276,24 @@ def _csrf_token(token: str, session_id: str) -> str:
     return _sign(token, f"csrf:{session_id}")
 
 
-async def _valid_session_id(request: Request, cookie: str, token: str) -> str:
-    """Verify the cookie's signature, then the session row. Raises 401 on any failure."""
+async def _valid_session(request: Request, cookie: str) -> tuple[str, str, bool]:
+    """Verify the cookie's signature, then the session row.
+
+    Returns ``(session_id, signing_credential, readonly)``. Which credential's HMAC verifies is what
+    identifies a read-only session, so the caller gets it back to derive the CSRF token from.
+
+    Raises 401 on any failure.
+    """
     session_id, _, signature = cookie.rpartition(".")
-    if not session_id or not _matches(signature, _sign(token, session_id)):
+    matched = None
+    if session_id:
+        for candidate, readonly in _credentials(request):
+            if _matches(signature, _sign(candidate, session_id)):
+                matched = (candidate, readonly)
+                break
+    if matched is None:
         raise _unauthorized("The session cookie is not valid.")
+    credential, readonly = matched
     # Expiry and fingerprint are both filters, not fetched values: SQLite returns naive datetimes,
     # and the fingerprint predicate is what makes token rotation invalidate the session (R12).
     async with transaction(_engine(request)) as conn:
@@ -247,12 +301,12 @@ async def _valid_session_id(request: Request, cookie: str, token: str) -> str:
             select(sessions.c.id).where(
                 sessions.c.id == session_id,
                 sessions.c.expires_at > datetime.now(UTC),
-                sessions.c.token_fingerprint == token_fingerprint(token),
+                sessions.c.token_fingerprint == token_fingerprint(credential),
             )
         )
     if found is None:
         raise _unauthorized("The session has expired or was invalidated. Sign in again.")
-    return session_id
+    return session_id, credential, readonly
 
 
 def _check_csrf(request: Request, session_id: str, token: str) -> None:

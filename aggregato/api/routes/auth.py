@@ -1,23 +1,36 @@
-"""``POST /auth/session`` — exchange the API token for a browser session (T041, R12).
+"""``/auth/session`` — exchange the API token for a browser session, and describe it (T041, R12).
 
 The token itself must never reach page source or a URL (FR-032), so the SPA calls this once with
-the operator's token and works from cookies afterwards.
+the operator's token and works from cookies afterwards. ``GET`` reports back what the current
+credential is, which is how the SPA knows to render itself read-only.
 """
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel
 from starlette.requests import Request
 
 from aggregato.api.deps import (
     CSRF_COOKIE,
     SESSION_COOKIE,
     SESSION_TTL,
+    AuthContext,
     issue_session,
+    require_auth,
     require_bearer,
 )
 
 router = APIRouter(tags=["operations"])
+
+
+class SessionView(BaseModel):
+    """How the caller is authenticated, exactly the object ``contracts/openapi.yaml`` declares."""
+
+    via: Literal["bearer", "cookie"]
+    readonly: bool
 
 
 @router.post("/auth/session", status_code=204, dependencies=[Depends(require_bearer)])
@@ -57,3 +70,15 @@ async def create_session(request: Request, response: Response) -> Response:
     )
     response.status_code = 204
     return response
+
+
+@router.get("/auth/session", response_model=SessionView)
+async def read_session(ctx: Annotated[AuthContext, Depends(require_auth)]) -> SessionView:
+    """Report the current credential, so the SPA can hide what it is not allowed to do.
+
+    Inputs: none beyond authentication — the app-wide dependency has already run, and FastAPI hands
+    back its cached result rather than authenticating twice.
+
+    Failure modes: 401 problem+json without credentials, like every other route.
+    """
+    return SessionView(via=ctx.via, readonly=ctx.readonly)

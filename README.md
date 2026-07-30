@@ -94,6 +94,16 @@ A platform whose block is broken (a bad shape, an unset `${VAR}`) is marked `mis
 disabled on its own. Startup is unaffected and so is every other platform. The one fatal
 configuration error is a missing `AGGREGATO_TOKEN`: there is no unauthenticated mode.
 
+### Letting other people look
+
+`AGGREGATO_READONLY_TOKEN` is a second, optional token that can only read. Set it to something
+different from `AGGREGATO_TOKEN`, hand it out, and whoever holds it signs in on the same screen and
+browses the whole archive — log, statistics, creators, providers — with every control that would
+change something simply absent. The refusal is enforced by the server, not by the hidden buttons:
+any write it attempts comes back `403`, whether it goes through the web UI or straight at the API.
+It cannot change settings, trigger a sync, resolve identities, or upgrade itself into the real
+token. Leave it unset and no read-only access exists.
+
 ### Where your data lives
 
 Everything is under the container's `/data`, which Compose keeps on the named `aggregato-data`

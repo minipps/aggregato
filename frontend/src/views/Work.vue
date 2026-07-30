@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { mergeWork, undoMerge, work } from '@/api/client'
+import { readonlyAccess } from '@/api/session'
 import type { Rating } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -59,7 +60,7 @@ function ratingText(rating: Rating | null | undefined): string {
 
     <template v-else-if="detail.data.value">
       <h1>{{ detail.data.value.title }}</h1>
-      <p><button type="button" @click="merging = true">Merge duplicate</button></p>
+      <p v-if="!readonlyAccess"><button type="button" @click="merging = true">Merge duplicate</button></p>
       <MergeDialog v-if="merging" subject="work" :winner-id="workId" @merge="merge" @cancel="merging = false" />
       <p v-if="notice" role="status">{{ notice }} <button v-if="notice.includes('Undo:')" type="button" @click="undo(Number(notice.split(': ')[1]))">Undo</button></p>
       <p class="muted">

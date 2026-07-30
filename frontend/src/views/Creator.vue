@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { mergeCreator, splitCreator, undoMerge, creator } from '@/api/client'
+import { readonlyAccess } from '@/api/session'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import MergeDialog from '@/components/MergeDialog.vue'
@@ -28,7 +29,7 @@ async function undo(id: number): Promise<void> { await undoMerge(id); notice.val
     <ErrorState v-else-if="detail.error.value" :problem="detail.error.value" retryable @retry="detail.reload()" />
     <template v-else-if="detail.data.value">
       <h1>{{ detail.data.value.name }}</h1>
-      <p><button type="button" @click="merging = true">Merge duplicate</button> <button type="button" @click="splitting = true">Split credits</button></p>
+      <p v-if="!readonlyAccess"><button type="button" @click="merging = true">Merge duplicate</button> <button type="button" @click="splitting = true">Split credits</button></p>
       <MergeDialog v-if="merging" subject="creator" :winner-id="id" @merge="merge" @cancel="merging = false" />
       <SplitDialog v-if="splitting" :credits="credits" @split="split" @cancel="splitting = false" />
       <p v-if="notice" role="status">{{ notice }} <button v-if="notice.includes('Undo:')" type="button" @click="undo(Number(notice.split(': ')[1]))">Undo</button></p>

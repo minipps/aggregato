@@ -12,6 +12,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { login, toProblem } from '@/api/client'
+import { loadSession } from '@/api/session'
 import type { Problem } from '@/api/types'
 import ErrorState from '@/components/ErrorState.vue'
 
@@ -28,6 +29,8 @@ async function submit(): Promise<void> {
   try {
     await login(token.value)
     token.value = ''
+    // The read-only token signs in here too, so what this session may do is only known now.
+    await loadSession()
     const next = route.query['next']
     await router.replace(typeof next === 'string' && next.startsWith('/') ? next : '/')
   } catch (caught) {
@@ -43,7 +46,8 @@ async function submit(): Promise<void> {
     <h1>Sign in to Aggregato</h1>
     <p class="hint">
       Paste the API token from your configuration file. It is exchanged for a session cookie and not
-      stored in the browser.
+      stored in the browser. A read-only token signs in the same way and browses the archive without
+      being able to change it.
     </p>
 
     <form class="form" @submit.prevent="submit">

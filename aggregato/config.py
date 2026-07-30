@@ -198,6 +198,11 @@ def load_config(
         raise MissingTokenError(
             "api.token is unset: set AGGREGATO_TOKEN. There is no unauthenticated mode (FR-032)"
         )
+    api = tree["api"]
+    if api.get("readonly_token") and api["readonly_token"] == api["token"]:
+        # Otherwise the read-only token would silently grant full access: the matcher takes the
+        # first credential that compares equal, and that is always the real token.
+        raise ConfigError("api.readonly_token must differ from api.token, or it grants full access")
     tree.setdefault("database_url", f"sqlite+aiosqlite:///{tree['data_dir']}/aggregato.db")
 
     try:

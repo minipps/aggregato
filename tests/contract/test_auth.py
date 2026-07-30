@@ -229,15 +229,57 @@ async def test_readonly_token_reads(readonly_client: httpx.AsyncClient) -> None:
     assert response.json() == {"via": "bearer"}
 
 
-@pytest.mark.parametrize("path", ["/probe", "/auth/session"])
-async def test_readonly_token_cannot_write_or_get_a_cookie(
-    readonly_client: httpx.AsyncClient, path: str
+async def test_readonly_token_cannot_write(readonly_client: httpx.AsyncClient) -> None:
+    _assert_problem(
+        await readonly_client.post("/probe", headers={"Authorization": f"Bearer {READONLY}"}), 403
+    )
+
+
+async def test_readonly_token_reports_itself(readonly_client: httpx.AsyncClient) -> None:
+    """What the SPA reads to render itself read-only."""
+    response = await readonly_client.get(
+        "/auth/session", headers={"Authorization": f"Bearer {READONLY}"}
+    )
+    assert response.json() == {"via": "bearer", "readonly": True}
+
+
+async def test_full_token_is_not_readonly(client: httpx.AsyncClient) -> None:
+    response = await client.get("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert response.json() == {"via": "bearer", "readonly": False}
+
+
+async def test_readonly_session_cookie_reads_but_cannot_write(
+    readonly_client: httpx.AsyncClient,
 ) -> None:
-    """No write, and no session cookie either — otherwise the restriction would be one hop away."""
-    response = await readonly_client.post(path, headers={"Authorization": f"Bearer {READONLY}"})
-    assert response.status_code in (401, 403)
-    _assert_problem(response, response.status_code)
-    assert not readonly_client.cookies.get(SESSION_COOKIE)
+    """The SPA path: the read-only token buys a cookie, and the cookie is read-only too (FR-032
+    forbids keeping the token in page source, so the exchange has to be allowed)."""
+    exchange = await readonly_client.post(
+        "/auth/session", headers={"Authorization": f"Bearer {READONLY}"}
+    )
+    assert exchange.status_code == 204
+    assert readonly_client.cookies[SESSION_COOKIE]
+
+    session = await readonly_client.get("/auth/session")
+    assert session.json() == {"via": "cookie", "readonly": True}
+    # A valid CSRF token is attached by the client fixture's cookie jar, so the 403 is the read-only
+    # refusal and not the CSRF one.
+    _assert_problem(
+        await readonly_client.post(
+            "/probe", headers={CSRF_HEADER: readonly_client.cookies[CSRF_COOKIE]}
+        ),
+        403,
+    )
+
+
+async def test_full_session_cookie_still_writes(readonly_client: httpx.AsyncClient) -> None:
+    """Configuring a read-only token must not restrict the real one's session."""
+    await readonly_client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
+    session = await readonly_client.get("/auth/session")
+    assert session.json() == {"via": "cookie", "readonly": False}
+    response = await readonly_client.post(
+        "/probe", headers={CSRF_HEADER: readonly_client.cookies[CSRF_COOKIE]}
+    )
+    assert response.status_code == 200
 
 
 async def test_readonly_token_is_not_accepted_when_unconfigured(

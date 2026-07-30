@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 
 import { decideResolution, resolutionQueue, undoMerge } from '@/api/client'
+import { readonlyAccess } from '@/api/session'
 import type { ResolutionItem } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -14,7 +15,7 @@ const notice = ref('')
 
 function current(): ResolutionItem | undefined { return queue.items.value[active.value] }
 async function decide(decision: 'linked' | 'created' | 'ignored', targetId?: string): Promise<void> {
-  const item = current(); if (!item) return
+  const item = current(); if (!item || readonlyAccess.value) return
   const log = await decideResolution(item.id, decision, targetId)
   queue.items.value.splice(active.value, 1)
   active.value = Math.min(active.value, Math.max(0, queue.items.value.length - 1))
@@ -37,7 +38,7 @@ onUnmounted(() => window.removeEventListener('keydown', keys))
 <template>
   <section>
     <h1>Resolution queue</h1>
-    <p class="muted">↑/↓ or j/k selects an item · 1–9 links a candidate · c creates · i ignores</p>
+    <p class="muted">↑/↓ or j/k selects an item<template v-if="!readonlyAccess"> · 1–9 links a candidate · c creates · i ignores</template></p>
     <p v-if="notice" role="status">{{ notice }} <button v-if="notice.includes('Undo:')" type="button" @click="undo">Undo</button></p>
     <LoadingState v-if="queue.loading.value" label="Loading resolution queue…" />
     <ErrorState v-else-if="queue.error.value" :problem="queue.error.value" retryable @retry="queue.restart()" />
@@ -46,8 +47,8 @@ onUnmounted(() => window.removeEventListener('keydown', keys))
       <li v-for="(item, index) in queue.items.value" :key="item.id" :class="{ active: active === index }" tabindex="0" @focus="active = index">
         <h2>{{ item.subject }} · {{ item.suggestion_kind ?? 'ambiguous match' }}</h2>
         <p class="muted">Proposed: {{ item.proposed }}</p>
-        <ol><li v-for="(candidate, candidateIndex) in item.candidates" :key="candidate.id"><button type="button" @click="decide('linked', candidate.id)">Link {{ candidateIndex + 1 }}</button> {{ candidate.label ?? candidate.name ?? candidate.id }} <span class="muted">— {{ candidate.reason }}</span></li></ol>
-        <p><button type="button" @click="decide('created')">Create separate {{ item.subject }}</button> <button type="button" @click="decide('ignored')">Ignore</button></p>
+        <ol><li v-for="(candidate, candidateIndex) in item.candidates" :key="candidate.id"><button v-if="!readonlyAccess" type="button" @click="decide('linked', candidate.id)">Link {{ candidateIndex + 1 }}</button> {{ candidate.label ?? candidate.name ?? candidate.id }} <span class="muted">— {{ candidate.reason }}</span></li></ol>
+        <p v-if="!readonlyAccess"><button type="button" @click="decide('created')">Create separate {{ item.subject }}</button> <button type="button" @click="decide('ignored')">Ignore</button></p>
       </li>
     </ol>
     <button v-if="!queue.done.value" type="button" @click="queue.loadMore()">Load more</button>

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 
 import { archiveSettings, downloadArchive, toProblem, updateArchiveSettings } from '@/api/client'
 import type { Problem } from '@/api/types'
+import { readonlyAccess } from '@/api/session'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import { useRequest } from '@/api/useApi'
@@ -44,13 +45,16 @@ async function exportNow(): Promise<void> {
     <template v-else-if="state.data.value">
       <form @submit.prevent="save">
         <h2>Retention</h2>
-        <p class="muted">Failures are kept longer than successful runs by default so diagnosis remains possible.</p>
-        <label>Raw payload retention (days)<input v-model.number="state.data.value.raw_payload_retention_days" min="0" type="number"></label>
-        <label>Successful run retention (days)<input v-model.number="state.data.value.success_run_retention_days" min="0" type="number"></label>
-        <label>Failed and partial run retention (days)<input v-model.number="state.data.value.failure_run_retention_days" min="0" type="number"></label>
-        <label><input v-model="state.data.value.image_cache_enabled" type="checkbox"> Cache platform images locally</label>
-        <p v-if="!state.data.value.image_cache_enabled" role="alert">Images will use a local placeholder. Turning this off clears cached image data during cleanup.</p>
-        <button :disabled="busy" type="submit">Save settings</button>
+        <!-- A native disabled fieldset covers every control inside it, now and when one is added. -->
+        <fieldset :disabled="readonlyAccess">
+          <p class="muted">Failures are kept longer than successful runs by default so diagnosis remains possible.</p>
+          <label>Raw payload retention (days)<input v-model.number="state.data.value.raw_payload_retention_days" min="0" type="number"></label>
+          <label>Successful run retention (days)<input v-model.number="state.data.value.success_run_retention_days" min="0" type="number"></label>
+          <label>Failed and partial run retention (days)<input v-model.number="state.data.value.failure_run_retention_days" min="0" type="number"></label>
+          <label><input v-model="state.data.value.image_cache_enabled" type="checkbox"> Cache platform images locally</label>
+          <p v-if="!state.data.value.image_cache_enabled" role="alert">Images will use a local placeholder. Turning this off clears cached image data during cleanup.</p>
+        </fieldset>
+        <button v-if="!readonlyAccess" :disabled="busy" type="submit">Save settings</button>
       </form>
       <section>
         <h2>Storage usage</h2>
@@ -69,3 +73,12 @@ async function exportNow(): Promise<void> {
     </template>
   </section>
 </template>
+
+<style scoped>
+/* The fieldset exists to carry `disabled`, not to draw a box around the fields. */
+fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+</style>

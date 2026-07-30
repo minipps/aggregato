@@ -151,3 +151,21 @@ def test_malformed_config_file_is_reported(tmp_path: Path) -> None:
     path.write_text("api: [1, 2\n", encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(env={"AGGREGATO_TOKEN": TOKEN}, config_file=path)
+
+
+def test_a_readonly_token_equal_to_the_real_one_is_refused() -> None:
+    """Otherwise it would silently grant full access rather than read-only access."""
+    with pytest.raises(ConfigError, match="readonly_token"):
+        load_config(env={"AGGREGATO_TOKEN": "same", "AGGREGATO_READONLY_TOKEN": "same"})
+
+
+def test_the_readonly_token_never_reaches_the_api_view(tmp_path: Path) -> None:
+    config = load_config(
+        env={
+            "AGGREGATO_TOKEN": "full",
+            "AGGREGATO_READONLY_TOKEN": "reader",
+            "AGGREGATO_DATA": str(tmp_path),
+        }
+    )
+    assert config.api.readonly_token is not None
+    assert "readonly_token" not in config.public_dict()["api"]
