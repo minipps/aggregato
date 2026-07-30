@@ -65,6 +65,10 @@ class WriteCounts:
     written: int = 0
     failed: int = 0
     entries_written: int = 0
+    entries_retracted: int = 0
+    """Rows tombstoned because the record that produced them now logs nothing (see
+    :func:`_retract_entries`). Counted separately from ``entries_written``: an operator reading a
+    run's history should see a withdrawal as its own event, not as a write that did not happen."""
     opinions_written: int = 0
     failure_ids: list[int] = field(default_factory=list)
 
@@ -251,6 +255,8 @@ async def _write_one(
     for entry in batch.entries:
         if await _upsert_entry(conn, ctx, work_id, item_id, entry):
             counts.entries_written += 1
+    if batch.retracts_entries:
+        counts.entries_retracted += await _retract_entries(conn, item_id, now=ctx.now)
 
     for opinion in batch.opinions:
         await _upsert_opinion(conn, ctx, work_id, item_id, opinion)
@@ -406,6 +412,35 @@ async def _upsert_external_id(
             update_columns=None,
         )
     )
+
+
+async def _retract_entries(conn: AsyncConnection, item_id: int, *, now: datetime) -> int:
+    """Tombstone what this provider item logged, because the provider says it was withdrawn.
+
+    Reached only from ``NormalizedBatch.retracts_entries`` — never inferred from an empty
+    ``entries`` list, which is ambiguous (see that field). A platform whose records are mutable
+    *state* rather than immutable *events* can take back what it once said: an AniList list entry
+    moved to ``PLANNING`` states that the account has watched none of it, so the watch a previous
+    sync recorded from that same item is no longer attested. The upsert path covers every status
+    that still yields an entry — it rewrites ``kind``, ``logged_at`` and the progress columns on the
+    same ``(provider_id, native_id)`` row — but a withdrawal writes nothing, and the stale row would
+    otherwise survive forever.
+
+    Narrower than :func:`infer_deletes` in the two ways that let it run without those guards: the
+    provider states the withdrawal for a specific record instead of the host deducing it from
+    absence, and the scope is one ``provider_item_id`` rather than every item a run did not see.
+    Another platform's entry for the same work is untouched.
+
+    A tombstone, never a delete (FR-024): the row keeps its history, drops out of the log and
+    ``entry_count`` by default, and the next sync that does yield an entry clears ``deleted_at``
+    again through the upsert's update columns.
+    """
+    result = await conn.execute(
+        update(entries)
+        .where(entries.c.provider_item_id == item_id, entries.c.deleted_at.is_(None))
+        .values(deleted_at=now)
+    )
+    return int(result.rowcount)
 
 
 async def _upsert_entry(

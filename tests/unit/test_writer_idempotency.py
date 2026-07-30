@@ -511,6 +511,106 @@ async def test_a_captured_failure_keeps_its_payload(conn: AsyncConnection) -> No
     assert captured[0].raw_payload == {"keep": "me"}
 
 
+# --- A record that now logs nothing withdraws what it logged before -----------------------------
+
+
+def _retracted(source: NormalizedBatch) -> NormalizedBatch:
+    return source.model_copy(update={"entries": [], "retracts_entries": True})
+
+
+def _no_entries(source: NormalizedBatch) -> NormalizedBatch:
+    """Silent about entries, without claiming a withdrawal — the Goodreads "no Date Read" shape."""
+    return source.model_copy(update={"entries": []})
+
+
+async def test_a_record_that_merely_states_no_entry_deletes_nothing(
+    conn: AsyncConnection,
+) -> None:
+    """The distinction this flag exists for.
+
+    A Goodreads row whose Date Read is absent says nothing about whether the book was read — an
+    older CSV re-imported over a newer one is the realistic way to hit it. Inferring a tombstone
+    from that silence would destroy a real read, which is why the writer waits to be told.
+    """
+    raw = RawRecord(native_id="i-1", payload={"a": 1})
+    await write_batches(conn, ctx(), [(raw, batch())])
+
+    counts = await write_batches(conn, ctx(NOW + timedelta(days=1)), [(raw, _no_entries(batch()))])
+
+    assert counts.entries_retracted == 0
+    assert (await conn.execute(select(entries.c.deleted_at))).scalar_one() is None
+
+
+def test_a_batch_cannot_log_and_withdraw_at_once() -> None:
+    with pytest.raises(ValueError, match="retracts_entries"):
+        NormalizedBatch.model_validate(batch().model_dump() | {"retracts_entries": True})
+
+
+async def test_a_record_that_now_logs_nothing_tombstones_what_it_logged(
+    conn: AsyncConnection,
+) -> None:
+    """AniList's plan-to-watch case: the platform withdrew the event, so the log must too."""
+    raw = RawRecord(native_id="i-1", payload={"a": 1})
+    await write_batches(conn, ctx(), [(raw, batch())])
+
+    counts = await write_batches(conn, ctx(NOW + timedelta(days=1)), [(raw, _retracted(batch()))])
+
+    assert counts.entries_retracted == 1
+    # A tombstone, not a delete: the row and its history survive (FR-024).
+    assert await _count(conn, entries) == 1
+    deleted_at = (await conn.execute(select(entries.c.deleted_at))).scalar_one()
+    assert deleted_at is not None
+
+
+async def test_a_status_that_logs_again_revives_the_entry(conn: AsyncConnection) -> None:
+    """Reversible in both directions — moving a title back off the backlog must restore its log."""
+    raw = RawRecord(native_id="i-1", payload={"a": 1})
+    await write_batches(conn, ctx(), [(raw, batch())])
+    await write_batches(conn, ctx(NOW + timedelta(days=1)), [(raw, _retracted(batch()))])
+
+    await write_batches(conn, ctx(NOW + timedelta(days=2)), [(raw, batch())])
+
+    assert await _count(conn, entries) == 1
+    assert (await conn.execute(select(entries.c.deleted_at))).scalar_one() is None
+
+
+async def test_a_newer_status_replaces_the_recorded_entry(conn: AsyncConnection) -> None:
+    """One list entry is one state: a later kind rewrites the row rather than adding a second."""
+    raw = RawRecord(native_id="i-1", payload={"a": 1})
+    await write_batches(conn, ctx(), [(raw, batch(kind=EntryKind.WATCH))])
+
+    later = batch(kind=EntryKind.REWATCH, logged_at=LOGGED + timedelta(days=3))
+    await write_batches(conn, ctx(NOW + timedelta(days=1)), [(raw, later)])
+
+    row = (await conn.execute(select(entries.c.kind, entries.c.logged_at))).one()
+    assert await _count(conn, entries) == 1
+    assert row.kind == EntryKind.REWATCH
+    assert row.logged_at.replace(tzinfo=UTC) == LOGGED + timedelta(days=3)
+
+
+async def test_retraction_leaves_another_providers_entry_alone(conn: AsyncConnection) -> None:
+    """The withdrawal is scoped to the item that made the claim, not to the work."""
+    raw = RawRecord(native_id="i-1", payload={"a": 1})
+    await write_batches(conn, ctx(), [(raw, batch())])
+    other = WriteContext(
+        provider_id="other",
+        sync_run_id=1,
+        schema_version=1,
+        now=NOW,
+        rating_scales={STARS_5.id: STARS_5},
+    )
+    # Same title, so both resolve to one work; a different provider, so a different item.
+    await write_batches(conn, other, [(RawRecord(native_id="o-1", payload={"b": 2}), batch())])
+
+    counts = await write_batches(conn, ctx(NOW + timedelta(days=1)), [(raw, _retracted(batch()))])
+
+    assert counts.entries_retracted == 1
+    surviving = await conn.execute(
+        select(entries.c.provider_id).where(entries.c.deleted_at.is_(None))
+    )
+    assert [row.provider_id for row in surviving] == ["other"]
+
+
 # --- Artwork backfill ---------------------------------------------------------------------------
 
 
