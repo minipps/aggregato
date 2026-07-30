@@ -16,3 +16,10 @@ def test_phase_four_baseline_declares_required_budgets() -> None:
     assert budgets["creator_resolution_per_minute"] >= 20_000
     assert budgets["entries_first_page_ms"] > 0
     assert budgets["entries_deep_page_ms"] > 0
+
+
+def test_seed_harness_defaults_to_one_million_entries() -> None:
+    """The operator-facing benchmark has the required archive size without a hidden flag."""
+    from tests.bench.seed import seed_entries
+
+    assert seed_entries.__defaults__ == (1_000_000,)
