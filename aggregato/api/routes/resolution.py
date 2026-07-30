@@ -96,9 +96,7 @@ async def decide(request: Request, id: int, body: DecisionRequest) -> MergeLogEn
         if item.decided_at is not None:
             raise ProblemError(409, "Conflict", "This resolution item was already decided.")
         now = SYSTEM_CLOCK.now()
-        queue_snapshot = {
-            "resolution_queue": [dict(item._mapping)]
-        }
+        queue_snapshot = {"resolution_queue": [dict(item._mapping)]}
         source_id = await _source_id(conn, item)
         try:
             if body.decision == ResolutionDecision.LINKED:

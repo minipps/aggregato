@@ -250,7 +250,7 @@ the UI.
 - [X] T106 [US4] Implement `GET /resolution-queue` and `POST /resolution-queue/{id}/decide` recording `manual` confidence in `aggregato/api/routes/resolution.py`
 - [X] T107 [US4] Implement the keyboard-driven Resolution view with candidate reasons in `frontend/src/views/Resolution.vue`
 - [X] T108 [P] [US4] Implement the merge and split UI with side-by-side comparison and `link_confidence` display in `frontend/src/components/MergeDialog.vue` and `frontend/src/components/SplitDialog.vue`
-- [ ] T109 [P] [US4] Implement undo affordance and keyboard shortcuts, with an accessibility test in `frontend/src/views/__tests__/Resolution.spec.ts`
+- [X] T109 [P] [US4] Implement undo affordance and keyboard shortcuts, with an accessibility test in `frontend/src/views/__tests__/Resolution.spec.ts`
 
 **Checkpoint**: Automatic matching is correctable, which is what makes the no-enrichment trade viable.
 
