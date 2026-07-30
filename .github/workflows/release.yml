@@ -59,7 +59,10 @@ jobs:
   # The image is what docs/operations.md tells an operator to pull, so a release that did not publish
   # one would leave that instruction false.
   image:
-    needs: gates
+    # After the release rather than beside it: the tarball job takes seconds, and if it is going to
+    # fail — a rejected token, a version disagreement — it should fail before an image is published
+    # under a tag that has no release.
+    needs: [gates, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
