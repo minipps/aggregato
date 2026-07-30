@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.config import Config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import provider_state, sync_runs
+from aggregato.db.schema import import_jobs, provider_state, sync_runs
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.domain.enums import (
     Capability,
@@ -65,19 +65,52 @@ def build_dispatch(
     """
 
     async def dispatch(due: DueProvider) -> None:
+        job = await _next_import_job(engine, due.provider_id)
         await run_once(
             engine,
             config,
             provider_id=due.provider_id,
-            mode=FetchMode.INCREMENTAL,
-            cursor=Cursor(state=due.cursor) if due.cursor else None,
+            mode=FetchMode.IMPORT if job is not None else FetchMode.INCREMENTAL,
+            cursor=None if job is not None else (Cursor(state=due.cursor) if due.cursor else None),
             retry_step=due.retry_step,
             consecutive_failures=due.consecutive_failures,
             interval_seconds=due.interval_seconds,
             clock=clock,
+            import_path=Path(job.path) if job is not None else None,
         )
+        if job is not None:
+            await _finish_import_job(engine, job.id)
 
     return dispatch
+
+
+async def _next_import_job(engine: AsyncEngine, provider_id: str) -> object | None:
+    """Claim the oldest queued upload for a provider already claimed by the scheduler."""
+    async with transaction(engine) as conn:
+        job = (
+            await conn.execute(
+                select(import_jobs)
+                .where(import_jobs.c.provider_id == provider_id, import_jobs.c.started_at.is_(None))
+                .order_by(import_jobs.c.id)
+                .limit(1)
+            )
+        ).first()
+        if job is not None:
+            await conn.execute(
+                update(import_jobs)
+                .where(import_jobs.c.id == job.id)
+                .values(started_at=SYSTEM_CLOCK.now())
+            )
+        return job
+
+
+async def _finish_import_job(engine: AsyncEngine, job_id: int) -> None:
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(import_jobs)
+            .where(import_jobs.c.id == job_id)
+            .values(finished_at=SYSTEM_CLOCK.now())
+        )
 
 
 async def run_once(

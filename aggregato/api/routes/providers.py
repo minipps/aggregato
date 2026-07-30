@@ -17,11 +17,13 @@ exactly zero outbound requests" (SC-013) is either true or not.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, File, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -30,7 +32,7 @@ from starlette.requests import Request
 from aggregato.api.errors import ProblemError, error_type
 from aggregato.config import Config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import provider_state, providers, sync_runs
+from aggregato.db.schema import import_jobs, provider_state, providers, sync_runs
 from aggregato.domain.enums import Acquisition, Capability, ErrorClass, MediaType, ProviderStatus
 from aggregato.providers.registry import ProviderInfo, discover_providers
 
@@ -77,6 +79,9 @@ class SyncQueued(BaseModel):
     """What ``POST /providers/{id}/sync`` returns: the lineage the attempts will share (FR-019)."""
 
     lineage_id: uuid.UUID
+
+
+MAX_IMPORT_BYTES = 50 * 1024 * 1024
 
 
 class CheckResultView(BaseModel):
@@ -251,6 +256,103 @@ async def check_provider(request: Request, id: str) -> CheckResultView:
     )
 
 
+@router.post("/providers/{id}/import", status_code=202, response_model=SyncQueued)
+async def import_file(
+    request: Request,
+    id: str,
+    file: Annotated[UploadFile, File(description="A personal export file for this provider")],
+) -> SyncQueued:
+    """Persist one operator-supplied export and queue it for the worker.
+
+    The upload is validated before it receives a durable job row, so rejected files leave both the
+    archive and queue unchanged.  The API stores opaque bytes; provider-specific structural checks
+    happen in the isolated child during the import run.
+    """
+    config: Config = request.app.state.config
+    engine: AsyncEngine = request.app.state.engine
+    info = _require_installed(id)
+    if Capability.FILE_IMPORT.value not in info.capabilities:
+        raise ProblemError(
+            status=422,
+            title="Provider does not accept export files",
+            detail=f"{id} does not declare the file_import capability",
+            type=error_type("import-not-supported"),
+        )
+    if not file.filename:
+        raise ProblemError(
+            status=422,
+            title="Missing export file",
+            detail="choose a non-empty export file before uploading",
+            type=error_type("missing-import-file"),
+        )
+
+    async with transaction(engine) as conn:
+        row = (await conn.execute(select(providers.c.enabled).where(providers.c.id == id))).first()
+    if row is None or not row.enabled:
+        raise ProblemError(
+            status=409,
+            title="Provider is not enabled",
+            detail=f"enable {id} before importing an export",
+            type=error_type("provider-not-enabled"),
+        )
+
+    path = await _store_import(config.data_dir, id, file)
+    now = datetime.now(UTC)
+    lineage = uuid.uuid4()
+    async with transaction(engine) as conn:
+        await conn.execute(
+            import_jobs.insert().values(provider_id=id, path=str(path), created_at=now)
+        )
+        await conn.execute(
+            update(provider_state).where(provider_state.c.provider_id == id).values(next_run_at=now)
+        )
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id == id)
+            .values(status=str(ProviderStatus.IDLE), updated_at=now)
+        )
+    return SyncQueued(lineage_id=lineage)
+
+
+async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) -> Path:
+    """Save an upload privately, bounded in size, without trusting its filename as a path."""
+    suffix = Path(upload.filename or "").suffix.lower()
+    if suffix not in {".csv", ".rss", ".xml"}:
+        raise ProblemError(
+            status=422,
+            title="Unsupported export file",
+            detail="export files must use a .csv, .rss, or .xml extension",
+            type=error_type("invalid-import-file"),
+        )
+    directory = data_dir / "imports" / provider_id
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{uuid.uuid4()}{suffix}"
+    temporary = target.with_suffix(f"{suffix}.uploading")
+    total = 0
+    try:
+        with open(temporary, "xb", buffering=0) as output:  # noqa: ASYNC230
+            os.chmod(temporary, 0o600)
+            while chunk := await upload.read(64 * 1024):
+                total += len(chunk)
+                if total > MAX_IMPORT_BYTES:
+                    raise ProblemError(
+                        status=413,
+                        title="Export file is too large",
+                        detail=(
+                            f"export files may not exceed {MAX_IMPORT_BYTES // (1024 * 1024)} MiB"
+                        ),
+                        type=error_type("import-too-large"),
+                    )
+                output.write(chunk)
+        temporary.replace(target)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    finally:
+        await upload.close()
+    return target
+
+
 # --- internals ---------------------------------------------------------------------------------
 
 
@@ -384,7 +486,13 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
                     retry_step=0,
                     # Due immediately on first enable, so an operator who just enabled a platform
                     # sees something happen rather than waiting out an interval.
-                    next_run_at=now if enabled and not misconfigured else None,
+                    next_run_at=(
+                        now
+                        if enabled
+                        and not misconfigured
+                        and Capability.POLL.value in info.capabilities
+                        else None
+                    ),
                     kv={},
                 )
             )
@@ -397,7 +505,15 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
             await conn.execute(
                 update(provider_state)
                 .where(provider_state.c.provider_id == provider_id)
-                .values(next_run_at=now if enabled and not misconfigured else None)
+                .values(
+                    next_run_at=(
+                        now
+                        if enabled
+                        and not misconfigured
+                        and Capability.POLL.value in info.capabilities
+                        else None
+                    )
+                )
             )
 
     if misconfigured:

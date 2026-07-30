@@ -446,6 +446,24 @@ provider_state = Table(
     Index("ix_provider_state_next_run_at", "next_run_at"),
 )
 
+# Uploads are host-owned jobs, deliberately separate from ``provider_state.kv`` (which belongs to
+# a provider).  Keeping the file path and lifecycle here lets the API accept an export without ever
+# importing the sync machinery, while the worker remains the only process that executes plugins.
+import_jobs = Table(
+    "import_jobs",
+    metadata,
+    Column("id", AUTO_PK, primary_key=True, autoincrement=True),
+    Column(
+        "provider_id", String(64), ForeignKey("providers.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("path", Text, nullable=False),
+    Column("created_at", TIMESTAMP, nullable=False),
+    Column("started_at", TIMESTAMP),
+    Column("finished_at", TIMESTAMP),
+    Column("error", Text),
+    Index("ix_import_jobs_provider_pending", "provider_id", "started_at", "id"),
+)
+
 sync_runs = Table(
     "sync_runs",
     metadata,
