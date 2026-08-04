@@ -88,6 +88,13 @@ def test_goodreads_profile_url_becomes_rss_url() -> None:
     assert _rss_url(profile_url) == "https://www.goodreads.com/review/list_rss/155188990-mini"
 
 
+def test_empty_optional_settings_are_unset() -> None:
+    """An unfilled schema-form field is not an invalid URL or the working directory."""
+    config = GoodreadsConfig(profile_url="", export_path=" ")
+    assert config.profile_url is None
+    assert config.export_path is None
+
+
 async def test_goodreads_rss_is_refetched_after_a_csv_import() -> None:
     requests: list[httpx.Request] = []
 

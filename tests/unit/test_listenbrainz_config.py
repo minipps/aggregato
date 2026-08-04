@@ -22,3 +22,8 @@ def test_base_url_rejects_an_api_version_suffix() -> None:
         ListenBrainzConfig(
             username="mini", token="token", base_url="http://maloja:42010/apis/listenbrainz/1"
         )
+
+
+def test_empty_required_token_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        ListenBrainzConfig(username="mini", token="")

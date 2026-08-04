@@ -50,6 +50,14 @@ def test_imported_rss_derives_the_public_feed_username() -> None:
     assert LetterboxdProvider().config_from_import(payload) == {"username": "fixture_user"}
 
 
+def test_empty_optional_settings_are_unset() -> None:
+    """Unfilled fields from the schema form must not become a URL error or working directory."""
+    config = LetterboxdConfig(username=" ", rss_url="", export_path="")
+    assert config.username is None
+    assert config.rss_url is None
+    assert config.export_path is None
+
+
 async def test_rss_is_refetched_on_every_automatic_poll() -> None:
     """A previous complete RSS snapshot must not disable subsequent scheduled refreshes."""
     requests: list[str] = []

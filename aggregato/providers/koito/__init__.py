@@ -97,6 +97,7 @@ class KoitoConfig(BaseModel):
         "http://koito.lan:4110. Stop before /apis — the API path is appended.",
     )
     api_key: SecretStr = Field(
+        min_length=1,
         description="Koito API key, from Settings -> API keys on the server. Use a ${ENV_VAR} "
         "reference to keep it out of the config file. Required whenever Koito's login gate is on.",
     )

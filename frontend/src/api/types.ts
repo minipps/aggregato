@@ -250,6 +250,7 @@ export interface JsonSchema {
   default?: string | number | boolean | null
   format?: string
   writeOnly?: boolean
+  anyOf?: JsonSchema[]
 }
 
 export interface ProviderHealth {

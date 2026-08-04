@@ -41,6 +41,11 @@ def test_base_url_rejects_the_api_path() -> None:
         KoitoConfig(base_url="http://koito.lan:4110/apis/web/v1", api_key="key")
 
 
+def test_empty_required_api_key_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        KoitoConfig(base_url="https://koito.lan", api_key="")
+
+
 async def test_backwards_walk_always_sends_from_and_steps_to_below_the_oldest_listen() -> None:
     """`from` is mandatory even for an unbounded walk: Koito ignores `to` when `from` is zero, so a
     request without it answers with an empty page that reads exactly like the end of the history."""
