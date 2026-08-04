@@ -586,13 +586,13 @@ def _public_settings(model: type[BaseModel], settings: dict[str, Any]) -> dict[s
     properties = schema.get("properties", {})
     if not isinstance(properties, dict):
         return {}
-    return {
-        key: _public_value(value, field_schema)
-        for key, value in settings.items()
-        if isinstance(key, str)
-        and isinstance(field_schema := properties.get(key), dict)
-        and not _is_sensitive_setting(key, field_schema)
-    }
+    public: dict[str, Any] = {}
+    for key, value in settings.items():
+        field_schema = properties.get(key)
+        if not isinstance(field_schema, dict) or _is_sensitive_setting(key, field_schema):
+            continue
+        public[key] = _public_value(value, field_schema)
+    return public
 
 
 def _public_value(value: Any, schema: dict[str, Any]) -> Any:

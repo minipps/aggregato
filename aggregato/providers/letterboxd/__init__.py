@@ -99,8 +99,9 @@ class LetterboxdProvider:
     ) -> AsyncIterator[RawRecord | Checkpoint]:
         # An RSS feed is a rolling snapshot, rather than a paginated history.  In particular, a
         # completed earlier poll must never suppress the next scheduled poll: new diary entries
-        # only appear by fetching the feed again.  `cursor` is intentionally unused here; the
-        # writer's `(provider_id, native_id)` key makes repeatedly observed GUIDs idempotent.
+        # only appear by fetching the feed again.  A snapshot has no position to resume from, so
+        # it deliberately yields no Checkpoint; the writer's `(provider_id, native_id)` key makes
+        # repeatedly observed GUIDs idempotent.
         if mode is FetchMode.IMPORT:
             if ctx.import_path is None:
                 raise ProviderError("Letterboxd import mode requires an RSS or XML export")
@@ -125,7 +126,6 @@ class LetterboxdProvider:
                 payload = response.content
         for item in _items(payload):
             yield RawRecord(native_id=item["guid"], payload=item)
-        yield Checkpoint(cursor=Cursor(state={}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         item = raw.payload

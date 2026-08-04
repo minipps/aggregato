@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from aggregato.domain.enums import FetchMode
-from aggregato.domain.models import Checkpoint, Cursor, RawRecord
+from aggregato.domain.models import Cursor, RawRecord
 from aggregato.providers.base import ProviderContext
 from aggregato.providers.errors import StructureChangedError
 from aggregato.providers.letterboxd import LetterboxdConfig, LetterboxdProvider, _items
@@ -73,5 +73,5 @@ async def test_rss_is_refetched_on_every_automatic_poll() -> None:
         "https://letterboxd.com/example-user/rss",
         "https://letterboxd.com/example-user/rss",
     ]
-    assert next(item.cursor for item in first if isinstance(item, Checkpoint)).state == {}
+    assert all(isinstance(item, RawRecord) for item in first)
     assert len([item for item in second if isinstance(item, RawRecord)]) == 2
