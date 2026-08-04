@@ -113,6 +113,7 @@ async def list_providers(request: Request) -> list[ProviderView]:
     return [
         _view(info, rows.get(info.id), config)
         for info in sorted(discover_providers(config.provider_dir), key=lambda i: i.id)
+        if info.api_visible
     ]
 
 
