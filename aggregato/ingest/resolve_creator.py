@@ -22,6 +22,14 @@ class CreatorResolution:
     confidence: Confidence
 
 
+class CreatorIdentityConflict(ValueError):
+    """An asserted provider identifier is attached to more than one creator.
+
+    Continuing by creating another creator would turn one corrupt identity into an ever-growing
+    cluster.  The writer records this as an ingest failure so an operator can repair the archive.
+    """
+
+
 CreatorResolutionMemo = dict[tuple[str, str, tuple[tuple[str, str], ...]], CreatorResolution]
 """Sync-scoped cache keyed by family, normalized credit name, and asserted identifiers."""
 
@@ -88,12 +96,20 @@ async def resolve_creators(
             alias_matches.setdefault(row.normalized, set()).add(row.creator_id)
 
     resolved: list[CreatorResolution] = []
-    for credit in batch.credits:
+    for credit, key in zip(batch.credits, keys, strict=True):
+        if memo is not None and (cached_resolution := memo.get(key)) is not None:
+            resolved.append(cached_resolution)
+            continue
         asserted = set().union(
             *(id_matches.get(pair, set()) for pair in ids_by_name.get(credit.creator_name, []))
         )
         if len(asserted) == 1:
             resolution = CreatorResolution(asserted.pop(), Confidence.ASSERTED)
+        elif asserted:
+            raise CreatorIdentityConflict(
+                "asserted creator identifier belongs to multiple creators: "
+                + ", ".join(str(value) for value in sorted(asserted, key=str))
+            )
         else:
             by_name = alias_matches.get(normalize_title(credit.creator_name), set())
             if len(by_name) == 1:
@@ -122,6 +138,14 @@ async def resolve_creators(
                     )
                 )
                 resolution = CreatorResolution(creator_id, Confidence.ASSERTED)
+                # Later credits in this batch must see what was just created.  The original batched
+                # query intentionally precedes all inserts, so without these local updates a
+                # repeated credit creates a duplicate before the sync-scoped memo is populated.
+                alias_matches.setdefault(normalize_title(credit.creator_name), set()).add(
+                    creator_id
+                )
+                for pair in ids_by_name.get(credit.creator_name, []):
+                    id_matches.setdefault(pair, set()).add(creator_id)
         for namespace, value in ids_by_name.get(credit.creator_name, []):
             await conn.execute(
                 upsert_stmt(
@@ -136,11 +160,13 @@ async def resolve_creators(
                             "confidence": str(resolution.confidence),
                         }
                     ],
-                    constraint="uq_creator_external_ids_namespace_value_creator",
+                    constraint="uq_creator_external_ids_namespace_value",
                     update_columns=None,
                 )
             )
         resolved.append(resolution)
+        if memo is not None:
+            memo[key] = resolution
     if memo is not None:
         memo.update(zip(keys, resolved, strict=True))
     return resolved

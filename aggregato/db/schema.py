@@ -329,9 +329,7 @@ creator_external_ids = Table(
     Column("value", Text, nullable=False),
     Column("source", String(64), nullable=False),
     Column("confidence", String(16), nullable=False),
-    UniqueConstraint(
-        "namespace", "value", "creator_id", name="uq_creator_external_ids_namespace_value_creator"
-    ),
+    UniqueConstraint("namespace", "value", name="uq_creator_external_ids_namespace_value"),
     check_constraint("confidence", Confidence),
     # Deliberately **unscoped by family**, unlike aliases: an asserted identifier is identity
     # everywhere ( against ).
