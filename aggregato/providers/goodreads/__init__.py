@@ -1,21 +1,25 @@
-"""Goodreads library-export provider.
+"""Goodreads library-export and bookshelf-RSS provider.
 
-Goodreads does not currently offer a supported personal-library API suitable for this archive, so
-the implemented surface is its CSV export.  ``GoodreadsConfig.automatic_feed_url`` is deliberately
-reserved for a future supported feed/export endpoint: keeping the stable provider id and a single
-normalization model means that upgrade is additive rather than a manual-sync-only dead end.
+Goodreads has no supported read API.  Its CSV export remains the preferred complete archive, but a
+profile's ``/review/list_rss/<user id>`` feed is useful for keeping its recent bookshelf current.
+The feed is a rolling 100-item snapshot, so the CSV export remains the complete-history path.
 """
 
 from __future__ import annotations
 
 import csv
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
+from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from aggregato.domain.enums import (
     Acquisition,
@@ -23,6 +27,7 @@ from aggregato.domain.enums import (
     Confidence,
     CreatorKind,
     EntryKind,
+    ErrorClass,
     FetchMode,
     LoggedPrecision,
     MediaType,
@@ -44,19 +49,22 @@ from aggregato.domain.models import (
 )
 from aggregato.domain.ratings import RatingScale
 from aggregato.providers.base import ProviderContext
-from aggregato.providers.errors import ProviderError, StructureChangedError
+from aggregato.providers.errors import AuthError, BlockedError, ProviderError, StructureChangedError
 
 REQUIRED_COLUMNS = {"Book Id", "Title", "Author", "ISBN", "ISBN13", "My Rating", "Date Read"}
+GOODREADS_HOSTS = frozenset({"goodreads.com", "www.goodreads.com"})
+REVIEW_ID_RE = re.compile(r"/review/show/(\d+)(?:[/?#]|$)")
+RATING_RE = re.compile(r"\b([0-5])(?:\.0)?\b")
 
 
 class GoodreadsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    automatic_feed_url: HttpUrl | None = Field(
+    profile_url: HttpUrl | None = Field(
         default=None,
         description=(
-            "Reserved for a future Goodreads-supported personal-library feed or export endpoint; "
-            "it is intentionally not fetched until that surface is documented and implemented."
+            "Public Goodreads profile URL (/user/show/<id>) or RSS URL "
+            "(/review/list_rss/<id>). The public RSS feed is refreshed daily."
         ),
     )
     export_path: Path | None = Field(
@@ -64,18 +72,26 @@ class GoodreadsConfig(BaseModel):
         description="Optional local library-export CSV for a manually requested full sync.",
     )
 
+    @field_validator("profile_url")
+    @classmethod
+    def _goodreads_profile(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is not None and value.host not in GOODREADS_HOSTS:
+            raise ValueError("profile_url must point to goodreads.com")
+        return value
+
 
 class GoodreadsProvider:
     id: str = "goodreads"
     name: str = "Goodreads"
     media_types: set[MediaType] = {MediaType.BOOK}  # noqa: RUF012
     capabilities: set[Capability] = {  # noqa: RUF012
+        Capability.POLL,
         Capability.FILE_IMPORT,
         Capability.HAS_RATINGS,
         Capability.HAS_REVIEWS,
         Capability.HAS_CREDITS,
     }
-    acquisition: Acquisition = Acquisition.EXPORT
+    acquisition: Acquisition = Acquisition.FEED
     config_model: type[BaseModel] = GoodreadsConfig
     rating_scales: list[RatingScale] = [  # noqa: RUF012
         RatingScale(
@@ -86,49 +102,75 @@ class GoodreadsProvider:
             step=Decimal(1),
         )
     ]
-    schema_version: int = 1
+    schema_version: int = 3
     default_poll_interval: timedelta = timedelta(days=1)
 
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: FetchMode
     ) -> AsyncIterator[RawRecord | Checkpoint]:
-        if cursor is not None and cursor.state.get("import_complete"):
-            yield Checkpoint(cursor=cursor)
-            return
-        if mode is not FetchMode.IMPORT:
-            if _config(ctx).automatic_feed_url is not None:
-                raise ProviderError(
-                    "Goodreads automatic sync is planned but not implemented "
-                    "for the configured feed"
-                )
-            path = _config(ctx).export_path
-        else:
+        if mode is FetchMode.IMPORT:
+            if cursor is not None and cursor.state.get("import_complete"):
+                yield Checkpoint(cursor=cursor)
+                return
             path = ctx.import_path
-        if path is None:
-            raise ProviderError("Goodreads import mode requires an export file")
-        rows = _rows(path)
-        for index, row in enumerate(rows):
-            native_id = row.get("Book Id", "").strip()
-            if not native_id:
-                raise StructureChangedError(f"Goodreads CSV row {index + 2} has no Book Id")
-            yield RawRecord(native_id=native_id, payload=row)
-        yield Checkpoint(cursor=Cursor(state={"import_complete": True}))
+            if path is None:
+                raise ProviderError("Goodreads import mode requires an export file")
+            for index, row in enumerate(_rows(path)):
+                native_id = row.get("Book Id", "").strip()
+                if not native_id:
+                    raise StructureChangedError(f"Goodreads CSV row {index + 2} has no Book Id")
+                yield RawRecord(native_id=native_id, payload=row)
+            yield Checkpoint(cursor=Cursor(state={"import_complete": True}))
+            return
+
+        config = _config(ctx)
+        if config.profile_url is None:
+            # A configured local export can still be scheduled as a convenient one-shot import.
+            if cursor is not None and cursor.state.get("import_complete"):
+                yield Checkpoint(cursor=cursor)
+                return
+            if config.export_path is None:
+                raise ProviderError(
+                    "set profile_url for Goodreads bookshelf sync or supply an export"
+                )
+            for index, row in enumerate(_rows(config.export_path)):
+                native_id = row.get("Book Id", "").strip()
+                if not native_id:
+                    raise StructureChangedError(f"Goodreads CSV row {index + 2} has no Book Id")
+                yield RawRecord(native_id=native_id, payload=row)
+            yield Checkpoint(cursor=Cursor(state={"import_complete": True}))
+            return
+
+        # Like Letterboxd RSS, Goodreads RSS is a changing snapshot. Ignore a previous CSV import
+        # cursor and refetch it every time; writes deduplicate on the Goodreads book id.
+        response = await ctx.http.get(_rss_url(config.profile_url))
+        if response.status_code == 401:
+            raise AuthError("Goodreads rejected access to the bookshelf RSS feed")
+        if response.status_code != 200:
+            raise ProviderError(f"Goodreads bookshelf RSS answered HTTP {response.status_code}")
+        for item in _items(response.content):
+            yield RawRecord(native_id=item["Book Id"], payload=item)
+        yield Checkpoint(cursor=Cursor(state={}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         row = raw.payload
         title = _required(row, "Title")
         author = _required(row, "Author")
         year = _year(row.get("Year Published")) or _year(row.get("Original Publication Year"))
-        # ``Date Added`` records library management, not a reading event.  The supplied export has
-        # unread shelves with a date-added value, so using it here would fabricate a ``read`` entry.
+        # Date Added records library management, not a reading event.
         read_at = _date(row.get("Date Read"))
         ids = [
             NormalizedExternalId(
                 namespace="goodreads", value=raw.native_id, confidence=Confidence.ASSERTED
             )
         ]
-        for column, namespace in (("ISBN", "isbn"), ("ISBN13", "isbn13")):
-            if value := _isbn(row.get(column)):
+        for column, namespace in (
+            ("ISBN", "isbn"),
+            ("ISBN13", "isbn13"),
+            ("Review Id", "goodreads_review"),
+            ("Work Id", "goodreads_work"),
+        ):
+            if value := _identifier(row.get(column), isbn=namespace.startswith("isbn")):
                 ids.append(
                     NormalizedExternalId(
                         namespace=namespace, value=value, confidence=Confidence.ASSERTED
@@ -141,6 +183,7 @@ class GoodreadsProvider:
                 media_type=MediaType.BOOK,
                 title=title,
                 release_year=year,
+                image_url=row.get("Image URL") or None,
                 metadata={
                     "binding": row.get("Binding") or None,
                     "publisher": row.get("Publisher") or None,
@@ -186,26 +229,36 @@ class GoodreadsProvider:
 
     async def check(self, ctx: ProviderContext) -> CheckResult:
         config = _config(ctx)
-        if config.automatic_feed_url is not None:
-            return CheckResult(
-                ok=False,
-                detail=(
-                    "automatic Goodreads synchronization is reserved for a future "
-                    "supported endpoint"
-                ),
-            )
+        if config.profile_url is not None:
+            return CheckResult(ok=True, detail="Goodreads bookshelf RSS is configured")
         if config.export_path is not None:
             try:
                 _rows(config.export_path)
             except ProviderError as exc:
                 return CheckResult(ok=False, error_class=exc.error_class, detail=str(exc))
-        return CheckResult(ok=True, detail="Goodreads is ready to import a library-export CSV")
+            return CheckResult(ok=True, detail="Goodreads library export is valid")
+        return CheckResult(
+            ok=False,
+            error_class=ErrorClass.AUTH,
+            detail="set profile_url or import a Goodreads library export",
+        )
 
 
 def _config(ctx: ProviderContext) -> GoodreadsConfig:
     if not isinstance(ctx.config, GoodreadsConfig):
         raise ProviderError("Goodreads received an invalid configuration model")
     return ctx.config
+
+
+def _rss_url(profile_url: HttpUrl) -> str:
+    parsed = urlsplit(str(profile_url))
+    match = re.fullmatch(r"/user/show/(\d+(?:-[^/]*)?)/?", parsed.path)
+    path = f"/review/list_rss/{match.group(1)}" if match else parsed.path.rstrip("/")
+    if not re.fullmatch(r"/review/list_rss/\d+(?:-[^/]*)?", path):
+        raise ProviderError(
+            "profile_url must be a Goodreads profile or /review/list_rss/<user id> URL"
+        )
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
 def _rows(path: Path) -> list[dict[str, str]]:
@@ -221,6 +274,71 @@ def _rows(path: Path) -> list[dict[str, str]]:
         raise ProviderError(f"cannot read Goodreads export: {exc}") from exc
 
 
+def _items(payload: bytes) -> list[dict[str, str]]:
+    """Map Goodreads' RSS extension elements onto the durable CSV-like raw shape."""
+    text = payload.decode("utf-8", errors="replace")
+    lowered = text.casefold()
+    if "captcha" in lowered or "robot check" in lowered:
+        raise BlockedError("Goodreads returned a CAPTCHA or anti-bot challenge")
+    if "<title>sign in" in lowered or "/user/sign_in" in lowered:
+        raise AuthError("Goodreads requires access to the bookshelf RSS feed")
+    try:
+        root = ET.fromstring(payload)
+    except (DefusedXmlException, ET.ParseError) as exc:
+        raise StructureChangedError("Goodreads bookshelf RSS is not valid XML") from exc
+    nodes = root.findall("./channel/item")
+    if not nodes:
+        raise StructureChangedError("Goodreads bookshelf RSS has no items")
+    return [_rss_row(item) for item in nodes]
+
+
+def _rss_row(item: ET.Element) -> dict[str, str]:
+    book_id = _xml_text(item, "book_id")
+    title = _xml_text(item, "title")
+    author = _xml_text(item, "author_name")
+    guid = _xml_text(item, "guid")
+    review_id = REVIEW_ID_RE.search(guid)
+    if not book_id or not title or not author or review_id is None:
+        raise StructureChangedError(
+            "Goodreads RSS item has no book id, title, author, or review id"
+        )
+    shelves = _xml_text(item, "user_shelves")
+    return {
+        "Book Id": book_id,
+        "Title": title,
+        "Author": author,
+        "ISBN": _xml_text(item, "isbn"),
+        "My Rating": _xml_text(item, "user_rating"),
+        "Date Read": _rss_day(_xml_text(item, "user_read_at")),
+        "Date Added": _rss_day(_xml_text(item, "user_date_added")),
+        "Bookshelves": shelves,
+        "Exclusive Shelf": shelves.split(",")[0].strip() if shelves else "",
+        "My Review": _xml_text(item, "user_review"),
+        "Year Published": _xml_text(item, "book_published"),
+        "Number of Pages": _xml_text(item.find("book"), "num_pages")
+        if item.find("book") is not None
+        else "",
+        "Review Id": review_id.group(1),
+        "Image URL": _xml_text(item, "book_large_image_url"),
+    }
+
+
+def _xml_text(element: ET.Element | None, name: str) -> str:
+    if element is None:
+        return ""
+    value = element.findtext(name)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _rss_day(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return parsedate_to_datetime(value).astimezone(UTC).strftime("%Y/%m/%d")
+    except (TypeError, ValueError):
+        raise StructureChangedError(f"Goodreads RSS date is invalid: {value!r}") from None
+
+
 def _required(row: dict[str, Any], key: str) -> str:
     value = (row.get(key) or "").strip()
     if not value:
@@ -228,8 +346,10 @@ def _required(row: dict[str, Any], key: str) -> str:
     return value
 
 
-def _isbn(value: object) -> str | None:
-    text = "".join(char for char in str(value or "") if char.isdigit() or char == "X")
+def _identifier(value: object, *, isbn: bool = False) -> str | None:
+    text = str(value or "").strip()
+    if isbn:
+        text = "".join(char for char in text if char.isdigit() or char == "X")
     return text or None
 
 
@@ -242,18 +362,19 @@ def _year(value: object) -> int | None:
 
 def _date(value: object) -> datetime | None:
     text = str(value or "").strip()
-    try:
-        return datetime.strptime(text, "%Y/%m/%d").replace(tzinfo=UTC)
-    except ValueError:
-        return None
+    for pattern in ("%Y/%m/%d", "%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(text, pattern).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    return None
 
 
 def _rating(value: object) -> Decimal | None:
-    try:
-        parsed = Decimal(str(value))
-        return parsed if parsed > 0 else None
-    except Exception:
+    match = RATING_RE.search(str(value or ""))
+    if match is None or match.group(1) == "0":
         return None
+    return Decimal(match.group(1))
 
 
 def _yes(value: object) -> bool | None:
