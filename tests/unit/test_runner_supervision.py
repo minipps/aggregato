@@ -221,7 +221,7 @@ async def test_records_before_a_crash_are_kept(tmp_path: Path) -> None:
 
 
 async def test_a_malformed_line_ends_the_run_rather_than_being_skipped(tmp_path: Path) -> None:
-    """ — the boundary rejects, it does not tolerate."""
+    """— the boundary rejects, it does not tolerate."""
     script = HEADER + "sys.stdout.write('not json\\n'); sys.stdout.flush()\n"
     outcome = await _run_child(script, tmp_path)
 
@@ -243,7 +243,7 @@ async def test_a_reported_error_keeps_its_classification(tmp_path: Path) -> None
 
 
 async def test_a_single_bad_record_is_collected_without_failing_the_run(tmp_path: Path) -> None:
-    """ — one poisoned record costs its own row, not the run."""
+    """— one poisoned record costs its own row, not the run."""
     script = HEADER + _emit(
         {"type": "failure", "native_id": "r9", "payload": {"bad": True}, "error": "KeyError: x"}
     )

@@ -25,9 +25,7 @@ from fastapi import FastAPI
 from aggregato.config import load_config
 from aggregato.main import API_PREFIX, create_app
 
-CONTRACT = (
-    Path(__file__).parent.parent.parent / "docs/contracts/openapi.yaml"
-)
+CONTRACT = Path(__file__).parent.parent.parent / "docs/contracts/openapi.yaml"
 
 #: Contract paths with no implementation yet, each with the task that adds it. Every entry is a
 #: promise rather than an exemption — 's final gate check expects this dict empty.
@@ -83,7 +81,7 @@ def test_the_contract_is_valid_yaml_and_declares_its_version(contract: dict[str,
 
 
 def test_the_contract_has_no_unauthenticated_endpoint(contract: dict[str, Any]) -> None:
-    """ at the document level: a global ``security`` block, and nothing opting out to nothing.
+    """at the document level: a global ``security`` block, and nothing opting out to nothing.
 
     ``POST /auth/session`` narrows to bearer only — which is not an exemption, it is the one
     endpoint a session cookie cannot authenticate because it is what issues the cookie.

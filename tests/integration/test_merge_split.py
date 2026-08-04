@@ -1,4 +1,4 @@
-""" archive journey: merge, split, and undo through the identity services ."""
+"""archive journey: merge, split, and undo through the identity services ."""
 
 from __future__ import annotations
 

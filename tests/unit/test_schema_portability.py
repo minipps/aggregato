@@ -77,7 +77,7 @@ def test_entries_partial_unique_index_is_emitted_by_both_dialects() -> None:
 
 
 def test_provider_items_idempotency_key_exists() -> None:
-    """ rests on this one constraint: a resync writes nothing new because of it."""
+    """rests on this one constraint: a resync writes nothing new because of it."""
     keys = {
         tuple(c.name for c in constraint.columns)
         for constraint in provider_items.constraints
@@ -87,7 +87,7 @@ def test_provider_items_idempotency_key_exists() -> None:
 
 
 def test_no_user_id_column_anywhere() -> None:
-    """ — single-user by construction. Adding one is a v2 schema break, accepted knowingly."""
+    """— single-user by construction. Adding one is a v2 schema break, accepted knowingly."""
     offenders = [
         f"{table.name}.{column.name}"
         for table in metadata.sorted_tables

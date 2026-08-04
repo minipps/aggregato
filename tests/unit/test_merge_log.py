@@ -1,4 +1,4 @@
-""" snapshots preserve all rows touched by a merge or split ."""
+"""snapshots preserve all rows touched by a merge or split ."""
 
 from __future__ import annotations
 
