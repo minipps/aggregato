@@ -110,6 +110,7 @@ class ListenBrainzConfig(BaseModel):
         "stores it.",
     )
     token: SecretStr = Field(
+        min_length=1,
         description="ListenBrainz user token, from Settings on the server. Use a ${ENV_VAR} "
         "reference to keep it out of the config file.",
     )

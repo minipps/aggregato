@@ -36,13 +36,19 @@ function resetValues(): void {
 
 watch(() => [props.schema, props.modelValue] as const, resetValues, { immediate: true, deep: true })
 
+function acceptsNull(field: JsonSchema): boolean {
+  return field.type === 'null' || field.anyOf?.some((option) => option.type === 'null') === true
+}
+
 function update(name: string, field: JsonSchema, event: Event): void {
   const input = event.target as HTMLInputElement | HTMLSelectElement
-  const value: string | number | boolean = field.type === 'boolean'
+  const value: string | number | boolean | null = field.type === 'boolean'
     ? (input as HTMLInputElement).checked
     : field.type === 'number' || field.type === 'integer'
       ? Number(input.value)
-      : input.value
+      : acceptsNull(field) && input.value.trim() === ''
+        ? null
+        : input.value
   values.value = { ...values.value, [name]: value }
   emit('update:modelValue', values.value)
 }

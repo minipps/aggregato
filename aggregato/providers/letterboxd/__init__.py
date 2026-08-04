@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from aggregato.domain.enums import (
     Acquisition,
@@ -68,6 +68,16 @@ class LetterboxdConfig(BaseModel):
         default=None,
         description="Optional local RSS/XML export for a manually requested full sync.",
     )
+
+    @field_validator("username", "rss_url", "export_path", mode="before")
+    @classmethod
+    def _empty_optional_setting_is_unset(cls, value: object) -> object:
+        """Normalize an unfilled optional form field to ``None``.
+
+        The UI serializes an empty text field as ``\"\"``.  That is not a valid optional URL and
+        ``pathlib.Path(\"\")`` means the current directory, which is never an export file.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 class LetterboxdProvider:

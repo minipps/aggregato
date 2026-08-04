@@ -10,6 +10,11 @@ const schema = {
     token: { title: 'Access token', type: 'string', writeOnly: true, description: 'Stored locally.' },
     visibility: { title: 'Visibility', type: 'string', enum: ['public', 'private'], default: 'public' },
     include_notes: { title: 'Include notes', type: 'boolean', default: false },
+    profile_url: {
+      title: 'Profile URL',
+      anyOf: [{ type: 'string', format: 'uri' }, { type: 'null' }],
+      default: null,
+    },
   },
 }
 
@@ -25,6 +30,12 @@ describe('SchemaForm', () => {
     const wrapper = mount(SchemaForm, { props: { schema } })
     await wrapper.get('input[type="checkbox"]').setValue(true)
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toMatchObject({ include_notes: true })
+  })
+
+  it('emits null for an empty optional field', async () => {
+    const wrapper = mount(SchemaForm, { props: { schema } })
+    await wrapper.get('#config-profile_url').setValue('')
+    expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toMatchObject({ profile_url: null })
   })
 
   it('emits submit so a parent can persist schema-driven settings', async () => {

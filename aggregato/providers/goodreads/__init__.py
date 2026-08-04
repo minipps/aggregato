@@ -72,6 +72,12 @@ class GoodreadsConfig(BaseModel):
         description="Optional local library-export CSV for a manually requested full sync.",
     )
 
+    @field_validator("profile_url", "export_path", mode="before")
+    @classmethod
+    def _empty_optional_setting_is_unset(cls, value: object) -> object:
+        """Keep an unfilled optional form field from becoming a bad URL or ``Path('.')``."""
+        return None if isinstance(value, str) and not value.strip() else value
+
     @field_validator("profile_url")
     @classmethod
     def _goodreads_profile(cls, value: HttpUrl | None) -> HttpUrl | None:
