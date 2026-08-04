@@ -241,7 +241,7 @@ def test_0007_renames_the_media_type_without_losing_the_log(
     db = tmp_path / "aggregato.db"
     config = _seed_at_0006(db, old)
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0007")
 
     with closing(sqlite3.connect(db)) as conn:
         assert conn.execute("SELECT media_type FROM works").fetchall() == [(new,)]
@@ -275,7 +275,7 @@ def test_0007_downgrade_restores_the_previous_names(tmp_path: Path, old: str, ne
     """A pure rename is reversible, which is exactly what 0005's merge could not be."""
     db = tmp_path / "aggregato.db"
     config = _seed_at_0006(db, old)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0007")
 
     command.downgrade(config, "0006")
 
@@ -289,4 +289,52 @@ def test_0007_downgrade_restores_the_previous_names(tmp_path: Path, old: str, ne
                 "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
                 " VALUES ('x', ?, 't', 't', '2026-01-01', '2026-01-01')",
                 (new,),
+            )
+
+
+def test_0008_repairs_duplicate_creator_identifiers_before_constraining_them(
+    tmp_path: Path,
+) -> None:
+    """A broken archive upgrades by merging the duplicate identity rather than failing DDL."""
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0007")
+    winner, loser = "1" * 32, "2" * 32
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES (?, 'person', 'Alex', 'alex', '{}', '2026-01-01', '2026-01-01')",
+            (winner,),
+        )
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES (?, 'person', 'Alex', 'alex', '{}', '2026-01-02', '2026-01-02')",
+            (loser,),
+        )
+        for creator_id in (winner, loser):
+            conn.execute(
+                "INSERT INTO creator_aliases "
+                "(creator_id, name, normalized, media_family, kind, source)"
+                " VALUES (?, 'Alex', 'alex', 'screen', 'primary', 'anilist')",
+                (creator_id,),
+            )
+            conn.execute(
+                "INSERT INTO creator_external_ids "
+                "(creator_id, namespace, value, source, confidence)"
+                " VALUES (?, 'anilist', '7', 'anilist', 'asserted')",
+                (creator_id,),
+            )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT id FROM creators").fetchall() == [(winner,)]
+        assert conn.execute("SELECT creator_id FROM creator_external_ids").fetchall() == [(winner,)]
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO creator_external_ids "
+                "(creator_id, namespace, value, source, confidence)"
+                " VALUES (?, 'anilist', '7', 'anilist', 'asserted')",
+                (winner,),
             )

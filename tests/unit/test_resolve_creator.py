@@ -175,6 +175,18 @@ async def test_resolution_memo_reuses_a_repeated_credit_set(conn: SyncConnection
     assert len(memo) == 1
 
 
+async def test_repeated_credit_in_one_batch_creates_one_creator(
+    conn: SyncConnectionAdapter,
+) -> None:
+    repeated = batch()
+    repeated.credits.append(repeated.credits[0].model_copy(update={"position": 1}))
+
+    result = await resolve_creators(conn, repeated, MediaFamily.SCREEN, source="test", now=NOW)
+
+    assert result[0].creator_id == result[1].creator_id
+    assert (await conn.execute(creators.select())).fetchall().__len__() == 1
+
+
 async def test_full_refresh_supersedes_only_older_open_items(
     conn: SyncConnectionAdapter,
 ) -> None:
