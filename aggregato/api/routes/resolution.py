@@ -6,6 +6,7 @@ import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from starlette.requests import Request
@@ -96,7 +97,10 @@ async def decide(request: Request, id: int, body: DecisionRequest) -> MergeLogEn
         if item.decided_at is not None:
             raise ProblemError(409, "Conflict", "This resolution item was already decided.")
         now = SYSTEM_CLOCK.now()
-        queue_snapshot = {"resolution_queue": [dict(item._mapping)]}
+        # Merge-log snapshots live in a JSON column.  A queue row includes ``created_at`` (and may
+        # contain UUID-valued payload data), so retain it through FastAPI's JSON-safe encoder just
+        # as the merge service does for its own snapshots.
+        queue_snapshot = {"resolution_queue": [jsonable_encoder(dict(item._mapping))]}
         source_id = await _source_id(conn, item)
         try:
             if body.decision == ResolutionDecision.LINKED:
