@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 
 from aggregato.config import Config, load_config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import import_jobs, provider_items
+from aggregato.db.schema import import_jobs, provider_items, providers
 from aggregato.main import create_app
 from aggregato.sync.dispatch import build_dispatch
 from aggregato.sync.scheduler import claim, due_providers
@@ -21,6 +21,7 @@ from aggregato.sync.scheduler import claim, due_providers
 TOKEN = "phase-7-import-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 EXPORT = Path("tests/fixtures/goodreads/library_export.csv")
+LETTERBOXD_EXPORT = Path("tests/fixtures/letterboxd/activity.rss")
 
 
 @pytest.fixture
@@ -93,3 +94,22 @@ async def test_unrelated_upload_is_rejected_without_a_job(client: httpx.AsyncCli
         result = await conn.execute(select(func.count()).select_from(import_jobs))
         assert result.scalar_one() == 0
     assert await _count_items(_engine(client)) == 0
+
+
+async def test_letterboxd_import_saves_the_username_for_later_rss_polls(
+    client: httpx.AsyncClient,
+) -> None:
+    assert (await client.post("/api/v1/providers/letterboxd/enable")).status_code == 200
+    content = await asyncio.to_thread(LETTERBOXD_EXPORT.read_bytes)
+
+    response = await client.post(
+        "/api/v1/providers/letterboxd/import",
+        files={"file": ("activity.rss", content, "application/rss+xml")},
+    )
+
+    assert response.status_code == 202
+    async with transaction(_engine(client)) as conn:  # type: ignore[arg-type]
+        settings = (
+            await conn.execute(select(providers.c.config).where(providers.c.id == "letterboxd"))
+        ).scalar_one()
+    assert settings == {"username": "fixture_user"}

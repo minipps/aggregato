@@ -17,6 +17,7 @@ exactly zero outbound requests" (SC-013) is either true or not.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import UTC, datetime
@@ -387,9 +388,29 @@ async def import_file(
         )
 
     path = await _store_import(config.data_dir, id, file)
+    provider = load_provider(id, config.provider_dir)
+    inferred_settings = await _settings_inferred_from_import(
+        provider,
+        path,
+        enabled=not any(setting.startswith(f"providers.{id}.") for setting in config.file_pinned),
+    )
     now = datetime.now(UTC)
     lineage = uuid.uuid4()
     async with transaction(engine) as conn:
+        if inferred_settings:
+            stored = (
+                await conn.execute(select(providers.c.config).where(providers.c.id == id))
+            ).scalar_one_or_none()
+            merged_settings = dict(stored) if isinstance(stored, dict) else {}
+            # A value chosen explicitly in the UI always wins over a value discoverable in an
+            # export. This also avoids replacing an explicit RSS URL with a derived username URL.
+            for key, value in inferred_settings.items():
+                merged_settings.setdefault(key, value)
+            await conn.execute(
+                update(providers)
+                .where(providers.c.id == id)
+                .values(config=merged_settings, updated_at=now)
+            )
         await conn.execute(
             import_jobs.insert().values(provider_id=id, path=str(path), created_at=now)
         )
@@ -441,6 +462,26 @@ async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) ->
     finally:
         await upload.close()
     return target
+
+
+async def _settings_inferred_from_import(
+    provider: object, path: Path, *, enabled: bool
+) -> dict[str, object]:
+    """Ask a provider with import metadata support for non-secret settings it can discover.
+
+    Import parsing remains worker-owned. This best-effort metadata step exists solely for optional
+    settings, such as a public feed's account name, and never rejects an otherwise valid upload.
+    File-pinned settings remain authoritative and are never copied into the database.
+    """
+    infer = getattr(provider, "config_from_import", None)
+    if not enabled or not callable(infer):
+        return {}
+    try:
+        payload = await asyncio.to_thread(path.read_bytes)
+        settings = infer(payload)
+    except (OSError, ValueError):
+        return {}
+    return dict(settings) if isinstance(settings, dict) else {}
 
 
 # --- internals ---------------------------------------------------------------------------------

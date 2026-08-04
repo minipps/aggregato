@@ -16,8 +16,10 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
+from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from aggregato.domain.enums import (
@@ -189,6 +191,16 @@ class LetterboxdProvider:
             )
         return CheckResult(ok=True, detail="Letterboxd public RSS is configured")
 
+    def config_from_import(self, payload: bytes) -> dict[str, str]:
+        """Infer the public-feed settings available in an imported RSS document.
+
+        Imports are handled by the host, which persists the returned settings before queueing the
+        worker.  An absent or unfamiliar channel link is intentionally not an import error: the
+        archive can still be ingested, it simply cannot enable future polling automatically.
+        """
+        username = _username_from_rss(payload)
+        return {"username": username} if username is not None else {}
+
 
 def _config(ctx: ProviderContext) -> LetterboxdConfig:
     if not isinstance(ctx.config, LetterboxdConfig):
@@ -200,6 +212,27 @@ def _rss_url(config: LetterboxdConfig) -> str | None:
     if config.rss_url is not None:
         return str(config.rss_url)
     return f"https://letterboxd.com/{config.username}/rss" if config.username else None
+
+
+def _username_from_rss(payload: bytes) -> str | None:
+    """Read a Letterboxd account name from the RSS channel's canonical profile URL."""
+    try:
+        root = ET.fromstring(payload)
+    except (DefusedXmlException, ET.ParseError):
+        return None
+    link = root.findtext("./channel/link")
+    if not link:
+        return None
+    parsed = urlsplit(link.strip())
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+        "letterboxd.com",
+        "www.letterboxd.com",
+    }:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 1 or not re.fullmatch(r"[A-Za-z0-9_]+", parts[0]):
+        return None
+    return parts[0]
 
 
 def _items(payload: bytes) -> list[dict[str, Any]]:

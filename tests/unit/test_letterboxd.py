@@ -44,6 +44,12 @@ def test_changed_letterboxd_item_is_rejected() -> None:
         _items(Path("tests/fixtures/letterboxd/structure-changed.rss").read_bytes())
 
 
+def test_imported_rss_derives_the_public_feed_username() -> None:
+    payload = Path("tests/fixtures/letterboxd/activity.rss").read_bytes()
+
+    assert LetterboxdProvider().config_from_import(payload) == {"username": "fixture_user"}
+
+
 async def test_rss_is_refetched_on_every_automatic_poll() -> None:
     """A previous complete RSS snapshot must not disable subsequent scheduled refreshes."""
     requests: list[str] = []
