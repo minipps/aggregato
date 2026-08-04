@@ -101,35 +101,33 @@ async def decide(request: Request, id: int, body: DecisionRequest) -> MergeLogEn
         # contain UUID-valued payload data), so retain it through FastAPI's JSON-safe encoder just
         # as the merge service does for its own snapshots.
         queue_snapshot = {"resolution_queue": [jsonable_encoder(dict(item._mapping))]}
-        source_id = await _source_id(conn, item)
         try:
+            source_id = await _live_identity(conn, item.subject, await _source_id(conn, item))
             if body.decision == ResolutionDecision.LINKED:
                 assert body.target_id is not None
-                log = await (
-                    merge_works(conn, winner_id=body.target_id, loser_ids=[source_id], now=now)
-                    if item.subject == str(ResolutionSubject.WORK)
-                    else merge_creators(
-                        conn, winner_id=body.target_id, loser_ids=[source_id], now=now
+                target_id = await _live_identity(conn, item.subject, body.target_id)
+                log = (
+                    await (
+                        merge_works(conn, winner_id=target_id, loser_ids=[source_id], now=now)
+                        if item.subject == str(ResolutionSubject.WORK)
+                        else merge_creators(
+                            conn, winner_id=target_id, loser_ids=[source_id], now=now
+                        )
+                    )
+                    if target_id != source_id
+                    else await _queue_decision_log(
+                        conn, item.subject, source_id, queue_snapshot, now
                     )
                 )
             else:
-                log = (
-                    await conn.execute(
-                        merge_log.insert()
-                        .values(
-                            subject=item.subject,
-                            operation="split"
-                            if body.decision == ResolutionDecision.SPLIT
-                            else "merge",
-                            winner_id=source_id,
-                            loser_ids=[],
-                            moved_credit_ids=None,
-                            performed_at=now,
-                            snapshot=queue_snapshot,
-                        )
-                        .returning(merge_log)
-                    )
-                ).one()
+                log = await _queue_decision_log(
+                    conn,
+                    item.subject,
+                    source_id,
+                    queue_snapshot,
+                    now,
+                    operation="split" if body.decision == ResolutionDecision.SPLIT else "merge",
+                )
         except (LookupError, ValueError) as exc:
             raise ProblemError(409, "Conflict", str(exc)) from exc
         snapshot = dict(log.snapshot)
@@ -163,3 +161,49 @@ async def _source_id(conn: Any, item: Any) -> uuid.UUID:
     if value is None:
         raise ValueError("resolution item has no proposed work")
     return cast(uuid.UUID, value)
+
+
+async def _live_identity(conn: Any, subject: str, identity_id: uuid.UUID) -> uuid.UUID:
+    """Follow active merge-log successors so queued historical candidates remain actionable."""
+    rows = await conn.execute(
+        select(merge_log.c.winner_id, merge_log.c.loser_ids).where(
+            merge_log.c.subject == subject,
+            merge_log.c.operation == "merge",
+            merge_log.c.undone_at.is_(None),
+        )
+    )
+    successors = {
+        uuid.UUID(str(loser_id)): row.winner_id for row in rows for loser_id in row.loser_ids
+    }
+    seen: set[uuid.UUID] = set()
+    while identity_id in successors and identity_id not in seen:
+        seen.add(identity_id)
+        identity_id = successors[identity_id]
+    return identity_id
+
+
+async def _queue_decision_log(
+    conn: Any,
+    subject: str,
+    source_id: uuid.UUID,
+    snapshot: dict[str, Any],
+    now: Any,
+    *,
+    operation: str = "merge",
+) -> Any:
+    """Record a queue-only decision, including an already-satisfied historical link."""
+    return (
+        await conn.execute(
+            merge_log.insert()
+            .values(
+                subject=subject,
+                operation=operation,
+                winner_id=source_id,
+                loser_ids=[],
+                moved_credit_ids=None,
+                performed_at=now,
+                snapshot=snapshot,
+            )
+            .returning(merge_log)
+        )
+    ).one()

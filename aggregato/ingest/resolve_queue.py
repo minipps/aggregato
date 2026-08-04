@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import creator_aliases, creators, resolution_queue
@@ -14,6 +14,25 @@ from aggregato.domain.enums import MediaFamily, ResolutionSubject
 from aggregato.domain.models import NormalizedBatch
 from aggregato.ingest.resolve_creator import CreatorResolution
 from aggregato.ingest.titles import normalize_title
+
+
+async def supersede_stale_open_items(
+    conn: AsyncConnection,
+    *,
+    provider_id: str,
+    refreshed_at: datetime,
+    now: datetime,
+) -> None:
+    """Close items superseded by a successful full refresh while preserving their history."""
+    await conn.execute(
+        update(resolution_queue)
+        .where(
+            resolution_queue.c.provider_id == provider_id,
+            resolution_queue.c.decided_at.is_(None),
+            resolution_queue.c.created_at < refreshed_at,
+        )
+        .values(decided_at=now, decision="ignored")
+    )
 
 
 async def queue_work_ambiguity(
