@@ -12,7 +12,7 @@ const emit = defineEmits<{ retry: [] }>()
 </script>
 
 <template>
-  <div class="state" role="alert">
+  <div class="state note note--danger" role="alert">
     <p class="state__title">{{ props.problem.title }}</p>
     <p v-if="props.problem.detail" class="state__detail">{{ props.problem.detail }}</p>
     <p v-if="props.problem.status > 0" class="state__meta">HTTP {{ props.problem.status }}</p>
@@ -21,27 +21,28 @@ const emit = defineEmits<{ retry: [] }>()
 </template>
 
 <style scoped>
+/* .note carries the tint and radius; a bordered panel here would read as a card inside a card. */
 .state {
-  border: 1px solid var(--danger);
-  border-radius: var(--radius);
-  padding: var(--space-4);
-  background: var(--surface);
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
 }
 
 .state__title {
   margin: 0;
-  font-weight: 600;
-  color: var(--danger);
+  font-weight: 700;
 }
 
-.state__detail {
-  margin: var(--space-2) 0 0;
+.state__detail,
+.state__meta {
+  margin: 0;
+  /* Full-strength on the tinted background — muted text on colour fails contrast. */
+  color: inherit;
 }
 
 .state__meta {
-  margin: var(--space-2) 0 0;
-  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.85em;
+  opacity: 0.85;
 }
 </style>

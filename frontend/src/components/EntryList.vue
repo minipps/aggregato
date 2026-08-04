@@ -83,14 +83,25 @@ function subject(ref: SubjectRef | null | undefined): string {
   padding: 0;
 }
 
+/* Rows, not cards: this list lives inside a Bento card, so each row is a hairline-separated line
+   rather than another rounded surface. */
 .entry {
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-3);
+  border-radius: var(--radius);
   /* Flex rather than grid: with no poster the body is the only item, so no empty column indents
      rows that have no artwork. */
   display: flex;
   gap: var(--space-3);
   align-items: start;
+  transition: background 0.2s ease-out;
+}
+
+.entry + .entry {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.entry:hover {
+  background: var(--surface-raised);
 }
 
 .entry__body {
@@ -104,8 +115,8 @@ function subject(ref: SubjectRef | null | undefined): string {
   width: 40px;
   height: 60px;
   object-fit: cover;
-  border-radius: calc(var(--radius) / 2);
-  background: var(--surface);
+  border-radius: var(--space-2);
+  background: var(--surface-raised);
 }
 
 .entry__title {

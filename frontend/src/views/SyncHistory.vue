@@ -22,18 +22,59 @@ async function select(): Promise<void> { await history.restart() }
 
 <template>
   <section>
-    <h1>Sync history</h1>
-    <label>Provider <select v-model="providerId" @change="select"><option value="">Choose a provider</option><option v-for="provider in available.data.value ?? []" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
-    <p v-if="!providerId" class="muted">Choose a provider to inspect its sync attempts.</p>
-    <LoadingState v-else-if="history.loading.value" label="Loading sync history…" />
-    <ErrorState v-else-if="history.error.value" :problem="history.error.value" retryable @retry="history.restart()" />
-    <EmptyState v-else-if="grouped.length === 0" title="No sync attempts" detail="Attempts appear here once this provider runs." />
-    <ol v-else class="plain">
-      <li v-for="attempts in grouped" :key="attempts[0]?.lineage_id" class="card">
-        <h2>Sync lineage · {{ attempts.length }} attempt{{ attempts.length === 1 ? '' : 's' }}</h2>
-        <ul class="plain"><li v-for="run in attempts" :key="run.id"><strong>{{ run.status }}</strong> · attempt {{ run.attempt }} · <LoggedAt :at="run.started_at" precision="exact" /> · {{ run.items_written }} written, {{ run.items_failed }} failed <p v-if="run.error_message" class="muted">{{ run.error_class }}: {{ run.error_message }}</p></li></ul>
-      </li>
-    </ol>
-    <button v-if="providerId && !history.done.value" type="button" @click="history.loadMore()">Load more</button>
+    <div class="bento">
+      <section class="card card--accent span-2">
+        <div class="card__head">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M4 9a8 8 0 0 1 13-2.5L20 9m0 6a8 8 0 0 1-13 2.5L4 15" />
+              <path d="M20 4v5h-5M4 20v-5h5" />
+            </svg>
+          </span>
+          <h1>Sync history</h1>
+        </div>
+        <p>Every attempt a provider has made, grouped by the run it retried.</p>
+      </section>
+
+      <form class="card span-2" @submit.prevent="select">
+        <h2 class="visually-hidden">Choose a provider</h2>
+        <div class="field">
+          <label for="history-provider">Provider</label>
+          <select id="history-provider" v-model="providerId" @change="select">
+            <option value="">Choose a provider</option>
+            <option v-for="provider in available.data.value ?? []" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
+          </select>
+        </div>
+        <p v-if="!providerId" class="muted">Choose a provider to inspect its sync attempts.</p>
+      </form>
+    </div>
+
+    <template v-if="providerId">
+      <LoadingState v-if="history.loading.value" label="Loading sync history…" />
+      <ErrorState v-else-if="history.error.value" :problem="history.error.value" retryable @retry="history.restart()" />
+      <EmptyState v-else-if="grouped.length === 0" title="No sync attempts" detail="Attempts appear here once this provider runs." />
+      <ol v-else class="bento">
+        <!-- The newest lineage is usually the one being diagnosed, so it takes the full row; the
+             rest pair up two to a row rather than stacking beside a row-spanning tile. -->
+        <li
+          v-for="(attempts, index) in grouped"
+          :key="attempts[0]?.lineage_id"
+          :class="['card', index === 0 ? 'span-4' : 'span-2']"
+        >
+          <h2>Sync lineage · {{ attempts.length }} attempt{{ attempts.length === 1 ? '' : 's' }}</h2>
+          <ul class="plain">
+            <li v-for="run in attempts" :key="run.id">
+              <strong>{{ run.status }}</strong> · attempt {{ run.attempt }} ·
+              <LoggedAt :at="run.started_at" precision="exact" /> ·
+              {{ run.items_written }} written, {{ run.items_failed }} failed
+              <p v-if="run.error_message" class="muted">{{ run.error_class }}: {{ run.error_message }}</p>
+            </li>
+          </ul>
+        </li>
+      </ol>
+      <p v-if="!history.done.value" class="actions">
+        <button type="button" @click="history.loadMore()">Load more</button>
+      </p>
+    </template>
   </section>
 </template>

@@ -9,7 +9,8 @@ defineProps<{ status: ProviderStatus }>()
 </template>
 
 <style scoped>
-.provider-status { border-radius: 999px; padding: .15rem .5rem; font-size: .85em; font-weight: 700; background: var(--surface); }
-.provider-status--degraded, .provider-status--misconfigured { color: var(--danger); border: 1px solid var(--danger); }
-.provider-status--idle { color: var(--ok); }
+.provider-status { border-radius: var(--radius-pill); padding: .1rem .55rem; font-size: .78em; font-weight: 650; background: var(--surface-raised); color: var(--text); }
+.provider-status--degraded, .provider-status--misconfigured { background: color-mix(in srgb, var(--danger) 20%, var(--ctp-base)); color: var(--danger); }
+.provider-status--idle, .provider-status--ok { background: color-mix(in srgb, var(--ok) 20%, var(--ctp-base)); color: var(--ok); }
+.provider-status--syncing { background: color-mix(in srgb, var(--accent) 20%, var(--ctp-base)); color: var(--accent); }
 </style>

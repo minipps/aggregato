@@ -42,15 +42,29 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <section class="login">
-    <h1>Sign in to Aggregato</h1>
-    <p class="hint">
-      Paste the API token from your configuration file. It is exchanged for a session cookie and not
-      stored in the browser. A read-only token signs in the same way and browses the archive without
-      being able to change it.
-    </p>
+  <div class="bento login">
+    <section class="card card--accent span-2">
+      <div class="card__head">
+        <span class="card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <rect x="4" y="10" width="16" height="10" rx="2" />
+            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+          </svg>
+        </span>
+        <h1>Sign in to Aggregato</h1>
+      </div>
+      <p>
+        Paste the API token from your configuration file. It is exchanged for a session cookie and
+        not stored in the browser.
+      </p>
+      <p>
+        A read-only token signs in the same way and browses the archive without being able to change
+        it.
+      </p>
+    </section>
 
-    <form class="form" @submit.prevent="submit">
+    <form class="card span-2" @submit.prevent="submit">
+      <h2 class="visually-hidden">Credentials</h2>
       <div class="field">
         <label for="api-token">API token</label>
         <input
@@ -63,54 +77,28 @@ async function submit(): Promise<void> {
           :aria-describedby="problem ? 'login-error' : undefined"
         />
       </div>
-      <button type="submit" :disabled="submitting || token === ''">
-        {{ submitting ? 'Signing in…' : 'Sign in' }}
-      </button>
-    </form>
+      <p class="actions">
+        <button type="submit" :disabled="submitting || token === ''">
+          {{ submitting ? 'Signing in…' : 'Sign in' }}
+        </button>
+      </p>
 
-    <div id="login-error">
-      <!-- The problem's own message, not a status code: a wrong token says so in words . -->
-      <ErrorState v-if="problem" :problem="problem" />
-    </div>
-  </section>
+      <div id="login-error">
+        <!-- The problem's own message, not a status code: a wrong token says so in words . -->
+        <ErrorState v-if="problem" :problem="problem" />
+      </div>
+    </form>
+  </div>
 </template>
 
 <style scoped>
+/* Sign-in is one task, so the grid stays narrow rather than spreading two tiles across the page. */
 .login {
-  max-width: 32rem;
+  max-width: 52rem;
 }
 
-.hint {
-  color: var(--text-muted);
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-label {
+.field > label {
   font-weight: 600;
-}
-
-input {
-  font: inherit;
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
   color: var(--text);
-}
-
-button {
-  align-self: start;
 }
 </style>
