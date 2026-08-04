@@ -129,6 +129,32 @@ async def test_configure_provider_persists_validated_settings_without_enabling_i
     assert saved == {"path": str(FIXTURE)}
 
 
+async def test_listing_shows_only_non_sensitive_current_provider_settings(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.put(
+        "/api/v1/providers/anilist/config",
+        json={
+            "username": "dawn",
+            "token": "private-token",
+            "api_url": "https://example.test/graphql",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["current_settings"] == {
+        "username": "dawn",
+        "api_url": "https://example.test/graphql",
+    }
+    assert "private-token" not in response.text
+
+    listed = (await client.get("/api/v1/providers")).json()
+    anilist = next(provider for provider in listed if provider["id"] == "anilist")
+    assert anilist["current_settings"] == body["current_settings"]
+    assert "token" not in anilist["current_settings"]
+
+
 async def test_invalid_provider_config_is_rejected_without_creating_provider_state(
     client: httpx.AsyncClient,
 ) -> None:

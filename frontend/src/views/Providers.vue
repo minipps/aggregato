@@ -50,6 +50,16 @@ const configSchemaFailure = ref<{ id: string; problem: Problem } | undefined>(un
 type ConfigValues = Record<string, string | number | boolean | null>
 const configValues = ref<Record<string, ConfigValues>>({})
 
+function formatSetting(value: unknown): string {
+  if (value === null) return 'None'
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 async function act(id: string, label: string, action: () => Promise<string>): Promise<void> {
   busy.value = id
   notice.value = { id, text: `${label}…` }
@@ -212,6 +222,21 @@ function saveConfiguration(id: string): Promise<void> {
           <dt>Capabilities</dt>
           <dd>{{ provider.capabilities.join(', ') || '—' }}</dd>
         </dl>
+
+        <section
+          v-if="Object.keys(provider.current_settings ?? {}).length"
+          class="current-settings"
+          :aria-label="`${provider.name} current settings`"
+        >
+          <h3>Current settings</h3>
+          <dl class="pairs">
+            <template v-for="(value, setting) in provider.current_settings" :key="setting">
+              <dt>{{ setting }}</dt>
+              <dd class="mono">{{ formatSetting(value) }}</dd>
+            </template>
+          </dl>
+          <p class="muted">Passwords, API keys, and other sensitive settings are not shown.</p>
+        </section>
 
         <!-- R15: pinned settings are shown, disabled, with why the edit would not stick. -->
         <fieldset v-if="provider.file_pinned_settings?.length" disabled class="pinned">
