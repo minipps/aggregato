@@ -2,12 +2,12 @@
 # (research.md  — the mitigation for the SPA deviation recorded in plan.md Complexity Tracking).
 
 # --- Stage 1: build the SPA -------------------------------------------------------------------
-FROM node:22-slim AS frontend
+FROM node:22.23.2-slim AS frontend
 WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
 COPY frontend/ ./
-RUN npm run build
+RUN npm --loglevel=error run build
 
 # --- Stage 2: resolve Python dependencies into a venv ----------------------------------------
 FROM python:3.13-slim AS deps
