@@ -1,18 +1,18 @@
-"""Authentication for every request (T041, research.md R12, FR-032).
+"""Authentication for every request (, research.md , ).
 
 There is no unauthenticated mode. A request carries either ``Authorization: Bearer <api.token>``
-or the ``aggregato_session`` cookie; anything else is a 401 problem detail. FR-032 also forbids the
+or the ``aggregato_session`` cookie; anything else is a 401 problem detail.  also forbids the
 token appearing in a URL or in page source, which is why the browser gets a cookie instead of the
 token itself.
 
 Design decisions worth stating once:
 
 * **Constant-time token comparison.** ``hmac.compare_digest`` on bytes. A ``==`` on a secret leaks
-  length and prefix through timing, and this is the only credential in the system (FR-006).
+  length and prefix through timing, and this is the only credential in the system .
 * **Sessions live in the database** (``sessions``), not in a self-contained signed cookie, so that
   rotating ``api.token`` can actually reach them: every row stores the ``token_fingerprint`` it was
   issued under, and a lookup requires it to equal the fingerprint of the *current* token. Rotation
-  therefore invalidates every session, as R12 requires. Expiry is checked in SQL for the same
+  therefore invalidates every session, as  requires. Expiry is checked in SQL for the same
   reason it is stored in SQL — and because SQLite hands back naive datetimes.
 * **CSRF: double-submit, with the token derived by HMAC rather than stored.**
   ``POST /auth/session`` sets a second, JS-readable cookie holding
@@ -71,13 +71,13 @@ CSRF_COOKIE: Final = "aggregato_csrf"
 CSRF_HEADER: Final = "X-CSRF-Token"
 
 SESSION_TTL: Final = timedelta(days=14)
-"""How long a cookie session lasts. One user, one token: there is no refresh flow (FR-006)."""
+"""How long a cookie session lasts. One user, one token: there is no refresh flow ."""
 
 _UNAUTHORIZED: Final = 401
 _FORBIDDEN: Final = 403
 
 # A bearer token is not attached automatically by a browser, so these need no CSRF token when
-# presented with one; only cookie authentication does (R12).
+# presented with one; only cookie authentication does .
 _UNSAFE_METHODS: Final = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _SESSION_PATH: Final = "/auth/session"
@@ -115,7 +115,7 @@ def register_auth(app: FastAPI, *, config: Config, engine: AsyncEngine) -> None:
     """Attach the config and engine that :func:`require_auth` and the routes read.
 
     ``main.py`` must additionally construct the app as
-    ``FastAPI(dependencies=[Depends(require_auth)])`` so no route can forget the check (FR-032).
+    ``FastAPI(dependencies=[Depends(require_auth)])`` so no route can forget the check .
 
     Args:
         app: The application to mutate.
@@ -251,7 +251,7 @@ def _is_write(request: Request) -> bool:
     ``POST /auth/session`` is excluded: it mints a session no stronger than the credential
     presented, so a read-only token exchanging itself for a read-only cookie escalates nothing —
     and without that exchange the SPA could only work by keeping the token in page source, which
-    FR-032 forbids.
+     forbids.
     """
     return request.method in _UNSAFE_METHODS and not request.url.path.endswith(_SESSION_PATH)
 
@@ -315,7 +315,7 @@ async def _valid_session(request: Request, cookie: str) -> tuple[str, str, bool]
         raise _unauthorized("The session cookie is not valid.")
     credential, readonly = matched
     # Expiry and fingerprint are both filters, not fetched values: SQLite returns naive datetimes,
-    # and the fingerprint predicate is what makes token rotation invalidate the session (R12).
+    # and the fingerprint predicate is what makes token rotation invalidate the session .
     async with transaction(_engine(request)) as conn:
         found = await conn.scalar(
             select(sessions.c.id).where(

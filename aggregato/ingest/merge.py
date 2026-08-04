@@ -1,4 +1,4 @@
-"""Reversible identity merges (US4).
+"""Reversible identity merges .
 
 The merge log keeps a JSON-safe copy of every row the operation changes.  This is deliberately a
 snapshot rather than a lossy "inverse" instruction: a merge can touch identifiers, provider items,

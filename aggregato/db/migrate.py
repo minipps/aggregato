@@ -1,4 +1,4 @@
-"""Apply migrations at startup, backing up an embedded database first (FR-049).
+"""Apply migrations at startup, backing up an embedded database first .
 
 Alembic owns the version table and the revision chain; this module is only the hook that runs it,
 so there is no second migration mechanism to keep in step (data-model.md §6).
@@ -29,7 +29,7 @@ _SCRIPT_LOCATION = Path(__file__).resolve().parent / "migrations"
 def backup_sqlite(url: str) -> Path | None:
     """Copy the SQLite database beside itself before anything migrates it.
 
-    This is FR-049's safety net: forward-only migrations have no downgrade (see the initial
+    This is 's safety net: forward-only migrations have no downgrade (see the initial
     revision), so the file copy *is* the way back from a migration that goes wrong.
 
     Args:
@@ -63,7 +63,7 @@ def backup_sqlite(url: str) -> Path | None:
 
 
 def upgrade_to_head(url: str) -> None:
-    """Migrate ``url`` to the latest revision, taking a backup first (FR-049).
+    """Migrate ``url`` to the latest revision, taking a backup first .
 
     Idempotent: already at head means Alembic runs nothing. The URL comes from the caller
     (``aggregato.config``), never from alembic.ini.

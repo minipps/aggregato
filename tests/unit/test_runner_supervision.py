@@ -1,4 +1,4 @@
-"""Child-process supervision (T033, T034, FR-025, §6.7).
+"""Child-process supervision (, , , §6.7).
 
 These drive **real subprocesses**, because the whole point of the child is what a process gives you
 that a task does not: it can be killed, it can crash without taking the parent down, and it cannot
@@ -165,7 +165,7 @@ async def test_a_hanging_child_is_killed_at_the_wall_clock(tmp_path: Path) -> No
 
 
 async def test_a_hang_after_a_checkpoint_is_partial_not_failed(tmp_path: Path) -> None:
-    """The work before the checkpoint is real and must not be thrown away (FR-020)."""
+    """The work before the checkpoint is real and must not be thrown away ."""
     script = (
         HEADER
         + _emit({"type": "checkpoint", "cursor": {"state": {"page": 5}}})
@@ -221,7 +221,7 @@ async def test_records_before_a_crash_are_kept(tmp_path: Path) -> None:
 
 
 async def test_a_malformed_line_ends_the_run_rather_than_being_skipped(tmp_path: Path) -> None:
-    """FR-008 — the boundary rejects, it does not tolerate."""
+    """ — the boundary rejects, it does not tolerate."""
     script = HEADER + "sys.stdout.write('not json\\n'); sys.stdout.flush()\n"
     outcome = await _run_child(script, tmp_path)
 
@@ -243,7 +243,7 @@ async def test_a_reported_error_keeps_its_classification(tmp_path: Path) -> None
 
 
 async def test_a_single_bad_record_is_collected_without_failing_the_run(tmp_path: Path) -> None:
-    """FR-023 — one poisoned record costs its own row, not the run."""
+    """ — one poisoned record costs its own row, not the run."""
     script = HEADER + _emit(
         {"type": "failure", "native_id": "r9", "payload": {"bad": True}, "error": "KeyError: x"}
     )
@@ -321,7 +321,7 @@ async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() ->
 
 
 async def test_the_real_child_resumes_from_a_cursor(tmp_path: Path) -> None:
-    """Cursor round-trip through the real process boundary: no duplicate, no gap (FR-020)."""
+    """Cursor round-trip through the real process boundary: no duplicate, no gap ."""
     from aggregato.sync.runner import RunRequest, execute_run
 
     full = await execute_run(
@@ -345,7 +345,7 @@ async def test_the_real_child_resumes_from_a_cursor(tmp_path: Path) -> None:
 
 
 async def test_the_real_child_reports_a_structure_change_as_such(tmp_path: Path) -> None:
-    """A broken file must not look like an empty history (FR-024, FR-026)."""
+    """A broken file must not look like an empty history ."""
     from aggregato.sync.runner import RunRequest, execute_run
 
     outcome = await execute_run(
@@ -360,7 +360,7 @@ async def test_the_real_child_reports_a_structure_change_as_such(tmp_path: Path)
 
 
 async def test_the_child_receives_only_its_own_secrets(tmp_path: Path) -> None:
-    """FR-037, made structural: the child is a process, so there is nothing else to reach."""
+    """, made structural: the child is a process, so there is nothing else to reach."""
     from aggregato.sync.runner import RunRequest
 
     request = RunRequest(

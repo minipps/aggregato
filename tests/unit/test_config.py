@@ -1,4 +1,4 @@
-"""Configuration precedence and failure modes (research.md R15, FR-025, FR-032)."""
+"""Configuration precedence and failure modes (research.md , , )."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def test_precedence_defaults_then_file_then_env_then_database(tmp_path: Path) ->
 
 
 def test_missing_token_is_fatal_and_names_the_setting() -> None:
-    """The only fatal configuration error: there is no unauthenticated mode (FR-032)."""
+    """The only fatal configuration error: there is no unauthenticated mode ."""
     with pytest.raises(MissingTokenError) as exc:
         load_config(env={})
     assert "api.token" in str(exc.value)
@@ -52,7 +52,7 @@ def test_empty_token_counts_as_unset() -> None:
 
 
 def test_invalid_provider_block_disables_only_that_provider(tmp_path: Path) -> None:
-    """FR-025: one broken block never blocks startup and never affects another provider."""
+    """: one broken block never blocks startup and never affects another provider."""
     path = write_config(
         tmp_path,
         {
@@ -85,7 +85,7 @@ def test_invalid_provider_block_disables_only_that_provider(tmp_path: Path) -> N
 
 
 def test_file_pinned_reporting(tmp_path: Path) -> None:
-    """Only what the file set is pinned; env- and default-sourced settings are editable (R15)."""
+    """Only what the file set is pinned; env- and default-sourced settings are editable ."""
     path = write_config(tmp_path, {"api": {"port": 9001}, "providers": {"good": {"a": 1}}})
 
     cfg = load_config(env={"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_HOST": "1.2.3.4"}, config_file=path)
@@ -111,7 +111,7 @@ def test_interpolation_resolves_and_unset_reference_is_an_error(tmp_path: Path) 
 
 
 def test_secrets_are_absent_from_the_serialized_view(tmp_path: Path) -> None:
-    """Nothing the API can display carries a resolved secret (R15)."""
+    """Nothing the API can display carries a resolved secret ."""
     path = write_config(
         tmp_path,
         {

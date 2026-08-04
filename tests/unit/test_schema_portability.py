@@ -1,4 +1,4 @@
-"""The schema must stay first-class on both dialects (FR-048, research.md R4).
+"""The schema must stay first-class on both dialects (, research.md ).
 
 These are cheap compile-time checks rather than round-trips against a server, and they catch the
 class of mistake that is otherwise found only by a self-hoster running the non-default dialect:
@@ -77,7 +77,7 @@ def test_entries_partial_unique_index_is_emitted_by_both_dialects() -> None:
 
 
 def test_provider_items_idempotency_key_exists() -> None:
-    """FR-005 rests on this one constraint: a resync writes nothing new because of it."""
+    """ rests on this one constraint: a resync writes nothing new because of it."""
     keys = {
         tuple(c.name for c in constraint.columns)
         for constraint in provider_items.constraints
@@ -87,7 +87,7 @@ def test_provider_items_idempotency_key_exists() -> None:
 
 
 def test_no_user_id_column_anywhere() -> None:
-    """FR-006 — single-user by construction. Adding one is a v2 schema break, accepted knowingly."""
+    """ — single-user by construction. Adding one is a v2 schema break, accepted knowingly."""
     offenders = [
         f"{table.name}.{column.name}"
         for table in metadata.sorted_tables
@@ -121,12 +121,12 @@ async def test_a_null_json_column_stores_sql_null_not_the_json_text_null() -> No
     ``'null'`` is a JSON *value*, so ``subject_ref IS NULL`` is FALSE for it. Two things break at
     once and neither announces itself:
 
-    * every aggregate filters ``subject_ref IS NULL`` to exclude sub-unit records (FR-007,
-      research.md R18), so per-episode rows would start counting as whole works — the exact silent
+    * every aggregate filters ``subject_ref IS NULL`` to exclude sub-unit records (,
+      research.md ), so per-episode rows would start counting as whole works — the exact silent
       statistic corruption the spec calls out;
     * the writer deduplicates entries with no native id on a ``subject_ref`` comparison including
       the null case, so a feed without event ids would duplicate its entire history on every
-      resync (FR-005, SC-003).
+      resync .
     """
     import uuid
     from datetime import UTC, datetime

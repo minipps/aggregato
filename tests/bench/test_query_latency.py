@@ -1,4 +1,4 @@
-"""First-page and deep-page keyset latency measurements for a seeded log (T069)."""
+"""First-page and deep-page keyset latency measurements for a seeded log ."""
 
 from __future__ import annotations
 

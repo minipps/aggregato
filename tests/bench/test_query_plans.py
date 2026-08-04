@@ -1,4 +1,4 @@
-"""SQLite plan assertions for every cursor sort available on ``GET /entries`` (T081)."""
+"""SQLite plan assertions for every cursor sort available on ``GET /entries`` ."""
 
 from __future__ import annotations
 

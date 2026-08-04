@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * One log entry per row: what, when, from where. Used by the log feed, the dashboard, and the work
- * detail view, so ordering and wording stay identical across all three (Constitution III).
+ * detail view, so ordering and wording stay identical across all three (UI consistency guidance).
  *
  * Dates always go through LoggedAt — never formatted here.
  */
@@ -30,7 +30,7 @@ function subject(ref: SubjectRef | null | undefined): string {
   <ul class="entries">
     <li v-for="entry in props.entries" :key="entry.id" class="entry">
       <!--
-        Artwork comes from the local cache only (FR-033); the API hands us its own path, never the
+        Artwork comes from the local cache only ; the API hands us its own path, never the
         platform URL. alt is empty on purpose: the title sits right beside it, and a screen reader
         announcing it twice is worse than not announcing the poster at all. Only when the work is
         named here — Work.vue shows its own poster above and would otherwise repeat it per row.

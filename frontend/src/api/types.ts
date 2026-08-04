@@ -1,9 +1,9 @@
 /**
- * Hand-written mirror of `specs/001-media-log-aggregator/contracts/openapi.yaml`.
+ * Hand-written mirror of `docs/contracts/openapi.yaml`.
  *
- * Hand-written rather than generated: FR-031 makes the contract the only interface the UI may use,
+ * Hand-written rather than generated:  makes the contract the only interface the UI may use,
  * and a codegen step would be a build dependency for types that change once per contract revision.
- * Only the schemas US1 actually renders are declared here.
+ * Only the schemas  actually renders are declared here.
  */
 
 export type MediaType =
@@ -68,10 +68,10 @@ export type ProviderCapability =
   | 'scrapes'
   | 'push'
 
-/** Precision of a logged date. Nothing may render more precision than this states (FR-004). */
+/** Precision of a logged date. Nothing may render more precision than this states . */
 export type LoggedPrecision = 'exact' | 'day' | 'month' | 'year' | 'unknown'
 
-/** RFC 9457 problem detail — the one error shape the whole UI renders (Constitution III). */
+/** RFC 9457 problem detail — the one error shape the whole UI renders (UI consistency guidance). */
 export interface Problem {
   type: string
   title: string
@@ -80,7 +80,7 @@ export interface Problem {
   instance?: string
 }
 
-/** Keyset page. `next_cursor` is the only way forward; the API has no offset (FR-030). */
+/** Keyset page. `next_cursor` is the only way forward; the API has no offset . */
 export interface Page<T> {
   items: T[]
   next_cursor: string | null
@@ -95,7 +95,7 @@ export interface SubjectRef {
   volume?: number
 }
 
-/** Raw and normalized together; normalized is not a cross-platform claim (FR-003). */
+/** Raw and normalized together; normalized is not a cross-platform claim . */
 export interface Rating {
   raw: number | null
   scale_id: string | null

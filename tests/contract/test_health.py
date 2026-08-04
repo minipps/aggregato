@@ -1,4 +1,4 @@
-"""``GET /health`` matches the contract, and needs credentials like everything else (T043).
+"""``GET /health`` matches the contract, and needs credentials like everything else .
 
 Shape per ``contracts/openapi.yaml``: ``{status: ok|degraded, providers: [{id, status,
 last_success_at, consecutive_failures}]}``.

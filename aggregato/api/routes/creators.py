@@ -1,4 +1,4 @@
-"""Creator list and detail resources (T074)."""
+"""Creator list and detail resources ."""
 
 from __future__ import annotations
 

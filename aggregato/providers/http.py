@@ -1,4 +1,4 @@
-"""The host's HTTP client (research.md R9, FR-043).
+"""The host's HTTP client (research.md , ).
 
 This module lives in the providers tree because plan.md puts it here, but it is **host code**: it is
 the one thing in this package allowed to import ``httpx``, and the import-linter contract in
@@ -102,7 +102,7 @@ class PolitenessPolicy:
 
     @property
     def effective_interval_seconds(self) -> float:
-        """``max(declared, floor)`` — the whole of FR-043 in one expression."""
+        """``max(declared, floor)`` — the whole of  in one expression."""
         return max(self.declared_interval_seconds, HOST_FLOOR_SECONDS[self.acquisition])
 
     @property
@@ -131,7 +131,7 @@ class PoliteClient:
         # One semaphore per host, created on first sight. A single global semaphore would make a
         # slow platform throttle an unrelated one.
         self._host_locks: dict[str, asyncio.Semaphore] = {}
-        # Injected so retry jitter is reproducible in tests (Constitution II).
+        # Injected so retry jitter is reproducible in tests (testing guidance).
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._client = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT},
@@ -176,10 +176,10 @@ class PoliteClient:
 
         Raises:
             BlockedError: The platform answered 403 or 451. Retrying deepens a block, so this
-                short-circuits the ladder entirely (FR-044).
+                short-circuits the ladder entirely .
             RateLimited: Still 429 after ``MAX_ATTEMPTS``, carrying ``Retry-After`` when the
                 platform sent one, so the scheduler can lengthen the interval for the whole
-                session (FR-022).
+                session .
             httpx.TransportError: The transport failed on every attempt.
         """
         target = httpx.URL(url)

@@ -1,4 +1,4 @@
-"""A failed provider run cannot take the API or another provider down (T086, FR-025)."""
+"""A failed provider run cannot take the API or another provider down ."""
 
 from __future__ import annotations
 

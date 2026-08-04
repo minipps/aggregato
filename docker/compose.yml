@@ -1,5 +1,5 @@
-# One service, one volume, one command (FR-048). No database server and no broker: the schedule is
-# a table (research.md R1) and the default store is SQLite in the volume below.
+# One service, one volume, one command . No database server and no broker: the schedule is
+# a table (research.md ) and the default store is SQLite in the volume below.
 services:
   aggregato:
     # The published image, so `docker compose pull` works (docs/operations.md) — pin a release with
@@ -18,7 +18,7 @@ services:
     # and .env.example is the same contract for a non-Docker run. Settings resolve:
     # defaults <- AGGREGATO_CONFIG file <- these <- UI edits.
     environment:
-      # The only fatal configuration error (FR-032). Generate: openssl rand -hex 32
+      # The only fatal configuration error . Generate: openssl rand -hex 32
       AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
       AGGREGATO_DATA: /data
       # A second token that can only read: every write is refused with 403, so it can be handed to
@@ -38,7 +38,7 @@ services:
       # AGGREGATO_CONFIG: /data/config.yaml
       # The built web UI the API serves. The image sets this; an empty value means API only.
       # AGGREGATO_STATIC_DIR: /app/static
-      # Optional directory of your own provider packages, discovered as unreviewed drop-ins (FR-041).
+      # Optional directory of your own provider packages, discovered as unreviewed drop-ins .
       # AGGREGATO_PROVIDER_DIR: /data/providers
       # Provider credentials are not settings of their own: the YAML config references them as
       # ${VAR}, resolved at read time and never written back. Pass whichever ones your config names.
@@ -47,7 +47,7 @@ services:
     volumes:
       - aggregato-data:/data
     healthcheck:
-      # Every endpoint requires auth (FR-032), so there is no URL to probe without holding the
+      # Every endpoint requires auth , so there is no URL to probe without holding the
       # token. Accepting the listening socket as the liveness signal is the honest check here;
       # per-provider health is what GET /health is for, and that is an operator question.
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"]

@@ -1,9 +1,9 @@
-"""Free-text search over titles and review text (FR-028, research.md R5).
+"""Free-text search over titles and review text (, research.md ).
 
 Two real implementations behind one interface, which is the one place in the codebase where that is
 justified: SQLite uses an FTS5 virtual table, Postgres a ``tsvector`` column with a GIN index.
-``LIKE '%term%'`` is not a third option — it cannot deliver SC-007's 1 s p95 first page over a
-million entries, and Constitution VI says budgets are measured rather than asserted.
+``LIKE '%term%'`` is not a third option — it cannot deliver 's 1 s p95 first page over a
+million entries, and performance guidance says budgets are measured rather than asserted.
 
 The index is maintained by the ingest writer **inside the same transaction as the row it
 describes**, not by database triggers. That keeps one implementation of *when* to index, and avoids
@@ -61,7 +61,7 @@ async def create_search_index(conn: AsyncConnection) -> None:
     """Create the dialect's search index if it does not exist.
 
     Called from the Alembic revision rather than at startup, so the DDL runs once under migration
-    control like every other schema change (FR-049).
+    control like every other schema change .
 
     Raises:
         ValueError: The dialect is neither SQLite nor Postgres.

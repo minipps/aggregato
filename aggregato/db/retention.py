@@ -1,4 +1,4 @@
-"""Retention settings and cleanup for locally retained operational data (T133)."""
+"""Retention settings and cleanup for locally retained operational data ."""
 
 from __future__ import annotations
 

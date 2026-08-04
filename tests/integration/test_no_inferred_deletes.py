@@ -1,4 +1,4 @@
-"""A provider that does not report deletions never erases history by default (T084)."""
+"""A provider that does not report deletions never erases history by default ."""
 
 from __future__ import annotations
 

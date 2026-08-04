@@ -40,7 +40,7 @@ class BlockedError(ProviderError):
 
     Host behaviour: **no retry**, ``degraded`` immediately, because retrying deepens the block. This
     is also the only correct response to a CAPTCHA: circumventing one is a hard line, not a
-    configurable default (FR-044).
+    configurable default .
     """
 
     error_class: ClassVar[ErrorClass] = ErrorClass.BLOCKED
@@ -57,7 +57,7 @@ class StructureChangedError(ProviderError):
 
     Host behaviour: **no retry**; the UI says "this provider needs updating" with an issue-tracker
     link. Raised instead of returning empty, because silence plus delete inference is how an archive
-    gets erased (FR-024, FR-026).
+    gets erased .
     """
 
     error_class: ClassVar[ErrorClass] = ErrorClass.STRUCTURE_CHANGED
@@ -67,7 +67,7 @@ class RateLimited(ProviderError):
     """The platform asked us to slow down.
 
     Host behaviour: retries, honours ``retry_after``, and lengthens the effective interval for the
-    rest of the session (FR-022).
+    rest of the session .
 
     Args:
         retry_after: Seconds to wait, when the platform said. ``None`` means it did not, and the

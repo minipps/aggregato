@@ -1,20 +1,20 @@
-"""The scheduler: a due-queue poll loop (research.md R1).
+"""The scheduler: a due-queue poll loop (research.md ).
 
 There is no scheduling library and no cron expression. ``provider_state.next_run_at`` **is** the
 schedule. The loop wakes every few seconds, selects providers whose time has come, and dispatches up
 to a concurrency cap; every run's outcome rewrites ``next_run_at``.
 
 Why that is the right shape rather than a smaller-looking one: what §7 actually requires is a
-per-provider interval the *plugin* declares (FR-018), jitter on boot, an escalating ladder that
-overrides the interval after a failure (FR-020), a ``degraded`` state that collapses the ladder back
-(FR-021), a rate-limit response that lengthens the interval for the session (FR-022), and a full
-record of every attempt with lineage (FR-019). All of that is state that must survive a restart and
+per-provider interval the *plugin* declares , jitter on boot, an escalating ladder that
+overrides the interval after a failure , a ``degraded`` state that collapses the ladder back
+, a rate-limit response that lengthens the interval for the session , and a full
+record of every attempt with lineage . All of that is state that must survive a restart and
 be visible in the UI, so it has to be in the database whatever triggers it. Once ``next_run_at`` is
 persisted, the scheduler is a ``SELECT`` and a loop — and observability comes free, because the
 schedule is a queryable table.
 
 The loop never lets one provider affect another: each run is its own task around its own child
-process, and a failure is recorded rather than raised (FR-025).
+process, and a failure is recorded rather than raised .
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ SQLITE_MAX_CONCURRENT_RUNS = 1
 
 #: Spread on the first scheduling after boot. Without it, providers enabled in one sitting sync in
 #: lockstep forever after, turning a restart into a thundering herd against several platforms at
-#: once (FR-018).
+#: once .
 BOOT_JITTER_SECONDS = 120
 
 log = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class DueProvider:
 async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvider]:
     """The providers whose ``next_run_at`` has arrived.
 
-    This is the whole of the schedule (research.md R1). ``next_run_at IS NULL`` counts as due, which
+    This is the whole of the schedule (research.md ). ``next_run_at IS NULL`` counts as due, which
     is how a newly enabled provider gets its first run without a separate code path.
 
     Args:
@@ -217,7 +217,7 @@ async def release(
     """Record a run's outcome and reschedule.
 
     Every field here comes from :mod:`aggregato.sync.retry`'s decision. The scheduler does not
-    decide retry policy; it persists what the ladder said (FR-019 through FR-022).
+    decide retry policy; it persists what the ladder said ( through ).
     """
     async with transaction(engine) as conn:
         provider_values: dict[str, object] = {"status": str(status), "updated_at": now}
@@ -243,7 +243,7 @@ async def release(
 class Scheduler:
     """The poll loop.
 
-    Time and randomness are injected (Constitution II): ``Clock`` so a test can advance to a due
+    Time and randomness are injected (testing guidance): ``Clock`` so a test can advance to a due
     moment without waiting, ``Random`` so jitter is reproducible. Neither is read ambiently.
     """
 
@@ -312,7 +312,7 @@ class Scheduler:
         """Run one provider, holding the concurrency slot, swallowing nothing silently.
 
         An exception escaping here would kill the loop and with it every other provider, which is
-        precisely what FR-025 forbids — so it is logged against the provider and the loop continues.
+        precisely what  forbids — so it is logged against the provider and the loop continues.
         """
         async with self._semaphore:
             # bind_run is a sync context manager: contextvars need no await, and the binding

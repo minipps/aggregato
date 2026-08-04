@@ -1,4 +1,4 @@
-"""Global archive settings and storage accounting (T132, T133)."""
+"""Global archive settings and storage accounting ."""
 
 from __future__ import annotations
 

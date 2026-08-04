@@ -1,23 +1,23 @@
-"""The validated writer — the only thing in the system that writes ingested data (FR-008).
+"""The validated writer — the only thing in the system that writes ingested data .
 
 Everything a provider produces passes through here, and it is validated **in this process**, never
-trusted from the child: the child runs plugin code (research.md R2, R17). A record that fails
-validation becomes an ``ingest_failure`` with its payload, and the run continues (FR-023).
+trusted from the child: the child runs plugin code (research.md , ). A record that fails
+validation becomes an ``ingest_failure`` with its payload, and the run continues .
 
 Three properties this module exists to guarantee:
 
-**Idempotency (FR-005).** A resync writes nothing new. For rows the platform identifies, that is a
+**Idempotency .** A resync writes nothing new. For rows the platform identifies, that is a
 unique constraint plus ``ON CONFLICT`` — never a pre-``SELECT``, which races. For entries the
 platform gives no event id, there is no key to conflict on, so the writer deduplicates on
 ``(provider_item_id, kind, logged_at, subject_ref)`` itself. That fallback is the interesting half:
 without it, every resync of a feed without event ids would duplicate the entire history.
 
 **Search stays in step.** The search index is written in the **same transaction** as the row it
-describes (research.md R5). A rolled-back write cannot leave a searchable ghost, and there is one
+describes (research.md ). A rolled-back write cannot leave a searchable ghost, and there is one
 implementation of *when* to index rather than two dialects' worth of trigger DDL.
 
 **Nothing is destroyed.** Deletes are tombstones (``deleted_at``), never row removal, and the
-inferred-delete path is guarded three ways over (see :func:`infer_deletes`, T088 completes it).
+inferred-delete path is guarded three ways over (see :func:`infer_deletes`,  completes it).
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ async def write_batches(
             archive exactly as it was.
         ctx: Provider, run, and clock context.
         records: Pairs of the raw record and what ``normalize`` made of it. The raw record is needed
-            because ``provider_items.raw_payload`` stores it as the replay source (FR-002).
+            because ``provider_items.raw_payload`` stores it as the replay source .
 
     Returns:
         Counts for the run row.
@@ -143,7 +143,7 @@ async def write_batches(
         try:
             await _write_one(conn, ctx, raw, batch, counts, creator_memo)
         except (ValidationRejection, RatingOutOfScale, ValueError) as exc:
-            # One poisoned record must never cost the operator the rest of the run (FR-023).
+            # One poisoned record must never cost the operator the rest of the run .
             counts.failed += 1
             failure_id = await capture_failure(
                 conn,
@@ -173,7 +173,7 @@ async def _write_one(
 
     # A manual queue decision changes the provider item's durable work link.  Honor it before
     # reevaluating automatic evidence on resync: otherwise a cautious operator correction would be
-    # overwritten by the exact heuristic it was made to correct (FR-014).
+    # overwritten by the exact heuristic it was made to correct .
     existing_work_id = (
         await conn.execute(
             select(provider_items.c.work_id).where(
@@ -192,7 +192,7 @@ async def _write_one(
     if batch.work.image_url:
         # Backfill artwork onto a work this run did not create: a matched, manually linked, or
         # pre-artwork-support work carries NULL forever otherwise. Only when NULL — an existing
-        # URL is another provider's stated payload, and resync must not churn it (FR-010).
+        # URL is another provider's stated payload, and resync must not churn it .
         await conn.execute(
             update(works)
             .where(works.c.id == work_id, works.c.image_url.is_(None))
@@ -262,7 +262,7 @@ async def _write_one(
         await _upsert_opinion(conn, ctx, work_id, item_id, opinion)
         counts.opinions_written += 1
 
-    # In the same transaction as the rows above (research.md R5).
+    # In the same transaction as the rows above (research.md ).
     await index_document(
         conn,
         SearchKind.WORK_TITLE,
@@ -284,7 +284,7 @@ def _validate(ctx: WriteContext, batch: NormalizedBatch) -> None:
 
     The Pydantic models already rejected most of this on the way in, but the child process runs
     plugin code and this is the parent. Re-checking the things a plugin could get wrong is cheap;
-    trusting them is how a bad ``subject_ref`` reaches storage (FR-008, research.md R17).
+    trusting them is how a bad ``subject_ref`` reaches storage (, research.md ).
     """
     for entry in batch.entries:
         # validate_subject_ref, not the model's own type: the parent-side check is the one that
@@ -308,7 +308,7 @@ def _validate(ctx: WriteContext, batch: NormalizedBatch) -> None:
 def _normalized_rating(ctx: WriteContext, opinion: Any) -> int | None:
     """Derive the 0–100 value.
 
-    Recomputable from stored data, so a corrected scale is replayable (research.md R7).
+    Recomputable from stored data, so a corrected scale is replayable (research.md ).
     """
     if opinion.rating_raw is None:
         return None
@@ -331,7 +331,7 @@ def sort_title_for(title: str) -> str:
 
     Deliberately English-only and deliberately dumb. A real multilingual article list is a research
     project, and this value is a sort key rather than an identity: getting it wrong reorders a list,
-    it does not merge two works. T070 replaces it with the normalizer resolution shares.
+    it does not merge two works.  replaces it with the normalizer resolution shares.
     """
     return normalize_title(title)
 
@@ -431,7 +431,7 @@ async def _retract_entries(conn: AsyncConnection, item_id: int, *, now: datetime
     absence, and the scope is one ``provider_item_id`` rather than every item a run did not see.
     Another platform's entry for the same work is untouched.
 
-    A tombstone, never a delete (FR-024): the row keeps its history, drops out of the log and
+    A tombstone, never a delete : the row keeps its history, drops out of the log and
     ``entry_count`` by default, and the next sync that does yield an entry clears ``deleted_at``
     again through the upsert's update columns.
     """
@@ -458,7 +458,7 @@ async def _upsert_entry(
     * ``native_id`` absent — there is no key to conflict on, so the writer looks for an existing row
       matching ``(provider_item_id, kind, logged_at, subject_ref)`` and skips if it finds one. This
       is the fallback data-model.md §2 requires; without it a feed with no event ids duplicates its
-      whole history on every resync (FR-005, SC-003).
+      whole history on every resync .
     """
     subject = entry.subject_ref.as_dict() if entry.subject_ref else None
     values = {
@@ -592,7 +592,7 @@ async def ensure_rating_scales(conn: AsyncConnection, scales: Sequence[RatingSca
     """Store the scales a provider declares, so ``rating_normalized`` stays recomputable.
 
     Without the scale definition in the database, a corrected scale could not be replayed and the
-    normalized values would be unrepairable without re-syncing every platform (research.md R7).
+    normalized values would be unrepairable without re-syncing every platform (research.md ).
     """
     from aggregato.db.schema import rating_scales
 

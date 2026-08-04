@@ -9,7 +9,7 @@ installation's own autoincrement ids are; the image UUID identifies nothing.
 Shapes are otherwise verbatim: the `items` / `total_record_count` / `has_next_page` envelope, the
 RFC 3339 `time`, the trimmed track object (`id`, `title`, `artists`, `image` — no
 `musicbrainz_id`, no album), and the empty-string image list Koito sends for a track with no
-artwork are all as the server sends them, because identifier extraction (FR-009) and
+artwork are all as the server sends them, because identifier extraction  and
 `StructureChangedError` detection both depend on the real shape.
 
 | File | Proves |

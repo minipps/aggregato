@@ -39,7 +39,7 @@ Anything else is a plugin away: see [docs/writing-a-provider.md](docs/writing-a-
 
 None of these exist yet — this is the shortlist and what each would cost. "Surface" is the
 acquisition ladder every provider declares, `api` > `feed` > `export` > `scrape`, best to worst
-(FR-042): a platform with an API is mostly mapping work, while one without gets the Goodreads
+: a platform with an API is mostly mapping work, while one without gets the Goodreads
 treatment — a file the operator downloads, imported by hand.
 
 | Platform | What it would add | Surface |
@@ -189,9 +189,9 @@ gates, not suggestions.
 | [docs/writing-a-provider.md](docs/writing-a-provider.md) | Adding a platform of your own |
 | [docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md) | Why each platform reads the surface it does, and how that will change |
 | [docs/accessibility.md](docs/accessibility.md) | The accessibility commitments the UI is held to |
-| [specs/001-media-log-aggregator/spec.md](specs/001-media-log-aggregator/spec.md) | What the product does, in capability terms |
-| [.../plan.md](specs/001-media-log-aggregator/plan.md) | Architecture, stack, and the declared performance budgets |
-| [.../contracts/provider-plugin.md](specs/001-media-log-aggregator/contracts/provider-plugin.md) | The plugin contract — normative |
-| [.../contracts/openapi.yaml](specs/001-media-log-aggregator/contracts/openapi.yaml) | The HTTP contract the UI consumes, and the only one |
-| [.../quickstart.md](specs/001-media-log-aggregator/quickstart.md) | How to prove each user story works |
-| [.specify/memory/constitution.md](.specify/memory/constitution.md) | The rules reviews are held to |
+| [AGENTS.md](AGENTS.md) | Engineering principles, architecture guardrails, and contributor workflow |
+| [docs/requirements.md](docs/requirements.md) | What the product does, in capability terms |
+| [docs/architecture.md](docs/architecture.md) | Architecture, stack, and declared performance budgets |
+| [docs/contracts/provider-plugin.md](docs/contracts/provider-plugin.md) | The plugin contract — normative |
+| [docs/contracts/openapi.yaml](docs/contracts/openapi.yaml) | The HTTP contract the UI consumes, and the only one |
+| [docs/validation.md](docs/validation.md) | How to validate the product journeys |

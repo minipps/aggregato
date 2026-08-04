@@ -1,7 +1,5 @@
 .git/
 .github/
-.claude/
-.specify/
 specs/
 docs/
 tests/

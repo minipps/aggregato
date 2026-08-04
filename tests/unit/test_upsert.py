@@ -2,7 +2,7 @@
 
 These run on actual aiosqlite with the real schema from ``aggregato.db.schema``: an upsert that
 compiles but does not match the live constraint would pass a mock-based test and lose data in
-production (FR-005).
+production .
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ async def test_constraint_name_as_conflict_target_on_sqlite(engine: AsyncEngine)
 
 
 def test_compiles_for_postgresql() -> None:
-    """Same call site, other dialect: FR-048 is only true if the statement compiles there too.
+    """Same call site, other dialect:  is only true if the statement compiles there too.
 
     Compile-only — building an asyncpg engine opens no connection, and the socket blocker in
     conftest would fail the test if it did.

@@ -1,4 +1,4 @@
-"""The JSON-lines protocol spoken across the child-to-parent pipe (research.md R2).
+"""The JSON-lines protocol spoken across the child-to-parent pipe (research.md ).
 
 One message per line, each a tagged object. This is the boundary where plugin-controlled output
 becomes host data, so the parent validates every line against these models and treats an unparseable
@@ -7,7 +7,7 @@ line as a provider failure rather than as noise to skip.
 JSON lines rather than pickle, deliberately: the payload crosses a boundary from code the host does
 not trust, and unpickling arbitrary data from a plugin is remote code execution by design. It is
 also the same shape the recorded fixtures use, so there is one wire format for production and tests
-(FR-036, FR-046).
+.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class BatchMessage(BaseModel):
     """One record and what ``normalize`` made of it.
 
     Both halves travel together because the parent needs the raw payload for
-    ``provider_items.raw_payload`` — the replay source (FR-002) — and the normalized batch to write.
+    ``provider_items.raw_payload`` — the replay source  — and the normalized batch to write.
     Sending them separately would let a crash split a record from its own payload.
     """
 
@@ -41,7 +41,7 @@ class BatchMessage(BaseModel):
 
 
 class CheckpointMessage(BaseModel):
-    """A resume point. The parent persists the cursor so a later failure resumes here (FR-020)."""
+    """A resume point. The parent persists the cursor so a later failure resumes here ."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -68,7 +68,7 @@ class ErrorMessage(BaseModel):
 
 
 class FailureMessage(BaseModel):
-    """One record the child could not normalize. The run continues (FR-023).
+    """One record the child could not normalize. The run continues .
 
     Carries the payload so the parent can store it for replay. Distinct from ``ErrorMessage``:
     that one ends the run, this one is a single poisoned record.

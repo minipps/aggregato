@@ -1,4 +1,4 @@
-"""Manual identity correction and reversible merge-log operations (US4)."""
+"""Manual identity correction and reversible merge-log operations ."""
 
 from __future__ import annotations
 

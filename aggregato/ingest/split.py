@@ -1,4 +1,4 @@
-"""Credit-granular, reversible creator splits (US4)."""
+"""Credit-granular, reversible creator splits ."""
 
 from __future__ import annotations
 

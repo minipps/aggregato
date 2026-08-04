@@ -1,4 +1,4 @@
-"""Operational history: sync attempts and retained poison records (T093)."""
+"""Operational history: sync attempts and retained poison records ."""
 
 from __future__ import annotations
 

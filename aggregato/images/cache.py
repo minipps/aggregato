@@ -1,4 +1,4 @@
-"""Content-addressed storage for provider-supplied artwork (T077)."""
+"""Content-addressed storage for provider-supplied artwork ."""
 
 from __future__ import annotations
 

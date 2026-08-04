@@ -1,4 +1,4 @@
-"""Serve local cached images; no third-party redirect ever reaches the browser (T078)."""
+"""Serve local cached images; no third-party redirect ever reaches the browser ."""
 
 from __future__ import annotations
 

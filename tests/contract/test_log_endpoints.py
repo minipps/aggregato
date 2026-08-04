@@ -1,4 +1,4 @@
-"""Contract smoke tests for the US1 log resources (T050)."""
+"""Contract smoke tests for the  log resources ."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Batched creator resolution: asserted identifiers, then family-scoped aliases (T072)."""
+"""Batched creator resolution: asserted identifiers, then family-scoped aliases ."""
 
 from __future__ import annotations
 

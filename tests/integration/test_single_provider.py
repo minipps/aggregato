@@ -1,4 +1,4 @@
-"""The US1 operator journey: enable one source, sync it, browse it, and resync (T047)."""
+"""The  operator journey: enable one source, sync it, browse it, and resync ."""
 
 from __future__ import annotations
 

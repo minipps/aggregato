@@ -1,4 +1,4 @@
-"""The writer is idempotent (T037, FR-005, SC-003).
+"""The writer is idempotent .
 
 "A resync writes nothing new" is the claim, and it has two halves that fail differently:
 
@@ -193,7 +193,7 @@ async def test_a_first_write_creates_everything(conn: AsyncConnection) -> None:
 
 
 async def test_resyncing_the_same_record_writes_nothing_new(conn: AsyncConnection) -> None:
-    """FR-005, stated as plainly as it can be."""
+    """, stated as plainly as it can be."""
     record = (RawRecord(native_id="i-1", payload={"a": 1}), batch())
 
     await write_batches(conn, ctx(), [record])
@@ -257,7 +257,7 @@ async def test_resyncing_an_entry_without_a_native_id_does_not_duplicate(
 
     There is no unique key to conflict on, so this is entirely the writer's own deduplication on
     ``(provider_item_id, kind, logged_at, subject_ref)``. Without it a feed with no event ids
-    duplicates its whole history on every single resync — the exact failure SC-003 forbids.
+    duplicates its whole history on every single resync — the exact failure  forbids.
     """
     record = (RawRecord(native_id="i-1", payload={"a": 1}), batch(native_id=None))
 
@@ -332,7 +332,7 @@ async def test_the_same_subunit_entry_resynced_does_not_duplicate(conn: AsyncCon
 
 
 async def test_two_records_sharing_an_identifier_land_on_one_work(conn: AsyncConnection) -> None:
-    """FR-009's cheap, reliable half: a shared identifier unifies with no guessing."""
+    """'s cheap, reliable half: a shared identifier unifies with no guessing."""
     await write_batches(
         conn,
         ctx(),
@@ -372,7 +372,7 @@ async def test_records_with_different_identifiers_stay_separate(conn: AsyncConne
 
 
 async def test_every_identifier_in_the_payload_is_stored(conn: AsyncConnection) -> None:
-    """FR-009: including ones Aggregato has no use for, because match quality depends on it."""
+    """: including ones Aggregato has no use for, because match quality depends on it."""
     await write_batches(
         conn,
         ctx(),
@@ -399,7 +399,7 @@ async def test_reasserting_an_identifier_does_not_duplicate_it(conn: AsyncConnec
 
 
 async def test_a_written_work_is_immediately_searchable(conn: AsyncConnection) -> None:
-    """The index is written in the SAME transaction as the row (research.md R5).
+    """The index is written in the SAME transaction as the row (research.md ).
 
     Nothing is committed here, so if indexing had been deferred to a separate transaction or a
     trigger, this query would find nothing.
@@ -477,7 +477,7 @@ async def test_a_rating_naming_an_undeclared_scale_becomes_a_failure(
 
 
 async def test_one_bad_record_does_not_stop_the_others(conn: AsyncConnection) -> None:
-    """FR-023: a poisoned record costs its own row, not the run."""
+    """: a poisoned record costs its own row, not the run."""
     good = (RawRecord(native_id="g1", payload={}), batch(native_id="e1", ids=[("imdb", "tt1")]))
     bad = (
         RawRecord(native_id="b1", payload={"broken": True}),
@@ -497,7 +497,7 @@ async def test_one_bad_record_does_not_stop_the_others(conn: AsyncConnection) ->
 
 
 async def test_a_captured_failure_keeps_its_payload(conn: AsyncConnection) -> None:
-    """Without the payload, "one record failed" is an unreproducible bug report (FR-023)."""
+    """Without the payload, "one record failed" is an unreproducible bug report ."""
     from aggregato.ingest.failures import unresolved_failures
 
     bad = NormalizedBatch(
@@ -556,7 +556,7 @@ async def test_a_record_that_now_logs_nothing_tombstones_what_it_logged(
     counts = await write_batches(conn, ctx(NOW + timedelta(days=1)), [(raw, _retracted(batch()))])
 
     assert counts.entries_retracted == 1
-    # A tombstone, not a delete: the row and its history survive (FR-024).
+    # A tombstone, not a delete: the row and its history survive .
     assert await _count(conn, entries) == 1
     deleted_at = (await conn.execute(select(entries.c.deleted_at))).scalar_one()
     assert deleted_at is not None
@@ -641,7 +641,7 @@ async def test_artwork_reaches_a_work_this_run_did_not_create(conn: AsyncConnect
 
 
 async def test_artwork_already_stated_is_not_overwritten(conn: AsyncConnection) -> None:
-    """An existing URL is some provider's stated payload; a resync must not churn it (FR-010)."""
+    """An existing URL is some provider's stated payload; a resync must not churn it ."""
     first = "https://example.invalid/first.jpg"
     record = (RawRecord(native_id="i-1", payload={"a": 1}), _with_image(batch(), first))
     await write_batches(conn, ctx(), [record])

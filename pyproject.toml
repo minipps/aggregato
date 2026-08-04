@@ -37,7 +37,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["aggregato"]
 
-# --- T002: formatter, linter, type checker. Warnings are errors (Constitution I). ---
+# --- : formatter, linter, type checker. Warnings are errors (code-quality guidance). ---
 
 [tool.ruff]
 line-length = 100
@@ -91,9 +91,9 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
-markers = ["bench: performance budget checks (Constitution VI)"]
+markers = ["bench: performance budget checks (performance guidance)"]
 
-# --- T003: the decoupling contract is a merge gate, not a convention (Constitution IV). ---
+# --- : the decoupling contract is a merge gate, not a convention (decoupling guidance). ---
 
 [tool.importlinter]
 root_packages = ["aggregato"]
@@ -110,10 +110,10 @@ type = "forbidden"
 source_modules = ["aggregato.providers"]
 forbidden_modules = ["aggregato.db", "aggregato.ingest", "httpx"]
 # One exemption, and only one: `providers/http.py` IS the host-owned client wrapper that enforces
-# the politeness floors (research.md R9), so it necessarily imports httpx. It lives in this tree
+# the politeness floors (research.md ), so it necessarily imports httpx. It lives in this tree
 # because plan.md puts it here, not because it is provider code. Every actual provider package
 # still cannot reach httpx, which is the rule that matters — a provider that could construct its
-# own client could raise its own rate limit (FR-043).
+# own client could raise its own rate limit .
 #
 # `providers/base.py` gets no exemption and needs none: it takes the httpx *type* behind
 # `if TYPE_CHECKING`, which the session-level exclude_type_checking_imports above discounts.

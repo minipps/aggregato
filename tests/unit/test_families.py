@@ -1,4 +1,4 @@
-"""Every media type maps to exactly one family (T012).
+"""Every media type maps to exactly one family .
 
 The interesting assertion is totality: a media type added to the enum without being assigned a
 family fails here rather than silently landing in ``other``, where it would quietly distort every

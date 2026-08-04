@@ -1,4 +1,4 @@
-"""No endpoint is reachable without credentials (T041, FR-032, research.md R12).
+"""No endpoint is reachable without credentials (, , research.md ).
 
 The app assembled here is the one ``main.py`` builds: the app-level ``require_auth`` dependency,
 the real error handlers, the real ``POST /auth/session``, and two throwaway routes standing in for
@@ -99,12 +99,12 @@ def _assert_problem(response: httpx.Response, status: int) -> None:
 async def test_no_endpoint_is_reachable_unauthenticated(
     client: httpx.AsyncClient, method: str, path: str
 ) -> None:
-    """FR-032: there is no unauthenticated mode, and no 401 escapes as FastAPI's default shape."""
+    """: there is no unauthenticated mode, and no 401 escapes as FastAPI's default shape."""
     _assert_problem(await client.request(method, path), 401)
 
 
 async def test_cached_image_reads_without_credentials(client: httpx.AsyncClient) -> None:
-    """Covers are embeddable in an <img>, which carries no bearer header (FR-033)."""
+    """Covers are embeddable in an <img>, which carries no bearer header ."""
     response = await client.get(f"/media/image/{'a' * 64}")
     assert response.status_code == 200
 
@@ -140,7 +140,7 @@ async def test_session_exchange_sets_httponly_cookie(client: httpx.AsyncClient) 
     assert session_cookie.startswith(f"{SESSION_COOKIE}=")
     assert "HttpOnly" in session_cookie
     assert "SameSite=lax" in session_cookie
-    # Plain HTTP is a supported LAN deployment, so Secure must not be forced on (R12).
+    # Plain HTTP is a supported LAN deployment, so Secure must not be forced on .
     assert "Secure" not in session_cookie
     assert client.cookies[CSRF_COOKIE]
 
@@ -169,7 +169,7 @@ async def test_cookie_write_with_wrong_csrf_is_rejected(client: httpx.AsyncClien
 
 
 async def test_bearer_write_needs_no_csrf(client: httpx.AsyncClient) -> None:
-    """A browser never attaches a bearer token by itself, so there is nothing to forge (R12)."""
+    """A browser never attaches a bearer token by itself, so there is nothing to forge ."""
     response = await client.post("/probe", headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 200
 
@@ -194,7 +194,7 @@ async def test_expired_session_is_rejected(client: httpx.AsyncClient, engine: As
 async def test_rotating_the_token_invalidates_an_existing_session(
     client: httpx.AsyncClient, app: FastAPI, data_dir: Path
 ) -> None:
-    """The whole reason sessions live in the database and carry a token fingerprint (R12)."""
+    """The whole reason sessions live in the database and carry a token fingerprint ."""
     await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     assert (await client.get("/probe")).status_code == 200
 
@@ -269,7 +269,7 @@ async def test_full_token_is_not_readonly(client: httpx.AsyncClient) -> None:
 async def test_readonly_session_cookie_reads_but_cannot_write(
     readonly_client: httpx.AsyncClient,
 ) -> None:
-    """The SPA path: the read-only token buys a cookie, and the cookie is read-only too (FR-032
+    """The SPA path: the read-only token buys a cookie, and the cookie is read-only too (
     forbids keeping the token in page source, so the exchange has to be allowed)."""
     exchange = await readonly_client.post(
         "/auth/session", headers={"Authorization": f"Bearer {READONLY}"}

@@ -1,4 +1,4 @@
-"""Creator resolution keeps asserted identity global and name matching family-scoped (T067)."""
+"""Creator resolution keeps asserted identity global and name matching family-scoped ."""
 
 from __future__ import annotations
 

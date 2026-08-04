@@ -3,8 +3,8 @@
  * Landing screen: the newest entries, and whether every provider is actually working.
  *
  * A degraded provider is named here by id rather than reduced to an overall badge — "degraded" with
- * no subject tells the operator nothing they can act on (US3 scenario 2). The two panels load
- * independently, so a failing `/health` still leaves the log readable (Constitution III).
+ * no subject tells the operator nothing they can act on ( scenario 2). The two panels load
+ * independently, so a failing `/health` still leaves the log readable (UI consistency guidance).
  */
 
 import { computed } from 'vue'

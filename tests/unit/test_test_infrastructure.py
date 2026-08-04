@@ -1,6 +1,6 @@
-"""The test infrastructure itself (T004).
+"""The test infrastructure itself .
 
-Both fixtures below are constitutional requirements rather than conveniences, so they get a test:
+Both fixtures below are project requirements rather than conveniences, so they get a test:
 a socket blocker that silently stopped blocking would let a provider's tests start hitting the real
 platform, and every "no network in tests" claim in the design would quietly become false.
 """

@@ -1,4 +1,4 @@
-"""Stream a portable, secret-free archive download (T131)."""
+"""Stream a portable, secret-free archive download ."""
 
 from __future__ import annotations
 

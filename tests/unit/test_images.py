@@ -1,4 +1,4 @@
-"""Image routes preserve local URLs even when image retrieval is disabled (T078)."""
+"""Image routes preserve local URLs even when image retrieval is disabled ."""
 
 from __future__ import annotations
 

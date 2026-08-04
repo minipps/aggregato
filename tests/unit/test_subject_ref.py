@@ -1,8 +1,8 @@
-"""Every rejection branch of ``subject_ref`` validation (T013).
+"""Every rejection branch of ``subject_ref`` validation .
 
 Each case below is a way a provider can get this wrong, and each must be an ingest failure rather
 than a silently dropped field — a dropped sub-unit key turns an episode record into a whole-series
-record, which then contaminates every aggregate (FR-007).
+record, which then contaminates every aggregate .
 """
 
 from __future__ import annotations

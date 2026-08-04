@@ -2,9 +2,9 @@
 
 Two conventions the contract states and every model here obeys:
 
-* ``logged_at`` never travels without ``logged_precision`` (FR-004). Both are required fields of
+* ``logged_at`` never travels without ``logged_precision`` . Both are required fields of
   :class:`Entry`, so a client physically cannot render a fabricated time as exact.
-* A rating always travels as raw value, scale, and normalized value together (FR-003). All three are
+* A rating always travels as raw value, scale, and normalized value together . All three are
   fields of :class:`Rating`, and ``normalized`` is comparable *within* a scale — it is not a claim
   that 80/100 on one platform means what 80/100 means on another.
 
@@ -36,15 +36,15 @@ from aggregato.domain.enums import (
 )
 from aggregato.domain.families import family_of
 
-#: Where cached artwork is served from (FR-033: never a redirect to the third-party host). The path
-#: is derived from ``image_cache.url_hash``, which is the sha256 of the source URL; T078 serves the
+#: Where cached artwork is served from (: never a redirect to the third-party host). The path
+#: is derived from ``image_cache.url_hash``, which is the sha256 of the source URL;  serves the
 #: bytes. Spelled out rather than imported from ``main`` because the API package must not depend on
 #: the app module that includes it.
 IMAGE_PATH: Final = "/api/v1/media/image/"
 
 
 class Rating(BaseModel):
-    """Raw value, scale, and normalized value — always all three (FR-003)."""
+    """Raw value, scale, and normalized value — always all three ."""
 
     raw: float | None
     scale_id: str | None
@@ -68,7 +68,7 @@ class ExternalId(BaseModel):
 
 
 class Credit(BaseModel):
-    """A creator's involvement, including how the identity was established (FR-013)."""
+    """A creator's involvement, including how the identity was established ."""
 
     id: int
     creator_id: uuid.UUID
@@ -122,7 +122,7 @@ class Work(BaseModel):
 
 
 class Entry(BaseModel):
-    """One logged event. ``logged_precision`` is required alongside ``logged_at`` (FR-004)."""
+    """One logged event. ``logged_precision`` is required alongside ``logged_at`` ."""
 
     id: int
     work_id: uuid.UUID
@@ -168,7 +168,7 @@ class WorkDetail(Work):
 
 
 class PageResponse[T](BaseModel):
-    """The contract's ``Page``: ``items`` plus a nullable ``next_cursor``, and no offset (FR-030).
+    """The contract's ``Page``: ``items`` plus a nullable ``next_cursor``, and no offset .
 
     A pydantic model rather than :class:`~aggregato.api.pagination.Page`, which is the internal
     dataclass the keyset helper returns; this is the one that serializes.
@@ -260,7 +260,7 @@ def external_id_from_row(row: Row[Any]) -> ExternalId:
 
 
 def _image(image_url: str | None) -> str | None:
-    """The local path for a work's artwork, never the platform URL itself (FR-010, FR-033)."""
+    """The local path for a work's artwork, never the platform URL itself ."""
     if not image_url:
         return None
     return f"{IMAGE_PATH}{sha256(image_url.encode()).hexdigest()}"

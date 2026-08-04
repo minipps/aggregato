@@ -1,4 +1,4 @@
-"""The operator-visible failure matrix from quickstart.md (T083)."""
+"""The operator-visible failure matrix from quickstart.md ."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The full-fetch count guard blocks destructive inference (T085, R21)."""
+"""The full-fetch count guard blocks destructive inference ."""
 
 from __future__ import annotations
 

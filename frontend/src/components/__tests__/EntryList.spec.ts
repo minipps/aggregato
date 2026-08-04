@@ -30,7 +30,7 @@ describe('EntryList artwork', () => {
   it('renders the cache path the API supplied, never a platform URL', () => {
     const img = mount(EntryList, { props: { entries: [entry()] }, global: { stubs } }).find('img')
     expect(img.attributes('src')).toBe('/api/v1/media/image/abc123')
-    // FR-033: a third-party host must never appear in page source.
+    // : a third-party host must never appear in page source.
     expect(img.attributes('src')).not.toMatch(/^https?:/)
   })
 

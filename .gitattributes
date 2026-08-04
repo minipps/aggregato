@@ -11,8 +11,6 @@
 .dockerignore     export-ignore
 
 # Development-only tooling and process material.
-.specify/         export-ignore
-.claude/          export-ignore
 .agents/          export-ignore
 .codex/           export-ignore
 .codegraph/       export-ignore

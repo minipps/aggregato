@@ -1,4 +1,4 @@
-"""Batched creator-resolution throughput measurement (T068)."""
+"""Batched creator-resolution throughput measurement ."""
 
 from __future__ import annotations
 

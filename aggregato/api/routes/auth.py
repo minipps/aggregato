@@ -1,6 +1,6 @@
-"""``/auth/session`` — exchange the API token for a browser session, and describe it (T041, R12).
+"""``/auth/session`` — exchange the API token for a browser session, and describe it .
 
-The token itself must never reach page source or a URL (FR-032), so the SPA calls this once with
+The token itself must never reach page source or a URL , so the SPA calls this once with
 the operator's token and works from cookies afterwards. ``GET`` reports back what the current
 credential is, which is how the SPA knows to render itself read-only.
 """
@@ -45,7 +45,7 @@ async def create_session(request: Request, response: Response) -> Response:
     """
     cookie_value, csrf = await issue_session(request)
     # Secure only over TLS: forcing it would silently break the plain-HTTP LAN install, which is a
-    # supported deployment (R12). Uvicorn's --proxy-headers makes this correct behind a TLS proxy.
+    # supported deployment . Uvicorn's --proxy-headers makes this correct behind a TLS proxy.
     secure = request.url.scheme == "https"
     max_age = int(SESSION_TTL.total_seconds())
     response.set_cookie(

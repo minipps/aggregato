@@ -1,4 +1,4 @@
-"""Conservative work identity resolution (T071).
+"""Conservative work identity resolution .
 
 The order is deliberate: provider-asserted identifiers are proof, an exact title/year key is only
 usable when it has one candidate, and every ambiguity creates a separate work plus a queue item.

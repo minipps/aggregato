@@ -20,13 +20,13 @@ NEVER_RETRY: frozenset[ErrorClass] = frozenset(
     {
         # Retrying a rejected credential risks locking the operator out of their own account.
         ErrorClass.AUTH,
-        # Retrying deepens the block, and circumventing a challenge is a hard line (FR-044).
+        # Retrying deepens the block, and circumventing a challenge is a hard line .
         ErrorClass.BLOCKED,
-        # The provider code itself needs updating; no amount of waiting fixes it (FR-024).
+        # The provider code itself needs updating; no amount of waiting fixes it .
         ErrorClass.STRUCTURE_CHANGED,
     }
 )
-"""The never-retry set (FR-021). These skip the ladder entirely and go straight to ``degraded``."""
+"""The never-retry set . These skip the ladder entirely and go straight to ``degraded``."""
 
 _SERVER_ERROR_FLOOR = 500
 
@@ -48,7 +48,7 @@ ACTION_REQUIRED: dict[ErrorClass, str] = {
 
 
 def action_required(error_class: ErrorClass) -> str:
-    """Return a specific, operator-facing next action for every error class (SC-005)."""
+    """Return a specific, operator-facing next action for every error class ."""
     return ACTION_REQUIRED[error_class]
 
 

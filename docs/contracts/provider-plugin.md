@@ -2,11 +2,11 @@
 
 **Version**: provider API 1.0 | **Date**: 2026-07-29
 
-This is the extension contract Constitution Principle V governs. It is a **public API**: changes
+This is the extension contract plugin-system guidance governs. It is a **public API**: changes
 follow semantic versioning, a MAJOR bump needs a migration note, and the conformance suite is updated
 in the same change.
 
-Bundled providers ship with the core (FR-041), so they are version-locked by construction. The
+Bundled providers ship with the core , so they are version-locked by construction. The
 version range check exists only for drop-in development providers and logs a warning rather than
 gating — deliberately low-priority in M1, because the case does not exist yet.
 
@@ -21,9 +21,9 @@ class Provider(Protocol):
     media_types: set[MediaType]      # from the closed enum; a provider cannot invent one
     capabilities: set[Capability]
     acquisition: Acquisition         # api | feed | export | scrape
-    config_model: type[BaseModel]    # validation AND the generated settings form (FR-039)
+    config_model: type[BaseModel]    # validation AND the generated settings form 
     rating_scales: list[RatingScale]
-    schema_version: int              # bump to trigger normalization replay (FR-002)
+    schema_version: int              # bump to trigger normalization replay 
     default_poll_interval: timedelta # from the platform's own rate limits, not a global default
 
     async def fetch(
@@ -38,19 +38,19 @@ class Provider(Protocol):
 `FetchMode` ∈ `{incremental, full, import}`. In `import` mode, `ctx.import_path` is set.
 
 `fetch` may yield a `Checkpoint` between records; the host persists the enclosed cursor so a failed
-run resumes from there (FR-020). A provider whose pagination cannot support mid-fetch resumption
+run resumes from there . A provider whose pagination cannot support mid-fetch resumption
 declares only `full` and accepts full resyncs.
 
 ### Hard rules
 
 | Rule | Why | How it is enforced |
 |---|---|---|
-| `normalize` is **pure** — no network, no clock, no randomness, no storage | Makes replay (FR-002) and credential-free offline tests (FR-036) possible | Conformance suite: called twice on one fixture must produce identical output; sockets blocked; clock frozen |
-| A provider never receives a database handle, another provider's config, or another provider's secrets | FR-037 | Physically: provider code runs in a child process that has no engine and no other provider imported (research.md R2) |
-| A provider never constructs its own HTTP client | FR-043 politeness floors must be un-overridable | `ctx.http` is the only client; an import-linter rule forbids importing `httpx` from `aggregato/providers/*` |
-| A provider may not invent a `media_type`, `role`, or `subject_ref` key | FR-008 | Parent-side validation at the ingest boundary; violations become `ingest_failures`, not writes |
-| Every identifier present in a payload is extracted, including ones Aggregato has no use for | FR-009; the single largest lever on match quality under the no-enrichment rule | Conformance suite asserts identifiers visible in the fixture appear in the output |
-| No CAPTCHA or anti-bot circumvention, in any form | FR-044 — a hard line, not a default | Raise `BlockedError`; the run stops and the provider goes to `degraded` immediately |
+| `normalize` is **pure** — no network, no clock, no randomness, no storage | Makes replay  and credential-free offline tests  possible | Conformance suite: called twice on one fixture must produce identical output; sockets blocked; clock frozen |
+| A provider never receives a database handle, another provider's config, or another provider's secrets |  | Physically: provider code runs in a child process that has no engine and no other provider imported (research.md ) |
+| A provider never constructs its own HTTP client |  politeness floors must be un-overridable | `ctx.http` is the only client; an import-linter rule forbids importing `httpx` from `aggregato/providers/*` |
+| A provider may not invent a `media_type`, `role`, or `subject_ref` key |  | Parent-side validation at the ingest boundary; violations become `ingest_failures`, not writes |
+| Every identifier present in a payload is extracted, including ones Aggregato has no use for | ; the single largest lever on match quality under the no-enrichment rule | Conformance suite asserts identifiers visible in the fixture appear in the output |
+| No CAPTCHA or anti-bot circumvention, in any form |  — a hard line, not a default | Raise `BlockedError`; the run stops and the provider goes to `degraded` immediately |
 
 ---
 
@@ -69,7 +69,7 @@ declares only `full` and accepts full resyncs.
 
 The host owns, and a provider must not reimplement: scheduling, jitter, the retry ladder, rate
 limiting, cursor persistence, idempotency, identity resolution, storage, migrations, and image
-caching (FR-035).
+caching .
 
 ---
 
@@ -90,14 +90,14 @@ class NormalizedBatch(BaseModel):
 Rules that catch real mistakes:
 
 - `logged_precision` is **required** on every entry. There is no default, because a default would
-  silently fabricate exactness (FR-004).
+  silently fabricate exactness .
 - `rating_raw` requires a `rating_scale_id` the provider declared in `rating_scales`.
 - `subject_ref` uses only `season`, `episode`, `track`, `disc`, `chapter`, `volume`, positive integers.
-- `position` on credits: payload order where the platform does not express billing (FR-016).
+- `position` on credits: payload order where the platform does not express billing .
 - `role_raw` carries the platform's own word verbatim, always, even when `role` maps cleanly.
 - A provider that finds nothing must return an empty iterator. It must **not** report success on a
   structural failure — raise `StructureChangedError` instead, because silence plus delete inference is
-  how an archive gets erased (FR-024, FR-026).
+  how an archive gets erased .
 
 ---
 
@@ -120,7 +120,7 @@ Raise, don't return. The host classifies and decides retry policy:
 ## 5. Conformance suite — a merge gate
 
 Every bundled provider is registered into `tests/conformance/` and must pass. This is the contract
-test Constitution Principle II requires, and the compliance proof FR-046 requires.
+testing guidance requires, and the compliance proof requires.
 
 Asserted for every provider:
 
@@ -145,7 +145,7 @@ test.
 
 ## 6. Acquisition hierarchy — a review checklist item
 
-A provider must use the highest surface available (FR-042), and its pull request must state which
+A provider must use the highest surface available , and its pull request must state which
 higher surfaces were evaluated and why each was insufficient:
 
 1. Official API with documented terms
@@ -160,12 +160,12 @@ provider combines them rather than scraping what a feed already provides.
 A scraping provider may authenticate as the operator, with the operator's own credentials, to retrieve
 **that operator's own data** from a platform they hold an account with. It may not bundle or share
 credentials, read other users' data, circumvent paywalls or access controls, defeat anti-bot measures,
-or retrieve anything the authenticated operator could not see in their own browser (FR-044, FR-045).
+or retrieve anything the authenticated operator could not see in their own browser .
 
 ## 7. Migrating a provider to a better surface
 
 When a platform ships an API later, the provider migrates in place rather than being replaced
-(FR-047). `id` and `native_id` values stay stable where possible so existing entries relink instead of
+. `id` and `native_id` values stay stable where possible so existing entries relink instead of
 duplicating. Where native ids differ between surfaces, bump `schema_version` and document the
 changeover as requiring a full resync; retained raw payloads keep the old data interpretable either
 way.

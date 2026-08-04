@@ -1,14 +1,14 @@
 """The provider wire contract: what a provider returns and how a fetch is resumed.
 
 These models are what crosses the process boundary between the plugin child and the host parent
-(research.md R2), serialized as **one JSON line** per message. Two consequences shape everything
+(research.md ), serialized as **one JSON line** per message. Two consequences shape everything
 here:
 
 * Every model must round-trip through ``model_dump_json()`` / ``model_validate_json()`` losslessly.
   Money-like values therefore use ``Decimal``, never ``float`` — a rating of ``3.5`` that arrives as
   ``3.4999999999999996`` fails its scale's step check for no reason a user could ever explain.
 * Every model sets ``extra="forbid"``. The producer is plugin-controlled code, so an unrecognised
-  field is a provider bug to surface at the boundary, not a long tail to absorb (FR-008). The sole
+  field is a provider bug to surface at the boundary, not a long tail to absorb . The sole
   exceptions are ``payload`` and ``metadata``, which are genuinely open by design.
 
 Field names match the column names in data-model.md §2 so the ingest writer needs no translation
@@ -42,7 +42,7 @@ _STRICT = ConfigDict(extra="forbid")
 class Cursor(BaseModel):
     """Opaque, provider-owned pagination state.
 
-    The host persists it in ``provider_state.cursor`` and never interprets it (FR-020); its shape is
+    The host persists it in ``provider_state.cursor`` and never interprets it ; its shape is
     the provider's business, which is why the contents are an open dict while the envelope is not.
     """
 
@@ -55,7 +55,7 @@ class Checkpoint(BaseModel):
     """A resume point yielded by ``fetch`` between records.
 
     The host stores the enclosed cursor, so a run that dies later resumes here instead of restarting
-    (FR-020). It is a distinct type rather than a bare ``Cursor`` because ``fetch`` yields a union
+    . It is a distinct type rather than a bare ``Cursor`` because ``fetch`` yields a union
     and the consumer must be able to tell a record from a resume point.
     """
 
@@ -69,7 +69,7 @@ class RawRecord(BaseModel):
 
     ``payload`` is retained verbatim in ``provider_items.raw_payload`` because it is the replay
     source: a corrected ``normalize`` is re-run over stored payloads rather than re-fetched
-    (FR-002).
+    .
     """
 
     model_config = _STRICT
@@ -90,7 +90,7 @@ class NormalizedWork(BaseModel):
     sequence_number: int | None = None
     """Season or track number, where the platform states one."""
     image_url: str | None = None
-    """Platform payload only — the host never goes looking for artwork (FR-010, FR-033)."""
+    """Platform payload only — the host never goes looking for artwork ."""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -103,7 +103,7 @@ class NormalizedEntry(BaseModel):
     logged_at: AwareDatetime
     logged_precision: LoggedPrecision
     """Required, deliberately with no default: a default would silently fabricate exactness
-    (FR-004). A platform that gives only a date says ``day``, and the host can then refuse to
+    . A platform that gives only a date says ``day``, and the host can then refuse to
     display a time it never had."""
     native_id: str | None = None
     """``None`` where the platform gives the event no id of its own; such entries are deduplicated
@@ -140,7 +140,7 @@ class NormalizedOpinion(BaseModel):
     @model_validator(mode="after")
     def _raw_values_carry_their_interpretation(self) -> NormalizedOpinion:
         # A raw rating without its scale is uninterpretable and un-normalizable: 4 out of 5 and 4
-        # out of 10 are not the same opinion (FR-003, research.md R7).
+        # out of 10 are not the same opinion (, research.md ).
         if self.rating_raw is not None and not self.rating_scale_id:
             raise ValueError("rating_raw requires the rating_scale_id it was measured on")
         if self.review_text is not None and self.review_format is None:
@@ -154,25 +154,25 @@ class NormalizedCredit(BaseModel):
     model_config = _STRICT
 
     creator_name: str
-    """As the platform writes it. Identity resolution is the host's job (FR-013), not the
+    """As the platform writes it. Identity resolution is the host's job , not the
     provider's."""
     creator_kind: CreatorKind = CreatorKind.UNKNOWN
     role: Role
     role_raw: str
     """The platform's own word, verbatim, **always** — including when ``role`` maps cleanly
-    (FR-016). "Screenplay" and "Story" both map to ``writer``, and the distinction survives only
+    . "Screenplay" and "Story" both map to ``writer``, and the distinction survives only
     here."""
     credited_as: str | None = None
     position: int = Field(ge=0)
     """0 = first-billed. Where the platform does not express billing order, this is payload order
-    (FR-016) — which is information, not noise, and is why it has no default."""
+     — which is information, not noise, and is why it has no default."""
 
 
 class NormalizedExternalId(BaseModel):
     """An identifier for the work found in the payload.
 
     Every identifier present is extracted, including ones Aggregato has no use for: under the
-    no-enrichment rule this is the single largest lever on match quality (FR-009).
+    no-enrichment rule this is the single largest lever on match quality .
     """
 
     model_config = _STRICT

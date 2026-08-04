@@ -1,4 +1,4 @@
-"""AniList GraphQL provider (T076), using the documented API surface only."""
+"""AniList GraphQL provider , using the documented API surface only."""
 
 from __future__ import annotations
 

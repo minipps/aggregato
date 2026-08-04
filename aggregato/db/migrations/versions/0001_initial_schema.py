@@ -1,6 +1,6 @@
 """initial schema
 
-The 18 tables of data-model.md, plus the dialect-specific search index (FR-028), which cannot live
+The 18 tables of data-model.md, plus the dialect-specific search index , which cannot live
 in ``schema.py``'s ``MetaData`` because its DDL differs per dialect — so this revision calls
 ``sync_create_search_index`` instead.
 
@@ -593,14 +593,14 @@ def upgrade() -> None:
         "ix_resolution_queue_decided_at", "resolution_queue", ["decided_at"], unique=False
     )
 
-    # The 19th table, and the only one whose DDL is dialect-specific (FR-028): an FTS5 virtual table
+    # The 19th table, and the only one whose DDL is dialect-specific : an FTS5 virtual table
     # on SQLite, a tsvector column with a GIN index on Postgres. It cannot be expressed in the
     # shared MetaData, so the one implementation lives in aggregato.db.search.
     sync_create_search_index(op.get_bind())
 
 
 def downgrade() -> None:
-    # Forward-only is policy, not an omission (data-model.md §6, FR-049). A downgrade that drops
+    # Forward-only is policy, not an omission (data-model.md §6, ). A downgrade that drops
     # 18 tables destroys the archive this application exists to keep, and the operator's actual
     # way back from a bad migration is the pre-migration file copy that aggregato.db.migrate takes.
     # Offering a green-looking `alembic downgrade` instead of that would be a trap.

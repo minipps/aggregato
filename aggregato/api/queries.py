@@ -1,13 +1,13 @@
-"""The read path's shared query pieces (T053–T055).
+"""The read path's shared query pieces (–).
 
 Three endpoints read the log, and two of their filters are defaults that must not be re-decided per
 endpoint:
 
 * ``include_subunits`` defaults **false** — a record with a non-null ``subject_ref`` is a sub-unit
-  (an episode, a track) and is excluded from work-level results unless asked for (FR-007,
-  research.md R18). Getting the direction backwards corrupts every statistic a per-episode logger
+  (an episode, a track) and is excluded from work-level results unless asked for (,
+  research.md ). Getting the direction backwards corrupts every statistic a per-episode logger
   sees, silently, so the direction is decided once in :func:`aggregate_filters`.
-* ``include_deleted`` defaults **false** — tombstoned rows are excluded (FR-024). They are never
+* ``include_deleted`` defaults **false** — tombstoned rows are excluded . They are never
   hard-deleted, so the filter is the only thing standing between "deleted" and "still there".
 
 Everything else here exists to keep the routes free of N+1 queries: :func:`work_aggregates` and
@@ -62,8 +62,8 @@ def aggregate_filters(
     Args:
         subject_ref_col: The table's ``subject_ref`` column.
         deleted_at_col: The table's ``deleted_at`` column.
-        include_subunits: When false — the default — sub-unit records are excluded (FR-007, R18).
-        include_deleted: When false — the default — tombstoned rows are excluded (FR-024).
+        include_subunits: When false — the default — sub-unit records are excluded .
+        include_deleted: When false — the default — tombstoned rows are excluded .
 
     Returns:
         Conditions to AND into the query, possibly empty when the caller asked for everything.
@@ -82,7 +82,7 @@ def media_type_values(
 ) -> list[str] | None:
     """Resolve the ``media_type`` and ``media_family`` parameters to one list of type values.
 
-    A ``media_family`` expands to its member types (FR-029) so individual types stay separately
+    A ``media_family`` expands to its member types  so individual types stay separately
     addressable. Passing both is the union of the two, which is the only reading under which each
     parameter still means what it says on its own.
 
@@ -172,7 +172,7 @@ async def fetch_page(
         conn: Connection to read on.
         statement: The filtered select, without ORDER BY or LIMIT.
         sort_col: The column named by the endpoint's sort key.
-        id_col: The primary key, the tiebreaker that makes the order total (R6).
+        id_col: The primary key, the tiebreaker that makes the order total .
         sort: The cursor key, carried in the cursor so it cannot be replayed elsewhere.
         order: ``asc`` or ``desc``.
         cursor: The client's ``cursor`` parameter, or ``None`` for the first page.
@@ -183,7 +183,7 @@ async def fetch_page(
 
     Raises:
         ProblemError: 400 when ``cursor`` is not a cursor this API issued. Never a silent restart
-            from the beginning, which would re-serve page one forever (FR-030).
+            from the beginning, which would re-serve page one forever .
     """
     direction: Callable[[ColumnElement[Any]], ColumnElement[Any]] = (
         (lambda column: column.asc()) if order == "asc" else (lambda column: column.desc())
@@ -248,7 +248,7 @@ async def work_aggregates(
 ) -> dict[uuid.UUID, WorkAggregate]:
     """``entry_count`` and ``providers`` for every work on a page, in two statements.
 
-    ``entry_count`` is a work-level aggregate, so it obeys the sub-unit default (R18): by default an
+    ``entry_count`` is a work-level aggregate, so it obeys the sub-unit default : by default an
     18-episode season counts as the entries logged against the season itself, not against episodes.
 
     Args:
@@ -318,7 +318,7 @@ async def credits_for(
 ) -> dict[uuid.UUID, list[Row[Any]]]:
     """Credits with their creator's name, for several works in one statement.
 
-    Ordered by ``position``, which is billing order where the platform expressed one (FR-016).
+    Ordered by ``position``, which is billing order where the platform expressed one .
     """
     ids = list(dict.fromkeys(work_ids))
     if not ids:
@@ -347,7 +347,7 @@ async def credits_for(
 
 
 async def title_matches(conn: AsyncConnection, term: str) -> list[uuid.UUID]:
-    """Work ids whose indexed titles match ``term`` (FR-028, R5).
+    """Work ids whose indexed titles match ``term`` .
 
     Uses :func:`~aggregato.db.search.matching_ref_ids` rather than a subquery, because rendering a
     UUID to text differs between dialects and the subquery form silently matches nothing on one.

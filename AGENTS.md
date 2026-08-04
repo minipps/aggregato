@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Working guidance for contributors and coding agents.
 
 ## Commands
 
@@ -29,7 +29,7 @@ Single test / subset:
 ```bash
 uv run pytest tests/unit/test_writer_idempotency.py::test_resync_writes_nothing
 uv run pytest tests/conformance          # every provider must pass this
-uv run pytest -m bench                   # the declared performance budgets (plan.md)
+uv run pytest -m bench                   # the declared performance budgets (docs/architecture.md)
 cd frontend && npm run test:unit -- src/components/__tests__/SchemaForm.spec.ts
 ```
 
@@ -128,21 +128,39 @@ replays stored payloads through the child before fetching.
   a migration needs a test that seeds rows at the previous revision and asserts they survive. Never
   edit an already-applied revision.
 
-## Normative documents
+## Canonical documentation
 
-The code cites these by requirement id (`FR-0xx`, `SC-0xx`, `R<n>`); when a comment does, that
-document is the reason and the place to check before changing behaviour.
+Consult the relevant document before changing its subject. Keep code comments explanatory; do not
+introduce external requirement identifiers.
 
 | Document | Authority over |
 |---|---|
-| `.specify/memory/constitution.md` | The rules reviews are held to |
-| `specs/001-media-log-aggregator/spec.md` | What the product does (`FR-`/`SC-` ids) |
-| `.../plan.md` | Architecture, stack, declared performance budgets |
-| `.../research.md` | Stack decisions with rationale (`R<n>` citations) |
-| `.../data-model.md` | Tables, constraints, state transitions, migration rules |
-| `.../contracts/provider-plugin.md` | The plugin contract |
-| `.../contracts/openapi.yaml` | The HTTP contract the SPA consumes, and the only one |
+| `docs/requirements.md` | Product behaviour and acceptance scenarios |
+| `docs/architecture.md` | Architecture, stack, and declared performance budgets |
+| `docs/research.md` | Technical decisions and rationale |
+| `docs/data-model.md` | Tables, constraints, state transitions, and migration rules |
+| `docs/contracts/provider-plugin.md` | The plugin contract |
+| `docs/contracts/openapi.yaml` | The HTTP contract the SPA consumes, and the only one |
 | `CONTRIBUTING.md` | Acquisition hierarchy, scraping policy, PR checklist |
 | `docs/writing-a-provider.md` | Practical path to a new provider |
 
 This repo is indexed by CodeGraph (`.codegraph/`) — prefer `codegraph_explore` over grep/read loops.
+
+## Engineering principles and review gates
+
+- Keep code readable, remove dead code, and avoid speculative abstractions. Public functions,
+  types, and plugin contracts document their purpose, inputs, and failure modes.
+- Every behavioural change has a deterministic automated test; bug fixes include a regression test.
+  Tests never use the network, wall-clock sleeps, execution order, or implicit time/randomness.
+- Keep the UI consistent and accessible: semantic structure, keyboard access, text alternatives,
+  and shared conventions for dates, ordering, pagination, and empty/loading/error states.
+- Dependencies point inward. Use explicit contracts rather than globals; cyclic dependencies and
+  core dependencies on individual providers are forbidden.
+- New sources, transforms, and outputs are plugins. Contract changes require a documented migration
+  path and conformance-suite updates. A plugin failure must remain isolated.
+- Declare and measure performance budgets before implementation. A recorded metric may not regress
+  by more than 10% without a documented justification.
+
+Before merging, run the quality gates above, pass provider conformance tests for every bundled
+provider, preserve dependency boundaries, and justify any new dependency against the standard
+library, platform facilities, and installed packages.

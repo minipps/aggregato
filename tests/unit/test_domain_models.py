@@ -1,4 +1,4 @@
-"""The wire contract's load-bearing guarantees (T015).
+"""The wire contract's load-bearing guarantees .
 
 Everything here protects a property the process boundary depends on: a lossless one-line JSON round
 trip, and rejection of the four provider mistakes the contract calls out by name.
@@ -122,7 +122,7 @@ def test_wire_types_round_trip(value: RawRecord | Checkpoint | Cursor | CheckRes
 
 
 def test_logged_precision_is_required() -> None:
-    # No default anywhere: a default would silently fabricate exactness (FR-004).
+    # No default anywhere: a default would silently fabricate exactness .
     with pytest.raises(ValidationError, match="logged_precision"):
         NormalizedEntry(  # type: ignore[call-arg]
             kind=EntryKind.WATCH, logged_at=datetime(2026, 3, 1, tzinfo=UTC)

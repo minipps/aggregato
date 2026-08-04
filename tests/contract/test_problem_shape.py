@@ -1,4 +1,4 @@
-"""Every failure returns the same RFC 9457 document (T040, Constitution III).
+"""Every failure returns the same RFC 9457 document (, UI consistency guidance).
 
 Driven through ``httpx.ASGITransport`` — in-process, no socket, so the autouse socket blocker in
 ``tests/conftest.py`` is satisfied. ``raise_app_exceptions=False`` is required for the 500 case:

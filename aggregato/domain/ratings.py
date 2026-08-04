@@ -1,4 +1,4 @@
-"""Rating normalization to 0–100 (FR-003, research.md R7).
+"""Rating normalization to 0–100 (, research.md ).
 
 Two kinds of scale, because platforms genuinely have two:
 
@@ -9,7 +9,7 @@ Two kinds of scale, because platforms genuinely have two:
 
 The normalized value is **derived and recomputable**: the raw value and the scale id are what get
 stored, so a scale definition corrected later is repaired by replay rather than by re-syncing every
-platform (the same principle as normalization replay, research.md R16).
+platform (the same principle as normalization replay, research.md ).
 
 A normalized value is comparable *within* a scale. It is not a cross-platform equivalence claim,
 and the API says so rather than leaving the caller to assume otherwise.

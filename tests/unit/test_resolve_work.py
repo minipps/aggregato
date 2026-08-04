@@ -1,4 +1,4 @@
-"""The asserted → unique title/year → create work-resolution branches (T066)."""
+"""The asserted → unique title/year → create work-resolution branches ."""
 
 from __future__ import annotations
 
