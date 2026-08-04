@@ -25,7 +25,7 @@ onMounted(() => void loadSession())
         <li><RouterLink :to="{ name: 'settings' }">Settings</RouterLink></li>
       </ul>
       <!-- Said once, in the header, rather than as an explanation next to every missing button. -->
-      <p v-if="readonlyAccess" class="readonly-badge">Read-only access</p>
+      <p v-if="readonlyAccess" class="readonly-badge badge badge--warn">Read-only access</p>
     </nav>
   </header>
   <main id="main-content" tabindex="-1"><RouterView /></main>
@@ -34,10 +34,6 @@ onMounted(() => void loadSession())
 <style scoped>
 .readonly-badge {
   margin: 0;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  font-size: 0.875rem;
+  margin-left: auto;
 }
 </style>

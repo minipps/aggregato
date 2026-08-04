@@ -12,10 +12,10 @@ const props = defineProps<{ title: string; detail?: string }>()
 </template>
 
 <style scoped>
+/* Flat, not a box: this renders inside Bento cards, and a bordered panel there would read as a
+   card within a card. */
 .state {
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-6);
+  padding: var(--space-6) var(--space-3);
   text-align: center;
 }
 

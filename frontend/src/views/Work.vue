@@ -58,121 +58,146 @@ function ratingText(rating: Rating | null | undefined): string {
       @retry="detail.reload()"
     />
 
-    <template v-else-if="detail.data.value">
-      <!--
-        Local cache path only  — the API never hands the browser a platform URL. alt is
-        empty because the h1 beside it already names the work; a poster carries nothing a reader
-        needs that the title does not already say.
-      -->
-      <img
-        v-if="detail.data.value.image"
-        class="poster"
-        :src="detail.data.value.image"
-        alt=""
-        width="120"
-        height="180"
-        decoding="async"
-      />
-      <h1>{{ detail.data.value.title }}</h1>
-      <p v-if="!readonlyAccess"><button type="button" @click="merging = true">Merge duplicate</button></p>
-      <MergeDialog v-if="merging" subject="work" :winner-id="workId" @merge="merge" @cancel="merging = false" />
-      <p v-if="notice" role="status">{{ notice }} <button v-if="notice.includes('Undo:')" type="button" @click="undo(Number(notice.split(': ')[1]))">Undo</button></p>
-      <p class="muted">
-        {{ detail.data.value.media_type }} · {{ detail.data.value.media_family }}
-        <template v-if="detail.data.value.release_year"> · {{ detail.data.value.release_year }}</template>
-        <template v-if="detail.data.value.original_title">
-          · originally {{ detail.data.value.original_title }}
-        </template>
-      </p>
+    <div v-else-if="detail.data.value" class="bento">
+      <section class="card card--feature span-2 tall">
+        <!--
+          Local cache path only  — the API never hands the browser a platform URL. alt is
+          empty because the h1 beside it already names the work; a poster carries nothing a reader
+          needs that the title does not already say.
+        -->
+        <img
+          v-if="detail.data.value.image"
+          class="poster"
+          :src="detail.data.value.image"
+          alt=""
+          width="120"
+          height="180"
+          decoding="async"
+        />
+        <h1>{{ detail.data.value.title }}</h1>
+        <p class="muted">
+          {{ detail.data.value.media_type }} · {{ detail.data.value.media_family }}
+          <template v-if="detail.data.value.release_year"> · {{ detail.data.value.release_year }}</template>
+          <template v-if="detail.data.value.original_title">
+            · originally {{ detail.data.value.original_title }}
+          </template>
+        </p>
 
-      <p v-if="detail.data.value.parent">
-        Part of
-        <RouterLink :to="{ name: 'work', params: { id: detail.data.value.parent.id } }">
-          {{ detail.data.value.parent.title }}
-        </RouterLink>
-      </p>
+        <p v-if="detail.data.value.parent">
+          Part of
+          <RouterLink :to="{ name: 'work', params: { id: detail.data.value.parent.id } }">
+            {{ detail.data.value.parent.title }}
+          </RouterLink>
+        </p>
 
-      <h2>Opinions</h2>
-      <!-- Stated once, next to the numbers it qualifies . -->
-      <p class="caveat">
-        Normalized scores are comparable <strong>within one platform's scale</strong>. They are not
-        equivalent across platforms: two providers' normalized 80s do not mean the same thing.
-      </p>
-      <ul v-if="detail.data.value.opinions?.length" class="cards">
-        <li v-for="opinion in detail.data.value.opinions" :key="opinion.id" class="card">
-          <h3>{{ opinion.provider_id }}</h3>
-          <dl class="pairs">
-            <dt>Rating</dt>
-            <dd>{{ ratingText(opinion.rating) }}</dd>
-            <dt>Normalized</dt>
-            <dd>
-              <template v-if="opinion.rating?.normalized !== null && opinion.rating?.normalized !== undefined">
-                {{ opinion.rating.normalized }}/100
-                <span class="muted">(within {{ opinion.rating.scale_id ?? 'this scale' }} only)</span>
+        <p v-if="!readonlyAccess" class="actions">
+          <button type="button" @click="merging = true">Merge duplicate</button>
+        </p>
+        <MergeDialog v-if="merging" subject="work" :winner-id="workId" @merge="merge" @cancel="merging = false" />
+        <p v-if="notice" class="note" role="status">
+          {{ notice }}
+          <button v-if="notice.includes('Undo:')" type="button" @click="undo(Number(notice.split(': ')[1]))">Undo</button>
+        </p>
+      </section>
+
+      <section class="card card--scroll span-2 tall" aria-labelledby="entries-heading">
+        <div class="card__head">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M12 7v5l3 2" />
+              <circle cx="12" cy="12" r="9" />
+            </svg>
+          </span>
+          <h2 id="entries-heading">Entries</h2>
+        </div>
+        <EntryList
+          v-if="detail.data.value.entries?.length"
+          :entries="detail.data.value.entries"
+          :show-work="false"
+        />
+        <EmptyState v-else title="No entries" detail="Nothing has been logged against this work." />
+      </section>
+
+      <!-- Opinions stay in one tile, split by hairlines: a card per provider would nest cards. -->
+      <section class="card card--scroll span-2" aria-labelledby="opinions-heading">
+        <h2 id="opinions-heading">Opinions</h2>
+        <!-- Stated once, next to the numbers it qualifies . -->
+        <p class="note note--warn">
+          Normalized scores are comparable <strong>within one platform's scale</strong>. They are not
+          equivalent across platforms: two providers' normalized 80s do not mean the same thing.
+        </p>
+        <template v-if="detail.data.value.opinions?.length">
+          <article v-for="opinion in detail.data.value.opinions" :key="opinion.id" class="subsection opinion">
+            <h3>{{ opinion.provider_id }}</h3>
+            <dl class="pairs">
+              <dt>Rating</dt>
+              <dd>{{ ratingText(opinion.rating) }}</dd>
+              <dt>Normalized</dt>
+              <dd>
+                <template v-if="opinion.rating?.normalized !== null && opinion.rating?.normalized !== undefined">
+                  {{ opinion.rating.normalized }}/100
+                  <span class="muted">(within {{ opinion.rating.scale_id ?? 'this scale' }} only)</span>
+                </template>
+                <span v-else class="muted">Not normalized</span>
+              </dd>
+              <template v-if="opinion.is_liked !== null && opinion.is_liked !== undefined">
+                <dt>Liked</dt>
+                <dd>{{ opinion.is_liked ? 'Yes' : 'No' }}</dd>
               </template>
-              <span v-else class="muted">Not normalized</span>
-            </dd>
-            <template v-if="opinion.is_liked !== null && opinion.is_liked !== undefined">
-              <dt>Liked</dt>
-              <dd>{{ opinion.is_liked ? 'Yes' : 'No' }}</dd>
-            </template>
-            <template v-if="opinion.authored_at">
-              <dt>Written</dt>
-              <dd><LoggedAt :at="opinion.authored_at" precision="exact" /></dd>
-            </template>
-          </dl>
-          <details v-if="opinion.review_text">
-            <summary>Review{{ opinion.contains_spoilers ? ' (contains spoilers)' : '' }}</summary>
-            <!-- Plain text only: provider markup is never injected as HTML. -->
-            <p class="review">{{ opinion.review_text }}</p>
-          </details>
-        </li>
-      </ul>
-      <EmptyState v-else title="No opinions" detail="No provider recorded a rating or review here." />
+              <template v-if="opinion.authored_at">
+                <dt>Written</dt>
+                <dd><LoggedAt :at="opinion.authored_at" precision="exact" /></dd>
+              </template>
+            </dl>
+            <details v-if="opinion.review_text">
+              <summary>Review{{ opinion.contains_spoilers ? ' (contains spoilers)' : '' }}</summary>
+              <!-- Plain text only: provider markup is never injected as HTML. -->
+              <p class="review">{{ opinion.review_text }}</p>
+            </details>
+          </article>
+        </template>
+        <EmptyState v-else title="No opinions" detail="No provider recorded a rating or review here." />
+      </section>
 
-      <h2>Entries</h2>
-      <EntryList
-        v-if="detail.data.value.entries?.length"
-        :entries="detail.data.value.entries"
-        :show-work="false"
-      />
-      <EmptyState v-else title="No entries" detail="Nothing has been logged against this work." />
+      <section class="card span-2" aria-labelledby="credits-heading">
+        <h2 id="credits-heading">Credits</h2>
+        <ul v-if="detail.data.value.credits?.length" class="plain">
+          <li v-for="credit in detail.data.value.credits" :key="credit.id">
+            <strong>{{ credit.creator_name ?? credit.creator_id }}</strong>
+            — {{ credit.role }}
+            <span v-if="credit.credited_as" class="muted">(as {{ credit.credited_as }})</span>
+            <span class="muted"> · linked by {{ credit.link_confidence }}</span>
+          </li>
+        </ul>
+        <EmptyState v-else title="No credits" detail="No provider supplied credits for this work." />
+      </section>
 
-      <h2>Credits</h2>
-      <ul v-if="detail.data.value.credits?.length" class="plain">
-        <li v-for="credit in detail.data.value.credits" :key="credit.id">
-          <strong>{{ credit.creator_name ?? credit.creator_id }}</strong>
-          — {{ credit.role }}
-          <span v-if="credit.credited_as" class="muted">(as {{ credit.credited_as }})</span>
-          <span class="muted"> · linked by {{ credit.link_confidence }}</span>
-        </li>
-      </ul>
-      <EmptyState v-else title="No credits" detail="No provider supplied credits for this work." />
+      <section class="card span-2" aria-labelledby="identifiers-heading">
+        <h2 id="identifiers-heading">Identifiers</h2>
+        <table v-if="detail.data.value.external_ids?.length">
+          <caption class="visually-hidden">External identifiers for this work</caption>
+          <thead>
+            <tr>
+              <th scope="col">Namespace</th>
+              <th scope="col">Value</th>
+              <th scope="col">Source</th>
+              <th scope="col">Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="id in detail.data.value.external_ids" :key="`${id.namespace}:${id.value}`">
+              <td>{{ id.namespace }}</td>
+              <td class="mono">{{ id.value }}</td>
+              <td>{{ id.source }}</td>
+              <td>{{ id.confidence }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <EmptyState v-else title="No identifiers" detail="Nothing to match this work by yet." />
+      </section>
 
-      <h2>Identifiers</h2>
-      <table v-if="detail.data.value.external_ids?.length">
-        <caption class="visually-hidden">External identifiers for this work</caption>
-        <thead>
-          <tr>
-            <th scope="col">Namespace</th>
-            <th scope="col">Value</th>
-            <th scope="col">Source</th>
-            <th scope="col">Confidence</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="id in detail.data.value.external_ids" :key="`${id.namespace}:${id.value}`">
-            <td>{{ id.namespace }}</td>
-            <td class="mono">{{ id.value }}</td>
-            <td>{{ id.source }}</td>
-            <td>{{ id.confidence }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <EmptyState v-else title="No identifiers" detail="Nothing to match this work by yet." />
-
-      <template v-if="detail.data.value.siblings?.length">
-        <h2>Other seasons</h2>
+      <section v-if="detail.data.value.siblings?.length" class="card span-2" aria-labelledby="siblings-heading">
+        <h2 id="siblings-heading">Other seasons</h2>
         <ul class="plain">
           <li v-for="sibling in detail.data.value.siblings" :key="sibling.id">
             <RouterLink :to="{ name: 'work', params: { id: sibling.id } }">
@@ -181,58 +206,33 @@ function ratingText(rating: Rating | null | undefined): string {
             <span v-if="sibling.sequence_number" class="muted"> · #{{ sibling.sequence_number }}</span>
           </li>
         </ul>
-      </template>
-    </template>
+      </section>
+    </div>
   </section>
 </template>
 
 <style scoped>
 /* Block above the title rather than floated: a float here would bleed past the header into the
-   Opinions list on a narrow screen. */
+   rest of the tile on a narrow screen. */
 .poster {
   display: block;
   width: 120px;
   height: 180px;
   object-fit: cover;
   border-radius: var(--radius);
-  background: var(--surface);
-  margin-bottom: var(--space-3);
-}
-
-.caveat {
-  border-left: 3px solid var(--warn);
-  padding-left: var(--space-3);
-  color: var(--text-muted);
-  max-width: var(--measure);
-}
-
-.cards {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
-  gap: var(--space-4);
+  background: var(--surface-raised);
 }
 
 .pairs {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.opinion {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--space-1) var(--space-4);
-  margin: 0;
-}
-
-.pairs dt {
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.pairs dd {
-  margin: 0;
+  gap: var(--space-2);
 }
 
 .review {
   white-space: pre-wrap;
-  max-width: var(--measure);
 }
 </style>

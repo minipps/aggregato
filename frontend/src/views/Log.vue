@@ -83,112 +83,112 @@ async function apply(): Promise<void> {
 </script>
 
 <template>
-  <section>
-    <h1>Log</h1>
-
-    <form class="filters" @submit.prevent="apply">
+  <div class="bento">
+    <form class="card card--feature span-3" @submit.prevent="apply">
+      <div class="card__head">
+        <span class="card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M4 6h16M7 12h10m-7 6h4" />
+          </svg>
+        </span>
+        <h1>Log</h1>
+      </div>
       <h2 class="visually-hidden">Filters</h2>
 
-      <div class="field">
-        <label for="filter-q">Search</label>
-        <input id="filter-q" v-model="filters.q" type="search" placeholder="Titles and reviews" />
-      </div>
+      <div class="filters">
+        <div class="field">
+          <label for="filter-q">Search</label>
+          <input id="filter-q" v-model="filters.q" type="search" placeholder="Titles and reviews" />
+        </div>
 
-      <div class="field">
-        <label for="filter-family">Media family</label>
-        <select id="filter-family" v-model="filters.media_family">
-          <option value="">Any</option>
-          <option v-for="family in MEDIA_FAMILIES" :key="family" :value="family">
-            {{ family }}
-          </option>
-        </select>
-      </div>
+        <div class="field">
+          <label for="filter-family">Media family</label>
+          <select id="filter-family" v-model="filters.media_family">
+            <option value="">Any</option>
+            <option v-for="family in MEDIA_FAMILIES" :key="family" :value="family">
+              {{ family }}
+            </option>
+          </select>
+        </div>
 
-      <div class="field">
-        <label for="filter-type">Media type</label>
-        <select id="filter-type" v-model="filters.media_type">
-          <option value="">Any</option>
-          <option v-for="type in MEDIA_TYPES" :key="type" :value="type">{{ type }}</option>
-        </select>
-      </div>
+        <div class="field">
+          <label for="filter-type">Media type</label>
+          <select id="filter-type" v-model="filters.media_type">
+            <option value="">Any</option>
+            <option v-for="type in MEDIA_TYPES" :key="type" :value="type">{{ type }}</option>
+          </select>
+        </div>
 
-      <div class="field">
-        <label for="filter-provider">Provider</label>
-        <input
-          id="filter-provider"
-          v-model="filters.provider"
-          list="provider-options"
-          type="text"
-          placeholder="Any"
-        />
-        <datalist id="provider-options">
-          <option v-for="provider in installed.data.value ?? []" :key="provider.id" :value="provider.id">
-            {{ provider.name }}
-          </option>
-        </datalist>
-      </div>
+        <div class="field">
+          <label for="filter-provider">Provider</label>
+          <input
+            id="filter-provider"
+            v-model="filters.provider"
+            list="provider-options"
+            type="text"
+            placeholder="Any"
+          />
+          <datalist id="provider-options">
+            <option v-for="provider in installed.data.value ?? []" :key="provider.id" :value="provider.id">
+              {{ provider.name }}
+            </option>
+          </datalist>
+        </div>
 
-      <div class="field">
-        <label for="filter-kind">Kind</label>
-        <select id="filter-kind" v-model="filters.kind">
-          <option value="">Any</option>
-          <option v-for="kind in KINDS" :key="kind" :value="kind">{{ kind }}</option>
-        </select>
-      </div>
+        <div class="field">
+          <label for="filter-kind">Kind</label>
+          <select id="filter-kind" v-model="filters.kind">
+            <option value="">Any</option>
+            <option v-for="kind in KINDS" :key="kind" :value="kind">{{ kind }}</option>
+          </select>
+        </div>
 
-      <div class="field">
-        <label for="filter-from">Logged from</label>
-        <input id="filter-from" v-model="filters.from" type="date" />
-      </div>
+        <div class="field">
+          <label for="filter-from">Logged from</label>
+          <input id="filter-from" v-model="filters.from" type="date" />
+        </div>
 
-      <div class="field">
-        <label for="filter-to">Logged to</label>
-        <input id="filter-to" v-model="filters.to" type="date" />
-      </div>
+        <div class="field">
+          <label for="filter-to">Logged to</label>
+          <input id="filter-to" v-model="filters.to" type="date" />
+        </div>
 
-      <button type="submit">Apply filters</button>
+        <button type="submit">Apply filters</button>
+      </div>
     </form>
 
-    <ErrorState
-      v-if="feed.error.value"
-      :problem="feed.error.value"
-      retryable
-      @retry="feed.restart()"
-    />
+    <section class="card" aria-labelledby="loaded-count">
+      <p id="loaded-count" class="metric-label">Loaded</p>
+      <p class="metric">{{ feed.items.value.length }}</p>
+      <p class="muted">{{ feed.done.value ? 'End of the log.' : 'More to load.' }}</p>
+    </section>
 
-    <EntryList v-if="feed.items.value.length > 0" :entries="feed.items.value" />
+    <section class="card span-4" aria-labelledby="feed-heading">
+      <h2 id="feed-heading" class="visually-hidden">Entries</h2>
 
-    <LoadingState v-if="feed.loading.value" label="Loading entries…" />
+      <ErrorState
+        v-if="feed.error.value"
+        :problem="feed.error.value"
+        retryable
+        @retry="feed.restart()"
+      />
 
-    <EmptyState
-      v-else-if="feed.items.value.length === 0 && !feed.error.value"
-      title="No entries match"
-      detail="Either nothing has synced yet, or the filters exclude everything."
-    />
+      <EntryList v-if="feed.items.value.length > 0" :entries="feed.items.value" />
 
-    <p v-if="feed.items.value.length > 0" class="paging">
-      <button v-if="!feed.done.value" type="button" :disabled="feed.loading.value" @click="feed.loadMore()">
-        Load more
-      </button>
-      <span v-else class="muted">End of the log.</span>
-    </p>
-  </section>
+      <LoadingState v-if="feed.loading.value" label="Loading entries…" />
+
+      <EmptyState
+        v-else-if="feed.items.value.length === 0 && !feed.error.value"
+        title="No entries match"
+        detail="Either nothing has synced yet, or the filters exclude everything."
+      />
+
+      <p v-if="feed.items.value.length > 0" class="actions">
+        <button v-if="!feed.done.value" type="button" :disabled="feed.loading.value" @click="feed.loadMore()">
+          Load more
+        </button>
+        <span v-else class="muted">End of the log.</span>
+      </p>
+    </section>
+  </div>
 </template>
-
-<style scoped>
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: end;
-  margin-bottom: var(--space-6);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.paging {
-  margin-top: var(--space-4);
-}
-</style>

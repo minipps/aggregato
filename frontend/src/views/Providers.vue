@@ -12,7 +12,7 @@
  *     otherwise the UI silently discards edits the config file overrides.
  */
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import {
   checkProvider,
@@ -35,6 +35,14 @@ import ProviderStatus from '@/components/ProviderStatus.vue'
 import SchemaForm from '@/components/SchemaForm.vue'
 
 const list = useRequest(providers)
+
+/** Enabled providers first — those are the ones actually feeding the archive. Array.prototype.sort
+ *  is stable, so within each group the server's order is preserved. */
+const sorted = computed(() =>
+  [...(list.data.value ?? [])].sort(
+    (a, b) => Number(b.enabled) - Number(a.enabled),
+  ),
+)
 
 /**
  * Action feedback, attached to the provider it belongs to: one provider's failed action reports on
@@ -156,7 +164,29 @@ function saveConfiguration(id: string): Promise<void> {
 
 <template>
   <section>
-    <h1>Providers</h1>
+    <div class="bento">
+      <section class="card card--accent span-2">
+        <div class="card__head">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M4 7h10M4 17h6m4-10a3 3 0 1 0 6 0 3 3 0 0 0-6 0Zm-4 10a3 3 0 1 0 6 0 3 3 0 0 0-6 0Z" />
+            </svg>
+          </span>
+          <h1>Providers</h1>
+        </div>
+        <p>Every platform this archive reads from, how it acquires data, and what it needs from you.</p>
+      </section>
+
+      <section class="card" aria-labelledby="installed-label">
+        <p id="installed-label" class="metric-label">Installed</p>
+        <p class="metric">{{ (list.data.value ?? []).length }}</p>
+      </section>
+
+      <section class="card" aria-labelledby="enabled-label">
+        <p id="enabled-label" class="metric-label">Enabled</p>
+        <p class="metric">{{ (list.data.value ?? []).filter((provider) => provider.enabled).length }}</p>
+      </section>
+    </div>
 
     <LoadingState v-if="list.loading.value" label="Loading providers…" />
     <ErrorState
@@ -171,14 +201,20 @@ function saveConfiguration(id: string): Promise<void> {
       detail="Providers ship with the release; none is configured yet."
     />
 
-    <ul v-else class="cards">
-      <li v-for="provider in list.data.value ?? []" :key="provider.id" class="card">
-        <h2>
-          {{ provider.name }}
+    <ul v-else class="bento">
+      <!-- The lead provider takes the full row; every other tile is half a row, so the rest always
+           pair up. A row-spanning tile here would leave the next two tiles stacked beside it. -->
+      <li
+        v-for="(provider, index) in sorted"
+        :key="provider.id"
+        :class="['card', index === 0 ? 'span-4' : 'span-2']"
+      >
+        <div class="card__head">
+          <h2>{{ provider.name }}</h2>
           <!-- : an unreviewed drop-in provider is labelled as such, always. -->
           <span v-if="!provider.reviewed" class="badge badge--warn">unreviewed</span>
           <ProviderStatus :status="provider.status" />
-        </h2>
+        </div>
 
         <p class="muted">
           {{ provider.acquisition }} · {{ provider.enabled ? 'enabled' : 'disabled' }}
@@ -187,18 +223,18 @@ function saveConfiguration(id: string): Promise<void> {
           </template>
         </p>
 
-        <div v-if="!provider.reviewed" class="provider-warning" role="alert">
+        <div v-if="!provider.reviewed" class="note note--warn" role="alert">
           This is a local drop-in provider. Review its code and configuration before enabling it.
         </div>
-        <div v-if="provider.acquisition === 'scrape'" class="provider-warning" role="note">
+        <div v-if="provider.acquisition === 'scrape'" class="note note--warn" role="note">
           Scraping can trigger rate limits or blocks. Use only an account you control; Aggregato does not bypass CAPTCHA.
         </div>
 
         <!-- : the required action leads, before any error text. -->
-        <div v-if="provider.last_error?.action_required" class="action-required" role="alert">
-          <p class="action-required__title">Action required</p>
+        <div v-if="provider.last_error?.action_required" class="note note--danger" role="alert">
+          <p class="note__title">Action required</p>
           <p>{{ provider.last_error.action_required }}</p>
-          <p v-if="provider.last_error.message" class="muted">
+          <p v-if="provider.last_error.message">
             {{ provider.last_error.error_class }}: {{ provider.last_error.message }}
           </p>
         </div>
@@ -225,7 +261,7 @@ function saveConfiguration(id: string): Promise<void> {
 
         <section
           v-if="Object.keys(provider.current_settings ?? {}).length"
-          class="current-settings"
+          class="subsection"
           :aria-label="`${provider.name} current settings`"
         >
           <h3>Current settings</h3>
@@ -275,7 +311,7 @@ function saveConfiguration(id: string): Promise<void> {
           </button>
         </p>
 
-        <section v-if="configSchemas[provider.id]" class="configuration" :aria-label="`${provider.name} configuration`">
+        <section v-if="configSchemas[provider.id]" class="subsection" :aria-label="`${provider.name} configuration`">
           <h3>Configuration fields</h3>
           <SchemaForm
             v-model="configValues[provider.id]"
@@ -298,7 +334,7 @@ function saveConfiguration(id: string): Promise<void> {
           :problem="configSchemaFailure.problem"
         />
 
-        <div v-if="provider.capabilities.includes('file_import') && !readonlyAccess" class="import-export">
+        <div v-if="provider.capabilities.includes('file_import') && !readonlyAccess" class="import-export subsection">
           <label :for="`import-${provider.id}`">Import personal export</label>
           <input
             :id="`import-${provider.id}`"
@@ -331,86 +367,32 @@ function saveConfiguration(id: string): Promise<void> {
 </template>
 
 <style scoped>
-.cards {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-4);
-}
-
-.action-required {
-  border-left: 4px solid var(--danger);
-  background: var(--surface);
-  padding: var(--space-3);
-  margin: var(--space-3) 0;
-}
-
-.action-required__title {
-  margin: 0 0 var(--space-1);
-  font-weight: 700;
-  color: var(--danger);
-}
-
-.action-required p {
-  margin: 0;
-}
-
+/* Layout only: surfaces, tints, and radii all come from the shared card and note styles, so a
+   provider tile looks like every other Bento tile. */
 .pairs {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--space-1) var(--space-4);
-  margin: var(--space-3) 0;
-}
-
-.pairs dt {
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.pairs dd {
-  margin: 0;
+  grid-template-columns: max-content minmax(0, 1fr);
 }
 
 .pinned {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-3);
+  margin: 0;
 }
 
 .pinned p {
   margin: 0 0 var(--space-2);
-  max-width: var(--measure);
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
 .notice {
-  margin: 0;
-  color: var(--text-muted);
   min-height: 1.5em;
+  color: var(--text-muted);
 }
 
 .import-export {
   display: grid;
   gap: var(--space-2);
-  margin-top: var(--space-3);
 }
 
-.import-export p {
-  margin: 0;
+.subsection {
+  display: grid;
+  gap: var(--space-2);
 }
-
-.provider-warning, .configuration {
-  border-left: 4px solid var(--warn);
-  background: var(--surface);
-  padding: var(--space-3);
-  margin: var(--space-3) 0;
-}
-
-.configuration h3 { margin-bottom: var(--space-2); }
 </style>

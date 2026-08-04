@@ -24,50 +24,109 @@ const RECENT_LIMIT = 10
 const recent = usePaged(() => entries({ limit: RECENT_LIMIT }))
 const status = useRequest(health)
 
+const allProviders = computed(() => status.data.value?.providers ?? [])
+
 const unhealthy = computed(() =>
-  (status.data.value?.providers ?? []).filter(
+  allProviders.value.filter(
     (provider) => provider.status === 'degraded' || provider.status === 'misconfigured',
   ),
 )
 </script>
 
 <template>
-  <section>
-    <h1>Aggregato</h1>
+  <h1 class="visually-hidden">Aggregato dashboard</h1>
 
-    <h2>Provider health</h2>
-    <LoadingState v-if="status.loading.value" label="Loading health…" />
-    <ErrorState
-      v-else-if="status.error.value"
-      :problem="status.error.value"
-      retryable
-      @retry="status.reload()"
-    />
-    <template v-else-if="status.data.value">
-      <div v-if="unhealthy.length" class="degraded-banner" role="alert">
-        Sync needs attention for {{ unhealthy.map((provider) => provider.id ?? 'an unknown provider').join(', ') }}.
-        <RouterLink :to="{ name: 'providers' }">Review providers</RouterLink>
+  <div class="bento">
+    <!-- Featured tile: what this screen is, and the one link off it that most visits want. -->
+    <section class="card card--accent span-2">
+      <div class="card__head">
+        <span class="card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M4 19V5m0 14h16M8 15V9m4 6V6m4 9v-4" />
+          </svg>
+        </span>
+        <h2>Aggregato</h2>
       </div>
-      <p :class="['summary', status.data.value.status === 'ok' ? 'summary--ok' : 'summary--warn']">
-        <template v-if="unhealthy.length === 0">Every provider is healthy.</template>
-        <template v-else>
-          Needs attention:
-          <strong>{{ unhealthy.map((provider) => provider.id ?? 'unknown provider').join(', ') }}</strong>
-        </template>
+      <p>Your logged activity from every platform, in one archive you own.</p>
+      <p class="actions">
+        <RouterLink :to="{ name: 'log' }">Browse the full log</RouterLink>
       </p>
+    </section>
 
-      <table v-if="status.data.value.providers.length > 0">
+    <!-- Health in a sentence. The per-provider table below carries the detail. -->
+    <section class="card card--feature span-2" aria-labelledby="health-heading">
+      <div class="card__head">
+        <span class="card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M3 12h4l2-5 3 10 2-5h7" />
+          </svg>
+        </span>
+        <h2 id="health-heading">Sync health</h2>
+      </div>
+      <LoadingState v-if="status.loading.value" label="Loading health…" />
+      <ErrorState
+        v-else-if="status.error.value"
+        :problem="status.error.value"
+        retryable
+        @retry="status.reload()"
+      />
+      <template v-else-if="status.data.value">
+        <!-- A degraded provider is named by id: "degraded" with no subject tells the operator
+             nothing they can act on. -->
+        <div v-if="unhealthy.length" class="note note--danger" role="alert">
+          <p class="note__title">Needs attention</p>
+          <p>{{ unhealthy.map((provider) => provider.id ?? 'an unknown provider').join(', ') }}</p>
+          <p><RouterLink :to="{ name: 'providers' }">Review providers</RouterLink></p>
+        </div>
+        <p v-else class="note note--ok">Every provider is healthy.</p>
+        <!-- The two counts live here rather than in tiles of their own: they only mean anything
+             next to the sentence that interprets them. -->
+        <dl class="pairs">
+          <dt>Providers</dt>
+          <dd>{{ allProviders.length }}</dd>
+          <dt>Need attention</dt>
+          <dd :class="{ 'count--warn': unhealthy.length > 0 }">{{ unhealthy.length }}</dd>
+        </dl>
+      </template>
+    </section>
+
+    <!-- Primary content, and the widest tile on the screen: the whole row, so a run of entries is
+         readable without scrolling a narrow column. -->
+    <section class="card card--scroll span-4" aria-labelledby="recent-heading">
+      <div class="card__head">
+        <span class="card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M12 7v5l3 2" />
+            <circle cx="12" cy="12" r="9" />
+          </svg>
+        </span>
+        <h2 id="recent-heading">Recent entries</h2>
+      </div>
+      <ErrorState
+        v-if="recent.error.value"
+        :problem="recent.error.value"
+        retryable
+        @retry="recent.restart()"
+      />
+      <LoadingState v-else-if="recent.loading.value" label="Loading recent entries…" />
+      <EntryList v-else-if="recent.items.value.length > 0" :entries="recent.items.value" />
+      <EmptyState v-else title="Nothing logged yet" detail="Entries appear here after the first sync." />
+    </section>
+
+    <section class="card span-4" aria-labelledby="per-provider-heading">
+      <h2 id="per-provider-heading">Per provider</h2>
+      <table v-if="allProviders.length > 0">
         <caption class="visually-hidden">Per-provider health</caption>
         <thead>
           <tr>
             <th scope="col">Provider</th>
             <th scope="col">Status</th>
             <th scope="col">Last success</th>
-            <th scope="col">Consecutive failures</th>
+            <th scope="col">Failures</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="provider in status.data.value.providers" :key="provider.id ?? ''">
+          <tr v-for="provider in allProviders" :key="provider.id ?? ''">
             <th scope="row">
               <RouterLink :to="{ name: 'providers' }">{{ provider.id ?? 'unknown' }}</RouterLink>
             </th>
@@ -85,38 +144,30 @@ const unhealthy = computed(() =>
         </tbody>
       </table>
       <EmptyState
-        v-else
+        v-else-if="!status.loading.value"
         title="No providers configured"
         detail="Enable one on the Providers screen to start building the archive."
       />
-    </template>
-
-    <h2>Recent entries</h2>
-    <ErrorState
-      v-if="recent.error.value"
-      :problem="recent.error.value"
-      retryable
-      @retry="recent.restart()"
-    />
-    <LoadingState v-else-if="recent.loading.value" label="Loading recent entries…" />
-    <EntryList v-else-if="recent.items.value.length > 0" :entries="recent.items.value" />
-    <EmptyState v-else title="Nothing logged yet" detail="Entries appear here after the first sync." />
-
-    <p>
-      <RouterLink :to="{ name: 'log' }">Browse the full log</RouterLink>
-    </p>
-  </section>
+    </section>
+  </div>
 </template>
 
 <style scoped>
-.summary {
-  border-left: 4px solid var(--ok);
-  padding-left: var(--space-3);
+.pairs {
+  font-size: 1.05rem;
 }
 
-.summary--warn {
-  border-left-color: var(--warn);
+.pairs dd {
+  font-weight: 700;
 }
 
-.degraded-banner { border: 1px solid var(--danger); color: var(--danger); padding: var(--space-3); margin-bottom: var(--space-3); }
+.count--warn {
+  color: var(--warn);
+}
+
+/* Capped so the per-provider tile below stays on screen: the feed scrolls inside its own tile
+   rather than pushing the rest of the dashboard past the fold. */
+.card--scroll {
+  max-height: 24rem;
+}
 </style>
