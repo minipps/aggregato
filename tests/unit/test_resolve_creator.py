@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import (
     creator_aliases,
@@ -25,7 +27,10 @@ from aggregato.domain.models import (
     NormalizedWork,
 )
 from aggregato.ingest.resolve_creator import CreatorResolutionMemo, resolve_creators
-from aggregato.ingest.resolve_queue import queue_cross_family_creator_suggestions
+from aggregato.ingest.resolve_queue import (
+    queue_cross_family_creator_suggestions,
+    supersede_stale_open_items,
+)
 from aggregato.ingest.titles import normalize_title
 from tests.unit._sync_connection import SyncConnectionAdapter
 
@@ -168,3 +173,52 @@ async def test_resolution_memo_reuses_a_repeated_credit_set(conn: SyncConnection
 
     assert second == first
     assert len(memo) == 1
+
+
+async def test_full_refresh_supersedes_only_older_open_items(
+    conn: SyncConnectionAdapter,
+) -> None:
+    """A current full refresh replaces stale suggestions without erasing audit history."""
+    refreshed_at = NOW + timedelta(days=1)
+    await conn.execute(
+        resolution_queue.insert(),
+        [
+            {
+                "id": 1,
+                "subject": "creator",
+                "provider_id": "fixture",
+                "candidates": [],
+                "proposed": {},
+                "created_at": NOW,
+            },
+            {
+                "id": 2,
+                "subject": "creator",
+                "provider_id": "fixture",
+                "candidates": [],
+                "proposed": {},
+                "created_at": refreshed_at,
+            },
+            {
+                "id": 3,
+                "subject": "creator",
+                "provider_id": "other",
+                "candidates": [],
+                "proposed": {},
+                "created_at": NOW,
+            },
+        ],
+    )
+
+    await supersede_stale_open_items(
+        cast(AsyncConnection, conn),
+        provider_id="fixture",
+        refreshed_at=refreshed_at,
+        now=refreshed_at,
+    )
+
+    rows = {row.id: row for row in await conn.execute(resolution_queue.select())}
+    assert rows[1].decision == "ignored"
+    assert rows[1].decided_at == refreshed_at.replace(tzinfo=None)
+    assert rows[2].decided_at is None
+    assert rows[3].decided_at is None

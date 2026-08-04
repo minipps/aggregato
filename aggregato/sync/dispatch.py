@@ -47,6 +47,7 @@ from aggregato.domain.enums import (
 from aggregato.domain.models import Cursor
 from aggregato.ingest.failures import capture_failure
 from aggregato.ingest.normalize_replay import records_needing_replay, tombstone_replay_derivatives
+from aggregato.ingest.resolve_queue import supersede_stale_open_items
 from aggregato.ingest.writer import WriteContext, ensure_rating_scales, infer_deletes, write_batches
 from aggregato.providers.registry import load_provider
 from aggregato.sync.errors import action_required, schedules_retry
@@ -523,6 +524,15 @@ async def _apply_full_run_guards(
                 f"of {result.minimum_count} from the prior window"
             )
             return False
+        # A full fetch regenerated every ambiguity this provider still emits. Preserve old queue
+        # rows for audit, but close them so historical imports cannot keep presenting stale
+        # candidates or duplicate decisions to the operator.
+        await supersede_stale_open_items(
+            conn,
+            provider_id=provider_id,
+            refreshed_at=run_started_at,
+            now=run_started_at,
+        )
         capabilities = set(getattr(provider, "capabilities", set()))
         if (
             bool(config.get("infer_deletes", False))
