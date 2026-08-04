@@ -6,14 +6,16 @@ than creating a replacement provider or duplicating an archive.
 
 ## Goodreads
 
-Today Goodreads uses the operator's Library Export CSV. It preserves Goodreads `Book Id`, ISBN,
-ISBN13, ratings, reviews, shelves, and the distinction between `Date Read` and `Date Added`.
+Goodreads has no supported personal-library API. The provider uses the public
+`/review/list_rss/<user id>` feed as its automatic surface. The feed is a rolling 100-item snapshot,
+not a full-history backfill, so a Library Export CSV remains the preferred complete archive and
+preserves Goodreads `Book Id`, ISBN, ISBN13, ratings, reviews, shelves, and the distinction between
+`Date Read` and `Date Added`.
 
-`automatic_feed_url` is intentionally present in `GoodreadsConfig` but does not fetch yet. When
-Goodreads provides a supported personal-library feed or export endpoint, the provider will:
+When Goodreads provides a supported personal-library feed or export endpoint, the provider will:
 
 1. Implement a reader for that documented payload and map it into the existing raw-book shape.
-2. Enable `poll` only with recorded fixtures and an offline conformance case.
+2. Keep `poll` only with recorded fixtures and an offline conformance case.
 3. Keep `id="goodreads"`, `goodreads` Book Ids, ISBN identifiers, and the rating scale unchanged.
 4. Bump `schema_version` and require a full resync only if the new endpoint exposes different
    native book identifiers.

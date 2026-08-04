@@ -31,7 +31,7 @@ platform yourself.
 | **ListenBrainz** | listens (tracks) | username + user token | its API, every 15 minutes. Also works against a compatible server such as Maloja via `base_url` |
 | **AniList** | anime + manga, with ratings | username, plus an OAuth token for private lists | its API, hourly |
 | **Letterboxd** | films + series, with ratings and reviews | your username (public RSS), or an exported `.rss`/`.xml` | public feed, every 6 hours |
-| **Goodreads** | books, with ratings and reviews | your Library Export CSV | manual file import — Goodreads has no supported read API |
+| **Goodreads** | books, with ratings and reviews | public profile/RSS URL; CSV export for a complete archive | [public RSS feed](docs/goodreads.md), daily; CSV import remains available |
 
 Anything else is a plugin away: see [docs/writing-a-provider.md](docs/writing-a-provider.md).
 
@@ -52,11 +52,9 @@ treatment — a file the operator downloads, imported by hand.
 | **Hardcover** | books, with ratings and reviews | `api` — public GraphQL, token |
 | **The StoryGraph** | books, with ratings and reviews | **no API** — `export`, the same shape Goodreads already uses |
 
-RateYourMusic and The StoryGraph have no API to read, so they would arrive as Goodreads did: an
-operator-supplied export, with the automatic-sync config present but inert until the platform
-publishes something documented, rather than polling an endpoint nobody supports. See
-[docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md) for how a provider keeps
-one id while its surface improves.
+RateYourMusic and The StoryGraph have no API to read, so they would need either an operator-supplied
+export or a carefully fenced scraper. See [docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md)
+for how a provider keeps one id while its surface improves.
 
 What a platform offers changes. Re-check the surface before starting work rather than trusting this
 table — it records what was true when it was written, not what is true today.
@@ -88,9 +86,9 @@ Then, on the **Providers** screen:
 3. Press **Enable**, then **Sync now** for the first pass. After that the scheduler polls on its own
    at the platform's own interval, and you can leave it alone.
 
-For a file-based platform — Goodreads, or Letterboxd history older than its feed — enable it first,
+For a local archive — a Goodreads CSV, or Letterboxd history older than its feed — enable it first,
 then use **Import personal export** on the same card to upload the CSV or `.rss`. The file stays
-local and is processed by the sync worker.
+local and is processed by the sync worker. Goodreads can also sync a configured bookshelf URL.
 
 Your log fills in as syncs land. **Log** is the timeline, **Stats** the summaries, **Sync history**
 what ran and when, and **Settings** holds retention, storage usage, and the archive download.
@@ -110,6 +108,8 @@ providers:
     token: ${LISTENBRAINZ_TOKEN}
   letterboxd:
     username: your-name
+  goodreads:
+    profile_url: https://www.goodreads.com/user/show/155188990-mini
 ```
 
 A `${VAR}` reference is resolved when it is read and never written back to disk; the API never
