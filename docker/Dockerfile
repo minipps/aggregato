@@ -4,7 +4,7 @@
 # --- Stage 1: build the SPA -------------------------------------------------------------------
 FROM node:22.23.2-slim AS frontend
 WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
 COPY frontend/ ./
 RUN npm --loglevel=error run build
