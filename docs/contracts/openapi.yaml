@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: |
     Single-user, self-hosted media log aggregator. Every endpoint requires authentication
-    (FR-032): either `Authorization: Bearer <api.token>` or the session cookie issued by
+    : either `Authorization: Bearer <api.token>` or the session cookie issued by
     `POST /auth/session`. There is no unauthenticated mode.
 
     An optional second credential, `api.readonly_token`, authenticates reads only: any
@@ -12,7 +12,7 @@ info:
     itself for — is refused with 403 `readonly-token`. `GET /auth/session` reports which
     credential the caller holds.
 
-    Conventions (FR-003, FR-004, FR-030, spec §9.3):
+    Conventions (, , , spec §9.3):
       * Timestamps are ISO 8601 with offset. `logged_at` is always accompanied by
         `logged_precision`; clients must not render a fabricated time as exact.
       * Ratings return raw value, scale, and normalized value. Normalized values are
@@ -244,7 +244,7 @@ paths:
     get:
       tags: [providers]
       summary: JSON Schema of the provider's configuration model
-      description: Drives the generated settings form (FR-039). Secret fields are marked
+      description: Drives the generated settings form . Secret fields are marked
         `writeOnly` and never returned with values.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       responses:
@@ -353,7 +353,7 @@ paths:
         "415":
           $ref: "#/components/responses/Problem"
         "422":
-          description: File rejected; the archive is unchanged (US5 scenario 3)
+          description: File rejected; the archive is unchanged ( scenario 3)
           $ref: "#/components/responses/Problem"
 
   /resolution-queue:
@@ -440,7 +440,7 @@ paths:
   /creators/{id}/split:
     post:
       tags: [identity]
-      summary: Move selected credits to a new creator (credit-granular, FR-013)
+      summary: Move selected credits to a new creator (credit-granular, )
       parameters: [{ $ref: "#/components/parameters/id" }]
       requestBody:
         required: true
@@ -467,7 +467,7 @@ paths:
   /merge-log/{id}/undo:
     post:
       tags: [identity]
-      summary: Reverse a merge, split, or resolution decision (FR-017)
+      summary: Reverse a merge, split, or resolution decision 
       parameters: [{ $ref: "#/components/parameters/id" }]
       responses:
         "200": { description: Operation reversed }
@@ -543,7 +543,7 @@ paths:
       summary: Cached platform-supplied image
       security: []
       description: Fetched lazily on first request, never during a sync. With caching disabled a
-        placeholder is returned; the API never redirects to the third-party host (FR-033).
+        placeholder is returned; the API never redirects to the third-party host .
         Unauthenticated, so a page can embed the URL in an img tag — the hash is a sha256 of the
         source URL and cannot be enumerated.
       parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
@@ -623,7 +623,7 @@ components:
       name: cursor
       in: query
       schema: { type: string }
-      description: Opaque keyset cursor from the previous page. There is no offset parameter (FR-030).
+      description: Opaque keyset cursor from the previous page. There is no offset parameter .
     provider:
       name: provider
       in: query
@@ -637,7 +637,7 @@ components:
     mediaFamily:
       name: media_family
       in: query
-      description: Convenience over media_type; individual types stay separately addressable (FR-029).
+      description: Convenience over media_type; individual types stay separately addressable .
       schema: { type: array, items: { $ref: "#/components/schemas/MediaFamily" } }
       explode: true
 
@@ -727,7 +727,7 @@ components:
     Rating:
       type: object
       description: Raw and normalized are both returned; normalized is not a cross-platform
-        equivalence claim (FR-003).
+        equivalence claim .
       properties:
         raw: { type: number, nullable: true }
         scale_id: { type: string, nullable: true }
@@ -866,7 +866,7 @@ components:
           $ref: "#/components/schemas/Acquisition"
         reviewed:
           type: boolean
-          description: False for drop-in development providers, which the UI labels `unreviewed` (FR-041)
+          description: False for drop-in development providers, which the UI labels `unreviewed` 
         capabilities:
           type: array
           items:
@@ -884,11 +884,11 @@ components:
           properties:
             error_class: { $ref: "#/components/schemas/ErrorClass" }
             message: { type: string }
-            action_required: { type: string, description: What the operator must do (FR-021, SC-005) }
+            action_required: { type: string, description: What the operator must do  }
         file_pinned_settings:
           type: array
           items: { type: string }
-          description: Settings fixed by the config file, which the UI must show as uneditable (R15)
+          description: Settings fixed by the config file, which the UI must show as uneditable 
         current_settings:
           type: object
           additionalProperties: true
@@ -924,7 +924,7 @@ components:
         suggestion_kind:
           type: string
           nullable: true
-          description: Distinguishes a genuine ambiguity from a proactive cross-family suggestion (FR-015)
+          description: Distinguishes a genuine ambiguity from a proactive cross-family suggestion 
         candidates:
           type: array
           items:
@@ -933,7 +933,7 @@ components:
               id: { type: string }
               label: { type: string }
               score: { type: number }
-              reason: { type: string, description: Why this candidate was proposed (US4 scenario 1) }
+              reason: { type: string, description: Why this candidate was proposed ( scenario 1) }
         proposed: { type: object, description: What is created if every candidate is rejected }
         created_at: { type: string, format: date-time }
 
@@ -958,4 +958,4 @@ components:
         winner_id: { type: string }
         loser_ids: { type: array, items: { type: string } }
         performed_at: { type: string, format: date-time }
-        undo_url: { type: string, description: FR-017 — every such operation is reversible }
+        undo_url: { type: string, description:  — every such operation is reversible }

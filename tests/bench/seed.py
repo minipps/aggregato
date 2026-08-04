@@ -1,4 +1,4 @@
-"""Build a deterministic SQLite archive for the Phase 4 performance measurements (T064)."""
+"""Build a deterministic SQLite archive for the Phase 4 performance measurements ."""
 
 from __future__ import annotations
 

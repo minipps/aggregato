@@ -1,5 +1,5 @@
 /* Design tokens and a minimal reset. Typography-first: most logged items have no cover art, and a
-   layout that assumes one looks broken for books, podcasts, and tracks (T140 refines this). */
+   layout that assumes one looks broken for books, podcasts, and tracks ( refines this). */
 
 :root {
   color-scheme: light;
@@ -107,7 +107,7 @@ a {
   color: var(--accent);
 }
 
-/* Keyboard reachability is a requirement, not polish (Constitution III), so the focus ring is
+/* Keyboard reachability is a requirement, not polish (UI consistency guidance), so the focus ring is
    never removed — only made consistent. */
 :focus-visible {
   outline: 3px solid var(--focus);

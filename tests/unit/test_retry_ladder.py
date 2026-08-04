@@ -1,4 +1,6 @@
-"""The ladder is arithmetic over an injected clock, so these tests are arithmetic (Constitution II).
+"""The ladder is arithmetic over an injected clock, so these tests are arithmetic.
+
+That is required by the testing guidance.
 
 Nothing here sleeps. Every "later" is ``clock.advance(...)``.
 """
@@ -95,7 +97,7 @@ def test_retries_of_one_logical_run_share_a_lineage(clock: FrozenClock) -> None:
             lineage_id=lineage,
         )
         assert decision.lineage_id is not None
-        # FR-019: four attempts must read as one failing sync, not four unrelated failures.
+        # : four attempts must read as one failing sync, not four unrelated failures.
         seen.add(lineage_id_for(decision.lineage_id))
         step = decision.retry_step
         clock.advance(timedelta(minutes=1))
@@ -127,7 +129,7 @@ def test_degraded_threshold_holds_at_the_normal_interval_and_never_faster(
     )
     assert decision.consecutive_failures == DEGRADED_AFTER_FAILURES
     assert decision.status is ProviderStatus.DEGRADED
-    # FR-021: the ladder stops accelerating once degraded.
+    # : the ladder stops accelerating once degraded.
     assert decision.next_run_at == clock.now() + NORMAL
 
 
@@ -155,7 +157,7 @@ def test_explicit_retry_after_is_honoured_over_the_ladder_step(clock: FrozenCloc
         lineage_id=uuid4(),
         retry_after=timedelta(seconds=90),
     )
-    # FR-022: the platform's number wins over our 1m first rung, longer or shorter.
+    # : the platform's number wins over our 1m first rung, longer or shorter.
     assert decision.next_run_at == clock.now() + timedelta(seconds=90)
     assert decision.status is ProviderStatus.IDLE
 
@@ -199,6 +201,6 @@ def test_a_never_retry_decision_with_a_retry_time_cannot_be_constructed(
 
 
 def test_the_ladder_never_reads_a_wall_clock() -> None:
-    # Constitution II: time is injected. Every "later" in this file is clock.advance(), which is
+    # testing guidance: time is injected. Every "later" in this file is clock.advance(), which is
     # only possible while the ladder takes its now() from the Clock it is handed.
     assert "datetime.now" not in Path(retry.__file__).read_text(encoding="utf-8")

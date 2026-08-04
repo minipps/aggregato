@@ -1,4 +1,4 @@
-"""Rating normalization, both kinds, boundaries, and the missing-mapping case (T014)."""
+"""Rating normalization, both kinds, boundaries, and the missing-mapping case ."""
 
 from __future__ import annotations
 

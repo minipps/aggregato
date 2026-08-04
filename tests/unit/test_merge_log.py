@@ -1,4 +1,4 @@
-"""US4 snapshots preserve all rows touched by a merge or split (T099)."""
+"""snapshots preserve all rows touched by a merge or split ."""
 
 from __future__ import annotations
 

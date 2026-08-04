@@ -4,15 +4,15 @@ Aggregato aggregates one person's own media logs from platforms they hold accoun
 framing is what makes the project defensible, and the two policies below are what keep it true.
 Read them before writing a provider.
 
-The normative documents are [the constitution](.specify/memory/constitution.md) and
-[the provider contract](specs/001-media-log-aggregator/contracts/provider-plugin.md). This file is
+The normative documents are [the engineering guidance](AGENTS.md) and
+[the provider contract](docs/contracts/provider-plugin.md). This file is
 the review checklist derived from them.
 
 ---
 
 ## The acquisition hierarchy
 
-A provider MUST use the highest surface available to it (FR-042):
+A provider MUST use the highest surface available to it :
 
 1. **Official API** with documented terms
 2. **Authenticated feed or export endpoint** the platform provides
@@ -45,7 +45,7 @@ It MUST NOT:
 - read any user's data other than the operator's own;
 - circumvent a paywall or any access control;
 - **defeat, solve, or work around a CAPTCHA or anti-bot measure, in any form.** This is a hard
-  line, not a default (FR-044). Encountering one means raising `BlockedError`; the run stops and
+  line, not a default . Encountering one means raising `BlockedError`; the run stops and
   the provider goes `degraded` immediately. A dependency whose purpose is solving challenges must
   not appear anywhere in the import graph — the conformance suite checks for this.
 - retrieve anything the authenticated operator could not see in their own browser.
@@ -58,7 +58,7 @@ import-linter contract fails the build if `aggregato/providers/*` imports `httpx
 
 A scraping provider must ship recorded HTML fixtures, including one with a changed structure that
 raises `StructureChangedError`. Returning empty on a structural failure is forbidden: silence plus
-delete inference is how an archive gets erased (FR-024, FR-026).
+delete inference is how an archive gets erased .
 
 ---
 
@@ -66,13 +66,13 @@ delete inference is how an archive gets erased (FR-024, FR-026).
 
 | Rule | Why |
 |---|---|
-| `normalize` is pure — no network, no clock, no randomness, no storage | Makes replay (FR-002) and offline credential-free tests (FR-036) possible. Enforced: called twice on one fixture must produce identical output |
-| A provider never receives a database handle or another provider's secrets | FR-037. Enforced physically: provider code runs in a child process with no engine and no other provider imported |
-| A provider never constructs its own HTTP client | FR-043 politeness floors must be un-overridable |
-| A provider may not invent a `media_type`, `role`, or `subject_ref` key | FR-008. Violations become `ingest_failures`, not writes |
-| Every identifier in a payload is extracted, including ones Aggregato has no use for | FR-009 — the single largest lever on match quality, because Aggregato never enriches from third-party metadata sources |
-| `logged_precision` is required on every entry, with no default | A default would silently fabricate exactness (FR-004) |
-| `role_raw` carries the platform's own word verbatim, always | FR-016 — the vocabulary widens later and the raw term is what replay re-derives from |
+| `normalize` is pure — no network, no clock, no randomness, no storage | Makes replay  and offline credential-free tests  possible. Enforced: called twice on one fixture must produce identical output |
+| A provider never receives a database handle or another provider's secrets | . Enforced physically: provider code runs in a child process with no engine and no other provider imported |
+| A provider never constructs its own HTTP client |  politeness floors must be un-overridable |
+| A provider may not invent a `media_type`, `role`, or `subject_ref` key | . Violations become `ingest_failures`, not writes |
+| Every identifier in a payload is extracted, including ones Aggregato has no use for |  — the single largest lever on match quality, because Aggregato never enriches from third-party metadata sources |
+| `logged_precision` is required on every entry, with no default | A default would silently fabricate exactness  |
+| `role_raw` carries the platform's own word verbatim, always |  — the vocabulary widens later and the raw term is what replay re-derives from |
 
 ---
 
@@ -83,8 +83,8 @@ delete inference is how an archive gets erased (FR-024, FR-026).
 - [ ] `uv run pytest` — including `tests/conformance/` with your provider registered
 - [ ] Fixtures recorded per [tests/fixtures/README.md](tests/fixtures/README.md), redacted, no credentials
 - [ ] `config_model` fields documented; secrets marked so the settings form renders them write-only
-- [ ] New behaviour has a test that failed before the change (Constitution II)
-- [ ] Any migration follows [data-model.md §6](specs/001-media-log-aggregator/data-model.md#migrations):
+- [ ] New behaviour has a test that failed before the change (testing guidance)
+- [ ] Any migration follows [data-model.md §6](docs/data-model.md#migrations):
       foreign keys off around a SQLite table rebuild, a test that seeds rows at the previous revision
       and asserts they survive, and no edits to a revision that has already been applied
 - [ ] Any new dependency justified against stdlib, native platform features, and what is already installed

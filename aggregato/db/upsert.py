@@ -1,8 +1,8 @@
-"""The one place idempotency is implemented (FR-005).
+"""The one place idempotency is implemented .
 
 A resync must write nothing new, and it is a unique constraint plus ``ON CONFLICT`` that guarantees
 that — not a pre-``SELECT``, which races. Both supported dialects speak ``on_conflict_do_update``
-(research.md R4), so every writer in the codebase goes through :func:`upsert_stmt` and no writer
+(research.md ), so every writer in the codebase goes through :func:`upsert_stmt` and no writer
 ever hand-rolls a check-then-insert.
 """
 
@@ -32,7 +32,7 @@ def upsert_stmt(
 
     Inputs:
       ``bind`` — the engine or connection the statement will run on. The dialect is read from it
-      rather than from a global flag, so the same call site works on either backend (FR-048).
+      rather than from a global flag, so the same call site works on either backend .
       ``table`` — the target table.
       ``rows`` — one or more mappings of column name to value; a batch is a single statement.
       ``index_elements`` / ``constraint`` — the conflict target: column names, or the name of a
@@ -76,7 +76,7 @@ def upsert_stmt(
         )
     if dialect == "sqlite":
         # SQLite has no ``ON CONFLICT ON CONSTRAINT``, so a named target is resolved to its column
-        # list here. Callers therefore name the constraint once and both dialects work (FR-048).
+        # list here. Callers therefore name the constraint once and both dialects work .
         target = index_elements if constraint is None else _columns_of(table, constraint)
         lite = sqlite.insert(table).values(list(rows))
         if not update_columns:

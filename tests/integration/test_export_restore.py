@@ -1,4 +1,4 @@
-"""US7: a secret-free archive restores into a fresh browsable instance without a sync."""
+""": a secret-free archive restores into a fresh browsable instance without a sync."""
 
 from __future__ import annotations
 

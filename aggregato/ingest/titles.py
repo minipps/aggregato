@@ -1,4 +1,4 @@
-"""Conservative title keys for work resolution (T070).
+"""Conservative title keys for work resolution .
 
 This is an aid to proposing exact candidates, never proof of identity: the resolver additionally
 requires a matching media type and year, and refuses to auto-link an ambiguous key.

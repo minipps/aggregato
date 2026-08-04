@@ -1,6 +1,6 @@
 #!/bin/sh
 # Two processes from one image (plan.md Complexity Tracking): the API serves regardless of what the
-# scheduler is doing, which is what FR-025's containment requires. The scheduler is restarted on its
+# scheduler is doing, which is what 's containment requires. The scheduler is restarted on its
 # own if it dies; a dead scheduler must never take browsing down with it.
 set -eu
 

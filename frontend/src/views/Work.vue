@@ -3,7 +3,7 @@
  * Work detail: identifiers, credits, entries, opinions, parent and sibling seasons.
  *
  * Ratings show raw value, scale, and normalized side by side, and each normalized value carries the
- * caveat in the reader's line of sight (FR-003): normalization makes values comparable *within* a
+ * caveat in the reader's line of sight : normalization makes values comparable *within* a
  * scale, and states nothing about how one platform's 4/5 relates to another's 80/100. Documenting
  * that in the contract is not enough — the person reading the number is who needs to know.
  */
@@ -60,7 +60,7 @@ function ratingText(rating: Rating | null | undefined): string {
 
     <template v-else-if="detail.data.value">
       <!--
-        Local cache path only (FR-033) — the API never hands the browser a platform URL. alt is
+        Local cache path only  — the API never hands the browser a platform URL. alt is
         empty because the h1 beside it already names the work; a poster carries nothing a reader
         needs that the title does not already say.
       -->
@@ -93,7 +93,7 @@ function ratingText(rating: Rating | null | undefined): string {
       </p>
 
       <h2>Opinions</h2>
-      <!-- Stated once, next to the numbers it qualifies (FR-003). -->
+      <!-- Stated once, next to the numbers it qualifies . -->
       <p class="caveat">
         Normalized scores are comparable <strong>within one platform's scale</strong>. They are not
         equivalent across platforms: two providers' normalized 80s do not mean the same thing.

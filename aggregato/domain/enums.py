@@ -1,9 +1,9 @@
 """The closed vocabularies.
 
-A provider cannot extend any of these (FR-008); widening one is a core change with a migration.
+A provider cannot extend any of these ; widening one is a core change with a migration.
 Every one is a ``StrEnum`` stored as a text column with a ``CHECK`` constraint rather than a native
 database enum — adding a value then migrates identically on SQLite and Postgres, where a native
-enum would need an ``ALTER TYPE`` with no SQLite equivalent (research.md R4).
+enum would need an ``ALTER TYPE`` with no SQLite equivalent (research.md ).
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ grouping is a property of the kind, so storing it would mean two sources of trut
 
 
 class LoggedPrecision(StrEnum):
-    """How much of ``logged_at`` the platform actually knew (FR-004).
+    """How much of ``logged_at`` the platform actually knew .
 
     There is deliberately no default anywhere: a default would silently fabricate exactness.
     """
@@ -71,7 +71,7 @@ class LoggedPrecision(StrEnum):
 
 
 class Confidence(StrEnum):
-    """How an identity link was established. ``manual`` survives resync (FR-014)."""
+    """How an identity link was established. ``manual`` survives resync ."""
 
     ASSERTED = "asserted"
     MATCHED = "matched"
@@ -137,7 +137,7 @@ class Capability(StrEnum):
 
 
 class Acquisition(StrEnum):
-    """Which surface a provider takes its data from. Ordered best-to-worst (FR-042)."""
+    """Which surface a provider takes its data from. Ordered best-to-worst ."""
 
     API = "api"
     FEED = "feed"

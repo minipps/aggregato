@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Shared loading state. Constitution III: one look for this across every surface. */
+/** Shared loading state. UI consistency guidance: one look for this across every surface. */
 const props = withDefaults(defineProps<{ label?: string }>(), { label: 'Loading…' })
 </script>
 

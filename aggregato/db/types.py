@@ -1,6 +1,6 @@
-"""The portability rules, in one place (research.md R4).
+"""The portability rules, in one place (research.md ).
 
-Both dialects stay first-class (FR-048), so every type choice that differs between SQLite and
+Both dialects stay first-class , so every type choice that differs between SQLite and
 Postgres is made once here rather than per column. A schema that reaches for a Postgres-only type
 is a schema the default install cannot run.
 """
@@ -32,7 +32,7 @@ TIMESTAMP = DateTime(timezone=True)
 #: ``none_as_null=True`` is not a preference — it is load-bearing. By default SQLAlchemy's JSON type
 #: stores Python ``None`` as the JSON text ``'null'``, which is a *value*, so ``col IS NULL`` is
 #: false for it. Every aggregate in this system filters ``subject_ref IS NULL`` to exclude sub-unit
-#: records (FR-007, research.md R18), and the writer deduplicates unidentified entries on a
+#: records (, research.md ), and the writer deduplicates unidentified entries on a
 #: ``subject_ref`` comparison that includes the null case. With the default, both would silently
 #: stop working: statistics would count episodes as whole works, and a feed without event ids would
 #: duplicate its history on every resync. Neither failure announces itself.

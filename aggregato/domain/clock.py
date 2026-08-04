@@ -1,6 +1,6 @@
 """The injectable time source.
 
-Constitution II makes time injectable rather than ambient so the scheduler and the retry ladder
+testing guidance makes time injectable rather than ambient so the scheduler and the retry ladder
 can be tested without sleeping. Everything that needs "now" takes a ``Clock``; nothing calls
 ``datetime.now`` directly outside this module.
 """

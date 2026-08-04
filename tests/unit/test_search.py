@@ -1,9 +1,9 @@
-"""Search runs against both dialects (T022).
+"""Search runs against both dialects .
 
 The SQLite path is exercised for real, because FTS5's MATCH grammar is where the interesting
 failures live: a title containing ``AND`` or an apostrophe is a syntax error waiting to happen, and
 "operator gets a 500 for searching Alien vs. Predator" is exactly the class of bug this file exists
-to prevent. The Postgres path is compile-checked, since a server is not available here and FR-036
+to prevent. The Postgres path is compile-checked, since a server is not available here and
 forbids one.
 """
 

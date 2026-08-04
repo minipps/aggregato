@@ -1,11 +1,11 @@
 """The API process: app factory, static assets, and the startup migration hook.
 
 Serves the public HTTP contract under ``/api/v1`` and the built SPA at everything else. The SPA
-consumes only that contract (FR-031) — which an SPA makes structural rather than disciplinary, since
+consumes only that contract  — which an SPA makes structural rather than disciplinary, since
 it physically cannot read the database or reach a private endpoint.
 
 This process does **not** run syncs. The scheduler is a separate process (``python -m
-aggregato.worker``), so a provider that hangs or crashes cannot affect browsing (FR-025). The
+aggregato.worker``), so a provider that hangs or crashes cannot affect browsing . The
 import-linter contract ``aggregato.api -> aggregato.sync`` keeps this module out of the scheduler's
 business.
 """
@@ -56,7 +56,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
     Args:
         config: Loaded configuration, or ``None`` to load it from the environment. Injectable so a
             test builds an app without touching the real environment.
-        run_migrations: Whether to apply migrations on startup (FR-049). Tests that build their
+        run_migrations: Whether to apply migrations on startup . Tests that build their
             own schema pass ``False``.
 
     Returns:
@@ -64,7 +64,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
 
     Raises:
         aggregato.config.MissingTokenError: ``api.token`` is unset. Startup fails rather than
-            serving, because there is no unauthenticated mode (FR-032). This is the ONLY fatal
+            serving, because there is no unauthenticated mode . This is the ONLY fatal
             configuration error — a broken *provider* leaves the service running.
     """
     settings = config or load_config()
@@ -79,7 +79,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
             # started the real app. The thread has no loop of its own, so env.py works unchanged.
             #
             # Still before anything is served, which is what keeps the pre-migration backup honest:
-            # no writer is running yet (FR-049).
+            # no writer is running yet .
             await asyncio.to_thread(upgrade_to_head, settings.database_url)
         yield
         await engine.dispose()
@@ -89,7 +89,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
         version="1.0.0",
         lifespan=lifespan,
         # App-wide, not per route. No endpoint can become reachable by someone forgetting to
-        # declare a dependency (FR-032).
+        # declare a dependency .
         dependencies=[Depends(require_auth)],
         docs_url=f"{API_PREFIX}/docs",
         openapi_url=f"{API_PREFIX}/openapi.json",

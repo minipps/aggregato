@@ -8,7 +8,7 @@ identifies nothing.
 
 Shapes are otherwise verbatim: key names, nesting, the string-typed `tracknumber`, the integer
 `caa_id`, and the absence of `mbid_mapping` on an unmatched listen are all as the platform sends
-them, because identifier extraction (FR-009) and `StructureChangedError` detection both depend on
+them, because identifier extraction  and `StructureChangedError` detection both depend on
 the real shape.
 
 | File | Proves |

@@ -1,4 +1,4 @@
-"""Alembic's runtime environment (FR-049, data-model.md §6 "Migrations").
+"""Alembic's runtime environment (, data-model.md §6 "Migrations").
 
 Online mode only. ``--sql`` offline generation is not supported: migrations are applied
 automatically at startup against a live database, so a SQL script nobody runs is dead code.
@@ -38,7 +38,7 @@ def _run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         # SQLite cannot ALTER a column or drop a constraint, so any future revision that changes
         # a table has to copy-rename it. Batch mode is that dance, and it must be on before the
-        # first revision needs it — SQLite is a first-class dialect here (FR-048), not a fallback.
+        # first revision needs it — SQLite is a first-class dialect here , not a fallback.
         render_as_batch=True,
         compare_type=True,
     )

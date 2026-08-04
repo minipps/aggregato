@@ -1,4 +1,4 @@
-"""US4 archive journey: merge, split, and undo through the identity services (T098)."""
+"""archive journey: merge, split, and undo through the identity services ."""
 
 from __future__ import annotations
 

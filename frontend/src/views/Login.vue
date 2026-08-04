@@ -2,7 +2,7 @@
 /**
  * Sign in: the API token is exchanged for a session cookie, once, and then forgotten.
  *
- * FR-032 forbids the token from appearing in a URL or in page source. It therefore travels in an
+ *  forbids the token from appearing in a URL or in page source. It therefore travels in an
  * Authorization header (never a query string), is bound to a password field so it is not rendered,
  * and is cleared from memory as soon as the exchange succeeds. Nothing persists it client-side —
  * the HttpOnly cookie the server sets is the credential from then on.
@@ -69,7 +69,7 @@ async function submit(): Promise<void> {
     </form>
 
     <div id="login-error">
-      <!-- The problem's own message, not a status code: a wrong token says so in words (T058). -->
+      <!-- The problem's own message, not a status code: a wrong token says so in words . -->
       <ErrorState v-if="problem" :problem="problem" />
     </div>
   </section>

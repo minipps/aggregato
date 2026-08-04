@@ -2,10 +2,10 @@
 
 This is a function that lists what is on disk. It is not a plugin manager: it holds no registry
 state, fires no hooks, and never decides anything. Enablement, scheduling and credentials belong to
-the host, which reads this list and acts on it (FR-041).
+the host, which reads this list and acts on it .
 
 **Discovery is inert.** Listing a provider must not fetch, authenticate, open a socket, write a
-file, or schedule anything — a fresh install makes exactly zero outbound requests (SC-013), and
+file, or schedule anything — a fresh install makes exactly zero outbound requests , and
 discovery is where that is either true or false. It follows that importing a provider module must be
 side-effect free: module bodies define classes and construct the provider object, and that is all.
 Anything a provider needs to do to start working, it does in ``fetch`` or ``check``, when the host
@@ -24,8 +24,8 @@ The convention, which third parties will follow, so it is deliberately boring:
 4. Constructing the provider object is free of side effects: no I/O, no network, no clock.
 
 Bundled providers are ``reviewed=True`` because they ship with the core and went through review
-(FR-041). Drop-in providers, discovered from an operator directory, are ``reviewed=False`` and the
-UI labels them — that directory scan is a later task (T124) and deliberately absent here.
+. Drop-in providers, discovered from an operator directory, are ``reviewed=False`` and the
+UI labels them — that directory scan is a later task  and deliberately absent here.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class ProviderInfo:
     default_poll_interval: timedelta
     reviewed: bool
     """``True`` for bundled providers; ``False`` for drop-ins, which the UI labels as unreviewed
-    and warns about on the enable action (FR-041)."""
+    and warns about on the enable action ."""
 
 
 def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
@@ -78,7 +78,7 @@ def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
 
     Imports each provider package to read its declared metadata — which is safe precisely because
     convention 4 forbids import-time work. Nothing is fetched, nothing is enabled and no network
-    connection is opened (SC-013).
+    connection is opened .
 
     Returns:
         One ``ProviderInfo`` per bundled provider, sorted by ``id`` so the UI order is stable.

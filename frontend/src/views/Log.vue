@@ -3,7 +3,7 @@
  * The log feed: `GET /entries` with filters and cursor paging.
  *
  * Paging is "load more", not page numbers: the contract's cursor is opaque and there is no offset
- * parameter to number pages with (FR-030). A filter change starts a new walk, because a cursor from
+ * parameter to number pages with . A filter change starts a new walk, because a cursor from
  * the previous query means nothing under the new one.
  */
 

@@ -3,7 +3,7 @@
  * Shared error state: the only way a failure is shown to the operator.
  *
  * Takes an RFC 9457 problem detail and renders its title and detail — never a bare status code, and
- * never a blanked view (Constitution III). The status is shown as supporting context only.
+ * never a blanked view (UI consistency guidance). The status is shown as supporting context only.
  */
 import type { Problem } from '@/api/types'
 

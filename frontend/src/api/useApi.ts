@@ -1,7 +1,7 @@
 /**
  * Loading / error / data plumbing, shared by every view.
  *
- * Four views need the same three states, and Constitution III requires them to look the same in all
+ * Four views need the same three states, and UI consistency guidance requires them to look the same in all
  * four. That is the second occurrence rule met twice over — but nothing more general is here: no
  * store, no cache, no request deduplication.
  */

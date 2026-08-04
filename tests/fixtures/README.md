@@ -1,7 +1,7 @@
 # Recorded fixtures
 
 Every test in this repository reads its data from here. Nothing touches the network and nothing
-needs credentials (FR-036, SC-010) — `tests/conftest.py` blocks sockets outright, so a test that
+needs credentials  — `tests/conftest.py` blocks sockets outright, so a test that
 tries is a failure rather than a slow test.
 
 ## Conventions
@@ -20,7 +20,7 @@ tries is a failure rather than a slow test.
 - **No live capture in CI.** Fixtures are recorded once, by hand, by a contributor with an account,
   and committed. CI never records; there is no network in CI.
 - **Verbatim payloads.** Do not prettify, reorder, or trim a recorded payload beyond redaction —
-  identifier extraction (FR-009) and `StructureChangedError` detection both depend on the real
+  identifier extraction  and `StructureChangedError` detection both depend on the real
   shape.
 
 ## What each provider directory must contain

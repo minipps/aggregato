@@ -1,8 +1,8 @@
 /**
- * The one fetch wrapper, plus the typed calls US1 needs.
+ * The one fetch wrapper, plus the typed calls  needs.
  *
  * Every request in the UI goes through {@link request}, so authentication, CSRF, and error shape are
- * decided once. Constitution III requires uniform error presentation; that is only achievable if
+ * decided once. UI consistency guidance requires uniform error presentation; that is only achievable if
  * there is a single failure path, so `request` rejects with a {@link Problem} for *every* failure —
  * HTTP problem detail, unexpected non-JSON body, or a dead network alike.
  */
@@ -72,7 +72,7 @@ export class ProblemError extends Error {
  * The problem detail behind any thrown value, so a `catch` block has one shape to render.
  *
  * Inputs: whatever was caught. Never throws: an unrecognised value becomes a generic 0-status
- * problem rather than a blank view (Constitution III).
+ * problem rather than a blank view (UI consistency guidance).
  */
 export function toProblem(error: unknown): Problem {
   if (error instanceof ProblemError) return error.problem
@@ -135,7 +135,7 @@ async function problemFrom(response: Response): Promise<Problem> {
  *
  * Failure modes: always {@link ProblemError}. A 401 additionally routes to the login view — a
  * session expires by sitting still, and the alternative is a page of empty panels. The login call
- * itself is exempt, because a wrong token must show its own message (T058).
+ * itself is exempt, because a wrong token must show its own message .
  */
 export async function request<T>(
   method: string,
@@ -184,7 +184,7 @@ export async function request<T>(
  *
  * Call {@link Pager.next} repeatedly; each call feeds the previous page's `next_cursor` back to the
  * API. `done` is true once the API stops handing one out. There is no page number, because there is
- * no offset parameter to build one from (FR-030).
+ * no offset parameter to build one from .
  */
 export interface Pager<T> {
   next(): Promise<{ items: T[]; done: boolean }>
@@ -210,7 +210,7 @@ export function pager<T>(path: string, query: Record<string, QueryValue> = {}): 
  * Exchange the API token for a session cookie.
  *
  * Inputs: the raw token, sent once as a bearer header. It is never placed in a URL, in a query
- * string, or in rendered markup (FR-032) — the browser keeps only the HttpOnly cookie the server
+ * string, or in rendered markup  — the browser keeps only the HttpOnly cookie the server
  * sets in response.
  *
  * Failure modes: {@link ProblemError} 401 when the token does not match.
@@ -260,7 +260,7 @@ export function updateProviderConfig(
 /**
  * Enable or disable a provider.
  *
- * The contract names the capability (T056, `GET /providers` returns `enabled`) but does not spell
+ * The contract names the capability (, `GET /providers` returns `enabled`) but does not spell
  * out the write. `PATCH /providers/{id}` with the changed field is the only shape consistent with
  * the rest of the document, so that is what this sends.
  */

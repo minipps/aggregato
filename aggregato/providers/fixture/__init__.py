@@ -3,17 +3,17 @@
 It exists so the whole sync path — schedule, spawn, fetch, checkpoint, normalize, ingest — can be
 exercised end to end from day one, and so the conformance suite (contract §5) has something to run
 against before a real platform is wired up. It is registered exactly like any other provider, via
-the same convention, with no privileged shortcut (Constitution V: no privileged plugins).
+the same convention, with no privileged shortcut (plugin-system guidance: no privileged plugins).
 
 ``acquisition`` is ``export``: the honest answer for a file the operator points us at. It is not an
-API and it is not a scrape, and calling it ``api`` would make the acquisition hierarchy (FR-042)
+API and it is not a scrape, and calling it ``api`` would make the acquisition hierarchy
 mean nothing.
 
 Wire format, matching tests/fixtures/README.md: one **page** per line of a ``.jsonl`` file, each
 page an object ``{"page": n, "records": [...]}``. ``fetch`` yields a ``Checkpoint`` per page, so
-cursor resumption (FR-020) is genuinely exercised rather than assumed. Reading is done in a plain
+cursor resumption  is genuinely exercised rather than assumed. Reading is done in a plain
 synchronous helper: the file is small, local, and the provider runs in its own child process
-(research.md R2), so there is nothing for a thread hop to protect.
+(research.md ), so there is nothing for a thread hop to protect.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ STARS_5 = RatingScale(
 
 
 class FixtureConfig(BaseModel):
-    """Settings for the fixture provider — and the settings form the UI renders (FR-039).
+    """Settings for the fixture provider — and the settings form the UI renders .
 
     Flat scalars with descriptions, because the description is the label an operator reads.
     """
@@ -104,7 +104,7 @@ class _Record(BaseModel):
     """The payload shape this provider was written against.
 
     ``extra="forbid"``: an unexpected key means the recording no longer matches the reader, which is
-    a structure change to surface rather than a field to drop silently (FR-024).
+    a structure change to surface rather than a field to drop silently .
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -155,7 +155,7 @@ class FixtureProvider:
     rating_scales: list[RatingScale] = [STARS_5]  # noqa: RUF012
     schema_version: int = 1
     # A local file has no rate limit to respect; an hour is the boring interval, and re-reading a
-    # file the operator may have replaced is the only reason to poll at all (FR-018).
+    # file the operator may have replaced is the only reason to poll at all .
     default_poll_interval: timedelta = timedelta(hours=1)
 
     async def fetch(
@@ -179,7 +179,7 @@ class FixtureProvider:
             ProviderError: ``ctx.config`` is not a ``FixtureConfig`` — a host bug, not a data one.
             StructureChangedError: The file is missing, is not JSON lines, or a line is not a page
                 object with a list of records carrying string ids. Never a silent empty result
-                (FR-024, FR-026).
+                .
         """
         importing = mode is FetchMode.IMPORT and ctx.import_path is not None
         path = ctx.import_path if importing else _config(ctx).path
@@ -191,17 +191,17 @@ class FixtureProvider:
             for record in records:
                 yield RawRecord(native_id=record["id"], payload=record)
             # After the page, not before: the cursor names the page to read next, so a crash here
-            # resumes without re-emitting what was already ingested (FR-020).
+            # resumes without re-emitting what was already ingested .
             yield Checkpoint(cursor=Cursor(state={"next_page": page_number + 1}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         """Map one recorded record onto the host vocabulary. Pure: no clock, no I/O, no randomness.
 
         Every timestamp comes from the payload, every identifier in the payload is extracted
-        (FR-009), and ``role_raw`` keeps the platform's own word verbatim (FR-016).
+        , and ``role_raw`` keeps the platform's own word verbatim .
 
         Args:
-            raw: A record as ``fetch`` yielded it, or as replay read it back (FR-002).
+            raw: A record as ``fetch`` yielded it, or as replay read it back .
 
         Returns:
             A ``NormalizedBatch`` — identical on every call for the same input.
@@ -237,7 +237,7 @@ class FixtureProvider:
                 role=credit.role,
                 role_raw=credit.role_raw,
                 credited_as=credit.credited_as,
-                # Payload order, because this format does not express billing (FR-016).
+                # Payload order, because this format does not express billing .
                 position=position,
             )
             for position, credit in enumerate(record.credits)

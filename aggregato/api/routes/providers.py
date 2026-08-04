@@ -1,18 +1,18 @@
-"""``/providers`` — discovery, enable/disable, sync now, credential check (T056).
+"""``/providers`` — discovery, enable/disable, sync now, credential check .
 
 The interesting constraint is what this module may **not** do. An import-linter contract forbids
 ``aggregato.api -> aggregato.sync``, so "sync now" cannot call the runner. It need not: the schedule
-*is* ``provider_state.next_run_at`` (research.md R1), so triggering a run means writing that column
+*is* ``provider_state.next_run_at`` (research.md ), so triggering a run means writing that column
 and letting the scheduler pick it up on its next poll. The decoupling and the design agree, which is
 usually a sign the design was right — a shared table beats a shared process, and it keeps the API
-answering while a provider hangs (FR-025).
+answering while a provider hangs .
 
 The same reasoning applies to ``check``: verifying credentials means running provider code, which
 happens in a child process the scheduler owns. So the endpoint records a *request* for a check and
 reports the last result, rather than blocking a request thread on a third-party platform.
 
 A discovered provider is inert until explicitly enabled, which is where "a fresh install makes
-exactly zero outbound requests" (SC-013) is either true or not.
+exactly zero outbound requests"  is either true or not.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ router = APIRouter(tags=["providers"])
 class LastError(BaseModel):
     """The last failure, and what the operator should do about it.
 
-    ``action_required`` is the whole point (SC-005): a failure that only says "sync failed" costs an
-    operator a debugging session, so every error class carries its own instruction (T090 fills these
+    ``action_required`` is the whole point : a failure that only says "sync failed" costs an
+    operator a debugging session, so every error class carries its own instruction ( fills these
     in per class).
     """
 
@@ -63,7 +63,7 @@ class ProviderView(BaseModel):
     enabled: bool
     status: ProviderStatus
     acquisition: Acquisition
-    #: False for drop-in development providers, which the UI must label ``unreviewed`` (FR-041).
+    #: False for drop-in development providers, which the UI must label ``unreviewed`` .
     reviewed: bool
     capabilities: list[Capability]
     media_types: list[MediaType]
@@ -72,14 +72,14 @@ class ProviderView(BaseModel):
     last_success_at: datetime | None = None
     consecutive_failures: int = 0
     last_error: LastError | None = None
-    #: Settings fixed by the config file, which the UI shows as uneditable (research.md R15).
+    #: Settings fixed by the config file, which the UI shows as uneditable (research.md ).
     file_pinned_settings: list[str] = []
     #: Configured values that are safe to render.  Write-only and secret fields never leave the API.
     current_settings: dict[str, Any] = {}
 
 
 class SyncQueued(BaseModel):
-    """What ``POST /providers/{id}/sync`` returns: the lineage the attempts will share (FR-019)."""
+    """What ``POST /providers/{id}/sync`` returns: the lineage the attempts will share ."""
 
     lineage_id: uuid.UUID
 
@@ -102,7 +102,7 @@ async def list_providers(request: Request) -> list[ProviderView]:
     Inputs: none beyond authentication.
 
     Returns: one entry per provider found in the bundled tree. Discovery reads declarations only and
-    never runs provider code, so listing a provider cannot cause a request to a platform (SC-013).
+    never runs provider code, so listing a provider cannot cause a request to a platform .
     A provider with no database row yet reports as ``disabled`` with zero failures, which is what a
     fresh install looks like.
     """
@@ -121,11 +121,11 @@ async def enable_provider(request: Request, id: str) -> ProviderView:
     """Enable a provider and make it due immediately.
 
     This is the moment a fresh install stops being silent, so it is deliberately an explicit
-    operator action with no default-on path anywhere (SC-013).
+    operator action with no default-on path anywhere .
 
     Failure modes: 404 problem+json if no such provider is installed; 422 if its configuration is
     invalid, in which case it is marked ``misconfigured`` rather than enabled — a broken provider
-    never blocks the service or another provider (FR-025).
+    never blocks the service or another provider .
     """
     return await _set_enabled(request, id, enabled=True)
 
@@ -134,7 +134,7 @@ async def enable_provider(request: Request, id: str) -> ProviderView:
 async def disable_provider(request: Request, id: str) -> ProviderView:
     """Disable a provider. It keeps its archive and its cursor; it simply stops being due.
 
-    Nothing is deleted — disabling is not a way to lose history (FR-024).
+    Nothing is deleted — disabling is not a way to lose history .
     """
     return await _set_enabled(request, id, enabled=False)
 
@@ -194,7 +194,7 @@ async def update_provider_config(
         exists = (await conn.execute(select(providers.c.id).where(providers.c.id == id))).first()
         if exists is None:
             # Saving settings must not start network activity. Enable is a separate, deliberate
-            # operation, preserving the fresh-install silence guarantee (SC-013).
+            # operation, preserving the fresh-install silence guarantee .
             await conn.execute(
                 providers.insert().values(
                     id=id,
@@ -238,7 +238,7 @@ async def sync_now(
 
     The API cannot spawn a run itself — it may not import ``aggregato.sync`` — and does not need to:
     setting ``next_run_at`` to now puts the provider at the front of the due queue and the scheduler
-    dispatches it within a poll interval (research.md R1). Returns 202 because the run has been
+    dispatches it within a poll interval (research.md ). Returns 202 because the run has been
     *queued*, not performed.
 
     Args:
@@ -252,7 +252,7 @@ async def sync_now(
 
     Returns:
         The ``lineage_id`` the run and its retries share, so a caller follows the attempts as one
-        piece of work (FR-019).
+        piece of work .
 
     Failure modes: 404 if not installed; 409 if a run is already in flight — two concurrent runs of
     one provider would race on its cursor.
@@ -301,7 +301,7 @@ async def sync_now(
             update(provider_state).where(provider_state.c.provider_id == id).values(values)
         )
         # A degraded provider asked to sync gets its ladder reset: the operator has presumably fixed
-        # whatever it was complaining about, and refusing to try would be unhelpful (FR-021).
+        # whatever it was complaining about, and refusing to try would be unhelpful .
         await conn.execute(
             update(providers)
             .where(providers.c.id == id)
@@ -316,7 +316,7 @@ async def check_provider(request: Request, id: str) -> CheckResultView:
     """Report the provider's last credential-check result.
 
     Verifying credentials means executing provider code, which happens in a child process the
-    scheduler owns (FR-037) — so this reports the most recent outcome rather than blocking a request
+    scheduler owns  — so this reports the most recent outcome rather than blocking a request
     on a third-party platform. A provider that has never run reports ``ok: false`` with no
     error class, meaning "not yet known" rather than "broken".
 

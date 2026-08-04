@@ -5,7 +5,7 @@ interval, say what should happen next. Nothing here touches the database — the
 ``next_run_at``, ``retry_step``, ``consecutive_failures``, and ``status`` onto ``provider_state``
 (data-model.md §7). That split is what makes this module arithmetic rather than fixtures.
 
-Time is injected (Constitution II). No function here reads a wall clock, which is the whole reason
+Time is injected (testing guidance). No function here reads a wall clock, which is the whole reason
 the ladder is testable without sleeping.
 """
 
@@ -34,7 +34,7 @@ Named rather than inlined because the value is a decision, not a constant: the l
 attempts long, so the failure *after* it is fully spent is the first evidence that this is not a
 transient blip. Tying the threshold to ``len(LADDER)`` also means "degraded" and "the ladder is
 exhausted" can never drift apart — a degraded provider therefore retries at the normal interval and
-never faster, which is exactly FR-021.
+never faster, which is exactly .
 """
 
 
@@ -59,7 +59,7 @@ class RetryDecision:
         status: The provider status to store.
         error_class: The classification this decision came from; ``None`` after a success.
         lineage_id: The lineage the *next* attempt belongs to, so the UI shows four attempts as one
-            failing sync rather than four unrelated failures (FR-019). ``None`` when there is no
+            failing sync rather than four unrelated failures . ``None`` when there is no
             next attempt, or when the next run starts fresh work.
     """
 
@@ -75,7 +75,7 @@ class RetryDecision:
             raise NeverRetryScheduledError(
                 f"{self.error_class} is in NEVER_RETRY but a retry was scheduled for "
                 f"{self.next_run_at}: retrying it risks account lockout, a deeper block, or "
-                f"hammering a platform whose payload changed (FR-021)"
+                f"hammering a platform whose payload changed "
             )
 
 
@@ -88,7 +88,7 @@ def lineage_id_for(retry_of: UUID | None) -> UUID:
 
     Returns:
         ``retry_of`` unchanged for a retry, so every attempt at one logical piece of work groups
-        together; a fresh UUID otherwise (FR-019).
+        together; a fresh UUID otherwise .
     """
     return retry_of if retry_of is not None else uuid4()
 
@@ -98,7 +98,7 @@ def plan_after_success(*, clock: Clock, normal_interval: timedelta) -> RetryDeci
 
     Args:
         clock: Injected time source.
-        normal_interval: The provider's declared interval (FR-018).
+        normal_interval: The provider's declared interval .
 
     Returns:
         A decision resetting the ladder and the failure counter to 0 (data-model.md §7) and putting
@@ -133,9 +133,9 @@ def plan_after_failure(
         retry_step: The provider's ladder position *before* this failure; indexes :data:`LADDER`.
         consecutive_failures: The provider's failure count *before* this failure.
         normal_interval: The provider's declared interval, used once the ladder is spent.
-        lineage_id: The lineage of the run that just failed; carried to the retry (FR-019).
+        lineage_id: The lineage of the run that just failed; carried to the retry .
         retry_after: A platform-supplied delay, e.g. from a ``Retry-After`` header on a
-            ``RateLimited``. Honoured over the ladder step when given (FR-022). The session-wide
+            ``RateLimited``. Honoured over the ladder step when given . The session-wide
             interval stretching that a rate limit also triggers is the caller's business.
 
     Returns:
@@ -164,7 +164,7 @@ def plan_after_failure(
     delay = LADDER[retry_step] if retry_step < len(LADDER) else normal_interval
     if retry_after is not None:
         # The platform's own number wins over ours, but never lets a degraded provider come back
-        # faster than its normal interval (FR-021 beats FR-022 in that one direction).
+        # faster than its normal interval ( beats  in that one direction).
         delay = max(retry_after, normal_interval) if degraded else retry_after
 
     return RetryDecision(

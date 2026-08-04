@@ -4,11 +4,11 @@
  * must do about it.
  *
  * Three things here are requirements rather than presentation choices:
- *   * `reviewed: false` is labelled **unreviewed** (FR-041) — a drop-in development provider must
+ *   * `reviewed: false` is labelled **unreviewed**  — a drop-in development provider must
  *     never look like a shipped one.
- *   * `last_error.action_required` is the loudest thing on a failing card (SC-005): the point of the
+ *   * `last_error.action_required` is the loudest thing on a failing card : the point of the
  *     screen is the next action, not the stack of error text.
- *   * settings listed in `file_pinned_settings` are shown as uneditable, with the reason (R15) —
+ *   * settings listed in `file_pinned_settings` are shown as uneditable, with the reason  —
  *     otherwise the UI silently discards edits the config file overrides.
  */
 
@@ -38,7 +38,7 @@ const list = useRequest(providers)
 
 /**
  * Action feedback, attached to the provider it belongs to: one provider's failed action reports on
- * that card only and never blanks the list (Constitution III). Buttons are disabled while an action
+ * that card only and never blanks the list (UI consistency guidance). Buttons are disabled while an action
  * runs, so at most one is ever in flight.
  */
 const busy = ref('')
@@ -175,7 +175,7 @@ function saveConfiguration(id: string): Promise<void> {
       <li v-for="provider in list.data.value ?? []" :key="provider.id" class="card">
         <h2>
           {{ provider.name }}
-          <!-- FR-041: an unreviewed drop-in provider is labelled as such, always. -->
+          <!-- : an unreviewed drop-in provider is labelled as such, always. -->
           <span v-if="!provider.reviewed" class="badge badge--warn">unreviewed</span>
           <ProviderStatus :status="provider.status" />
         </h2>
@@ -194,7 +194,7 @@ function saveConfiguration(id: string): Promise<void> {
           Scraping can trigger rate limits or blocks. Use only an account you control; Aggregato does not bypass CAPTCHA.
         </div>
 
-        <!-- SC-005: the required action leads, before any error text. -->
+        <!-- : the required action leads, before any error text. -->
         <div v-if="provider.last_error?.action_required" class="action-required" role="alert">
           <p class="action-required__title">Action required</p>
           <p>{{ provider.last_error.action_required }}</p>
@@ -238,7 +238,7 @@ function saveConfiguration(id: string): Promise<void> {
           <p class="muted">Passwords, API keys, and other sensitive settings are not shown.</p>
         </section>
 
-        <!-- R15: pinned settings are shown, disabled, with why the edit would not stick. -->
+        <!-- : pinned settings are shown, disabled, with why the edit would not stick. -->
         <fieldset v-if="provider.file_pinned_settings?.length" disabled class="pinned">
           <legend>Fixed by the configuration file</legend>
           <p class="muted">

@@ -1,6 +1,6 @@
 # Writing a provider
 
-The normative interface is [the provider-plugin contract](../specs/001-media-log-aggregator/contracts/provider-plugin.md). This guide is a practical path to a local, unreviewed drop-in provider; it does not replace that contract.
+The normative interface is [the provider-plugin contract](contracts/provider-plugin.md). This guide is a practical path to a local, unreviewed drop-in provider; it does not replace that contract.
 
 ## 1. Choose the acquisition surface
 

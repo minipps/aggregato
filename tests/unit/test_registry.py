@@ -1,4 +1,4 @@
-"""Discovery is inert (SC-013) and the bundled provider follows the documented convention.
+"""Discovery is inert  and the bundled provider follows the documented convention.
 
 The point of these tests is not that discovery works — it is that discovery does *nothing*. A fresh
 install makes zero outbound requests, and the only way that stays true is if listing providers, and
@@ -46,7 +46,7 @@ def test_discovery_finds_the_fixture_provider() -> None:
 
 
 def test_bundled_providers_are_reviewed() -> None:
-    # FR-041: bundled providers ship with the core and went through review; drop-ins (T124) will
+    # : bundled providers ship with the core and went through review; drop-ins  will
     # arrive with reviewed=False and a UI label.
     assert [info.id for info in discover_providers() if not info.reviewed] == []
 

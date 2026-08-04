@@ -1,7 +1,7 @@
 """Shared test infrastructure.
 
-Two fixtures here are constitutional infrastructure rather than convenience (Constitution II,
-research.md R13): ``block_sockets`` makes network access in a test a hard failure, and ``clock``
+Two fixtures here are project infrastructure rather than convenience (testing guidance,
+research.md ): ``block_sockets`` makes network access in a test a hard failure, and ``clock``
 is the injectable time source the scheduler and retry ladder take so no test sleeps.
 """
 
@@ -27,7 +27,7 @@ class NetworkAccessInTest(RuntimeError):
 def block_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail any test that reaches the network.
 
-    Autouse and unconditional: FR-036 and SC-010 require every test to run offline and without
+    Autouse and unconditional:  and  require every test to run offline and without
     credentials, so this is not opt-in. Loopback is blocked too — an in-process ASGI transport
     needs no socket, and a test that binds one has stopped being deterministic.
     """

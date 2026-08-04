@@ -86,7 +86,7 @@ def test_auth_blocked_and_structure_changed_never_schedule_a_retry(
         f"{error_class.value} was made retryable. Retrying it does active harm: an `auth` retry "
         f"can lock the operator out of their own account, a `blocked` retry deepens the block, and "
         f"a `structure_changed` retry hammers a platform over code that only a release can fix "
-        f"(FR-021, contract §4). These three go straight to `degraded` with no next_run_at."
+        f"(, contract §4). These three go straight to `degraded` with no next_run_at."
     )
 
 

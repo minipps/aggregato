@@ -1,4 +1,4 @@
-"""``GET /opinions`` — ratings and reviews, paged newest-updated first (T055)."""
+"""``GET /opinions`` — ratings and reviews, paged newest-updated first ."""
 
 from __future__ import annotations
 

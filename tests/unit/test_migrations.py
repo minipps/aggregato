@@ -1,4 +1,4 @@
-"""The initial revision and the startup hook (FR-049, T021).
+"""The initial revision and the startup hook .
 
 Everything here runs against a real SQLite file in ``tmp_path``: migrations are DDL, and DDL is
 only proved by executing it.
@@ -58,7 +58,7 @@ def test_upgrade_creates_every_table_in_metadata_plus_the_search_index(tmp_path:
     # The set, not a hardcoded list: schema.py is the source of truth for what must exist.
     missing = set(metadata.tables) - tables
     assert not missing, f"revision does not create {sorted(missing)}"
-    assert "search_index" in tables, "the dialect-specific search index was not created (FR-028)"
+    assert "search_index" in tables, "the dialect-specific search index was not created "
     assert "alembic_version" in tables
 
 

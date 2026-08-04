@@ -1,10 +1,10 @@
-"""The async engine (research.md R3).
+"""The async engine (research.md ).
 
 SQLAlchemy Core only — no ORM, no session, no repository layer. A ``Connection`` *is* the interface
 the writers and readers take, so the surface here is deliberately two functions: build an engine
 from a URL, and run a block inside one transaction.
 
-The same URL setting selects the dialect (FR-048): ``sqlite+aiosqlite:///…`` for the default
+The same URL setting selects the dialect : ``sqlite+aiosqlite:///…`` for the default
 single-container install, ``postgresql+asyncpg://…`` past ~1M entries, with no other code change.
 """
 
@@ -55,7 +55,7 @@ def _apply_sqlite_pragmas(engine: AsyncEngine) -> None:
             # ON is not the SQLite default, so without this the schema's ondelete rules are
             # decorative and orphan rows get written silently.
             cursor.execute("PRAGMA foreign_keys=ON")
-            # WAL: a sync run's writes must not block the API's reads (SC-007).
+            # WAL: a sync run's writes must not block the API's reads .
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
         finally:

@@ -11,7 +11,7 @@ The order matters and is not arbitrary:
 1. Write the ``sync_runs`` row **first**, because ``ingest_failures`` references it and because a
    run that vanishes without a trace is the failure mode operators cannot diagnose.
 2. Run the child, and write what it produced even if it ended badly — records that arrived and
-   validated are real, and discarding them would make a mid-run failure lose data (FR-020).
+   validated are real, and discarding them would make a mid-run failure lose data .
 3. Advance the cursor only to the last checkpoint the child actually flushed. Never further.
 4. Reschedule from the ladder's decision, never from a number computed here.
 """
@@ -97,7 +97,7 @@ async def _claim_requested_mode(engine: AsyncEngine, due: DueProvider) -> FetchM
     """The mode this run should use, consuming an operator's one-shot request.
 
     A scheduled run is always ``incremental``: the schedule is a timestamp column and carries no
-    mode (research.md R1). ``POST /providers/{id}/sync {"mode": "full"}`` therefore leaves its
+    mode (research.md ). ``POST /providers/{id}/sync {"mode": "full"}`` therefore leaves its
     request on ``provider_state.requested_mode`` for whichever dispatch picks the provider up, and
     this consumes it — a request honored twice would mean an operator's single click re-walked a
     platform's whole history on every subsequent poll.
@@ -184,7 +184,7 @@ async def run_once(
     """Execute and record one sync run.
 
     Args:
-        engine: The database engine. The child never sees it (FR-037).
+        engine: The database engine. The child never sees it .
         config: For the provider's configuration and secrets.
         provider_id: Which provider to run.
         mode: ``incremental``, ``full``, or ``import``.
@@ -194,7 +194,7 @@ async def run_once(
         interval_seconds: Its normal interval.
         clock: Time source.
         lineage_id: Set when this run is a retry of earlier work, so the UI groups attempts
-            (FR-019). ``None`` starts a new lineage.
+            . ``None`` starts a new lineage.
         import_path: Set only in ``import`` mode.
 
     Returns:
@@ -246,7 +246,7 @@ async def run_once(
             cursor=cursor,
             config=provider_settings,
             # `secrets` stays empty: config.py resolves ${VAR} references into `settings` at read
-            # time (research.md R15), so a provider's credentials already arrive inside its own
+            # time (research.md ), so a provider's credentials already arrive inside its own
             # validated config block. A second channel would be two places to leak from.
             secrets={},
             import_path=import_path,
@@ -351,7 +351,7 @@ async def _ingest(
     """Write what the child produced, in one transaction.
 
     Called even when the run failed: records that arrived and validated are real, and throwing them
-    away would turn a mid-run failure into data loss rather than a partial success (FR-020).
+    away would turn a mid-run failure into data loss rather than a partial success .
     """
     scales = list(getattr(provider, "rating_scales", []))
     async with transaction(engine) as conn:
@@ -368,7 +368,7 @@ async def _ingest(
             outcome.records,
         )
         # Records the CHILD could not normalize, stored with their payloads so a fixed provider can
-        # replay them (FR-023). Distinct from records the writer rejected, which write_batches
+        # replay them . Distinct from records the writer rejected, which write_batches
         # already captured.
         for failure in outcome.failures:
             await capture_failure(
@@ -477,7 +477,7 @@ async def _reschedule(
     )
 
     # The cursor advances ONLY to the last checkpoint the child actually flushed — never to where
-    # the child claimed it reached, and never at all on a run with no checkpoint (FR-020).
+    # the child claimed it reached, and never at all on a run with no checkpoint .
     if outcome.cursor_after is not None:
         async with transaction(engine) as conn:
             await conn.execute(

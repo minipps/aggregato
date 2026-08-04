@@ -1,4 +1,4 @@
-"""``/providers`` against the contract (T050, T056).
+"""``/providers`` against the contract .
 
 The behaviour worth pinning here is not the happy path — it is that enabling is the *only* way
 anything starts, that a broken provider is contained rather than fatal, and that "sync now" cannot
@@ -83,14 +83,14 @@ async def test_listing_returns_the_contract_shape(client: httpx.AsyncClient) -> 
 async def test_a_discovered_provider_is_listed_before_it_is_enabled(
     client: httpx.AsyncClient,
 ) -> None:
-    """Discovery is not activation. Listing must work with no database rows at all (SC-013)."""
+    """Discovery is not activation. Listing must work with no database rows at all ."""
     body = (await client.get("/api/v1/providers")).json()
     assert {p["id"] for p in body} >= {"fixture"}
     assert all(p["enabled"] is False for p in body)
 
 
 async def test_bundled_providers_are_marked_reviewed(client: httpx.AsyncClient) -> None:
-    """FR-041: ``reviewed`` false is for drop-in development providers, which the UI labels."""
+    """: ``reviewed`` false is for drop-in development providers, which the UI labels."""
     body = (await client.get("/api/v1/providers")).json()
     assert all(p["reviewed"] is True for p in body)
 
@@ -192,7 +192,7 @@ async def test_enabling_twice_is_harmless(client: httpx.AsyncClient) -> None:
 async def test_disabling_stops_it_being_due_without_deleting_anything(
     client: httpx.AsyncClient,
 ) -> None:
-    """Disabling is not a way to lose history (FR-024)."""
+    """Disabling is not a way to lose history ."""
     await client.post("/api/v1/providers/fixture/enable")
     response = await client.post("/api/v1/providers/fixture/disable")
 
@@ -214,7 +214,7 @@ async def test_enabling_an_unknown_provider_is_a_404_problem(client: httpx.Async
 
 
 async def test_sync_now_queues_and_returns_a_lineage(client: httpx.AsyncClient) -> None:
-    """202, because the run is queued rather than performed — the API cannot spawn it (R1)."""
+    """202, because the run is queued rather than performed — the API cannot spawn it ."""
     await client.post("/api/v1/providers/fixture/enable")
     response = await client.post("/api/v1/providers/fixture/sync")
 
@@ -392,7 +392,7 @@ async def test_check_on_an_unknown_provider_is_a_404(client: httpx.AsyncClient) 
 
 
 async def test_an_invalid_provider_config_does_not_break_listing(tmp_path: Path) -> None:
-    """FR-025: a broken provider is contained. The service starts and everything else works.
+    """: a broken provider is contained. The service starts and everything else works.
 
     This is the containment guarantee at the API boundary — a misconfigured platform must cost the
     operator that platform, not their archive.

@@ -1,4 +1,4 @@
-"""An interrupted sync loses nothing and duplicates nothing (T049, FR-005, SC-003).
+"""An interrupted sync loses nothing and duplicates nothing .
 
 One of the four permanently load-bearing tests in this project. It must never be marked skipped.
 
@@ -150,7 +150,7 @@ async def test_an_uninterrupted_run_is_the_baseline(engine: AsyncEngine) -> None
 async def test_resuming_from_a_checkpoint_reaches_the_same_archive(engine: AsyncEngine) -> None:
     """Page one, then resume at page two: the result must equal one uninterrupted run.
 
-    This is SC-003 directly. The first page's cursor is the only thing carried across, just as if
+    This is  directly. The first page's cursor is the only thing carried across, just as if
     the process died between pages.
     """
     clock = StepClock()
@@ -173,7 +173,7 @@ async def test_a_partial_first_page_then_a_resume_loses_nothing(engine: AsyncEng
 
     The failure this guards is a cursor that advances past unread data. If resuming from page two
     permanently skipped page one, the archive would be short by three records and nothing would say
-    so — the silent-loss direction of SC-003.
+    so — the silent-loss direction of .
     """
     clock = StepClock()
 
@@ -208,7 +208,7 @@ async def test_repeated_interruption_and_resumption_converges(engine: AsyncEngin
 
 
 async def test_a_failed_run_after_a_checkpoint_keeps_the_checkpoint(engine: AsyncEngine) -> None:
-    """A `partial` run's cursor advances to the checkpoint, and no further (FR-020).
+    """A `partial` run's cursor advances to the checkpoint, and no further .
 
     Advancing past it would skip unread records; not advancing at all would re-fetch work already
     ingested. The checkpoint is the only defensible position.
@@ -254,7 +254,7 @@ async def test_a_failed_run_after_a_checkpoint_keeps_the_checkpoint(engine: Asyn
 
 
 async def test_a_failed_run_does_not_remove_anything(engine: AsyncEngine) -> None:
-    """The loss direction, at its worst: a failure must never look like a deletion (FR-024)."""
+    """The loss direction, at its worst: a failure must never look like a deletion ."""
     clock = StepClock()
     await sync(engine, clock)
     before = await snapshot(engine)

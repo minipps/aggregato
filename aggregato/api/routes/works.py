@@ -1,10 +1,10 @@
-"""``GET /works`` and ``GET /works/{id}`` (T054).
+"""``GET /works`` and ``GET /works/{id}`` .
 
 ``media_family`` is derived from ``media_type`` on the way out and never stored (data-model.md §1).
 The two can never disagree. ``entry_count`` and ``providers`` are batched per page, not per row.
 
 ``/works`` has no ``sort`` parameter, so it pages by ``(created_at desc, id desc)`` — a total order
-with the same keyset guarantees as the feed (R6). ``/works/{id}`` answers with the parent and the
+with the same keyset guarantees as the feed . ``/works/{id}`` answers with the parent and the
 sibling seasons as well, which is what lets a client walk the hierarchy without a request per hop.
 """
 
@@ -73,9 +73,9 @@ async def list_works(
 ) -> PageResponse[Work]:
     """One keyset page of works, most recently added first.
 
-    Inputs: the contract's filters. ``media_family`` expands to its member media types (FR-029);
+    Inputs: the contract's filters. ``media_family`` expands to its member media types ;
     ``provider`` matches any provider holding an item for the work, so a work known only through a
-    rating still matches; ``q`` searches indexed titles, including original-language forms (FR-028).
+    rating still matches; ``q`` searches indexed titles, including original-language forms .
 
     Failure modes: 400 problem+json for a cursor this API did not issue; 401 without credentials.
     """
@@ -130,10 +130,10 @@ async def get_work(
     """One work with its identifiers, credits, entries, opinions, parent and sibling seasons.
 
     Inputs: the work id, and ``include_subunits`` — false by default, so the entries and opinions
-    listed are the ones about the work itself rather than about its episodes (FR-007, R18).
+    listed are the ones about the work itself rather than about its episodes .
 
     Failure modes: 404 problem+json for an unknown or malformed UUID. Tombstoned entries and
-    opinions are excluded (FR-024).
+    opinions are excluded .
     """
     try:
         work_id = uuid.UUID(id)

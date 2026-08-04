@@ -1,11 +1,11 @@
 """Configuration resolution: defaults ← YAML file ← ``${ENV}`` ← database overrides.
 
-The precedence and every rule below come from research.md R15:
+The precedence and every rule below come from research.md :
 
 * ``api.token`` is the only fatal configuration error — there is no unauthenticated mode
-  (FR-032), so a missing token raises :class:`MissingTokenError` and startup stops.
+  , so a missing token raises :class:`MissingTokenError` and startup stops.
 * An invalid *provider* block disables that provider and records the error. It never stops
-  startup and never touches another provider (FR-025). That is the important behaviour here.
+  startup and never touches another provider . That is the important behaviour here.
 * Secrets are read from the environment at read time and never written back to disk or returned
   by the API: :meth:`Config.public_dict` emits the ``${VAR}`` reference, never its value.
 * Anything set in the YAML file is reported in :attr:`Config.file_pinned` so the UI can explain
@@ -42,7 +42,7 @@ class ConfigError(Exception):
 
 
 class MissingTokenError(ConfigError):
-    """``api.token`` is unset. The only fatal configuration error (FR-032)."""
+    """``api.token`` is unset. The only fatal configuration error ."""
 
 
 # The operator-facing environment variables (.env.example is the contract) mapped onto the dotted
@@ -75,7 +75,7 @@ class ProviderConfig(BaseModel):
 
     The core never interprets ``settings``; the provider validates its own schema. What matters
     here is that a block this module *cannot* resolve arrives with ``enabled=False`` and an
-    ``error`` instead of raising (FR-025).
+    ``error`` instead of raising .
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -87,7 +87,7 @@ class ProviderConfig(BaseModel):
 
 
 class ApiSettings(BaseModel):
-    """The HTTP surface's settings. ``token`` is required (FR-032)."""
+    """The HTTP surface's settings. ``token`` is required ."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -140,21 +140,21 @@ class Config(BaseModel):
     #: error.
     static_dir: Path | None = None
     #: Optional directory of operator-installed provider packages.  These are discovered as
-    #: unreviewed drop-ins; no in-application installation mechanism exists (FR-041).
+    #: unreviewed drop-ins; no in-application installation mechanism exists .
     provider_dir: Path | None = None
-    #: Disable remote image retrieval while preserving stable local image URLs (FR-033).
+    #: Disable remote image retrieval while preserving stable local image URLs .
     image_cache_enabled: bool = True
     config_file: Path | None = None
     providers: dict[str, ProviderConfig] = {}
     file_pinned: frozenset[str] = frozenset()
     # Dotted path (in the shape of `public_dict`) → the `${VAR}` text it came from. Kept so the
-    # resolved secret can be swapped back out for its reference on the way to the API (R15).
+    # resolved secret can be swapped back out for its reference on the way to the API .
     env_refs: dict[str, str] = {}
 
     def is_file_pinned(self, path: str) -> bool:
         """Report whether ``path`` (e.g. ``"api.port"``) was set in the YAML file.
 
-        A pinned setting is not editable in the UI, and the UI needs to say so (R15).
+        A pinned setting is not editable in the UI, and the UI needs to say so .
         """
         return path in self.file_pinned
 
@@ -163,7 +163,7 @@ class Config(BaseModel):
 
         ``api.token`` is dropped outright and every value that came from ``${VAR}`` interpolation
         is replaced by that reference, so a resolved credential can neither reach an API response
-        nor be written back to a config file (R15).
+        nor be written back to a config file .
         """
         data: dict[str, Any] = self.model_dump(mode="json", exclude={"env_refs"})
         data["api"].pop("token", None)
@@ -194,16 +194,16 @@ def load_config(
         with their error recorded.
 
     Raises:
-        MissingTokenError: ``api.token``/``AGGREGATO_TOKEN`` is unset (FR-032).
+        MissingTokenError: ``api.token``/``AGGREGATO_TOKEN`` is unset .
         ConfigError: The YAML file is unreadable or malformed, ``providers`` is not a mapping, or
             a non-provider setting references an unset ``${VAR}``. These are file-structure
-            failures, not the per-setting errors R15 wants tolerated — ignoring them would run
+            failures, not the per-setting errors  wants tolerated — ignoring them would run
             the service on a configuration the operator never asked for.
     """
     env = os.environ if env is None else env
     path = _resolve_config_path(env, config_file)
     file_layer = _read_yaml(path) if path is not None else {}
-    # Computed before the layer is consumed: pinning is about what the *file* said (R15).
+    # Computed before the layer is consumed: pinning is about what the *file* said .
     pinned = frozenset(_dotted_paths(file_layer))
 
     raw_providers = file_layer.pop("providers", {})
@@ -216,7 +216,7 @@ def load_config(
         _set_path(tree, setting, value)
 
     # A provider block is resolved in isolation so one broken block cannot take out the process
-    # or its neighbours (FR-025). Everything else interpolates eagerly and fails loudly.
+    # or its neighbours . Everything else interpolates eagerly and fails loudly.
     provider_tree = tree.pop("providers", None)
     refs: dict[str, str] = {}
     tree = _interpolate(tree, env, "", refs)
@@ -224,7 +224,7 @@ def load_config(
 
     if not tree.get("api", {}).get("token"):
         raise MissingTokenError(
-            "api.token is unset: set AGGREGATO_TOKEN. There is no unauthenticated mode (FR-032)"
+            "api.token is unset: set AGGREGATO_TOKEN. There is no unauthenticated mode "
         )
     api = tree["api"]
     if api.get("readonly_token") and api["readonly_token"] == api["token"]:
@@ -298,7 +298,7 @@ def _load_providers(
             settings = _interpolate(block, env, f"providers.{provider_id}.settings", local)
             providers[provider_id] = ProviderConfig(id=provider_id, settings=settings)
         except (ConfigError, ValidationError) as exc:
-            # Disabled, recorded, startup unaffected, neighbours unaffected (FR-025).
+            # Disabled, recorded, startup unaffected, neighbours unaffected .
             providers[provider_id] = ProviderConfig(id=provider_id, enabled=False, error=str(exc))
             continue
         refs.update(local)
@@ -310,7 +310,7 @@ def _interpolate(value: Any, env: Mapping[str, str], path: str, refs: dict[str, 
 
     Raises:
         ConfigError: A referenced variable is unset. Leaking a literal ``${VAR}`` downstream
-            turns a missing credential into a confusing auth failure much later (R15).
+            turns a missing credential into a confusing auth failure much later .
     """
     if isinstance(value, str):
         if not _VAR.search(value):

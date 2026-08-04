@@ -8,27 +8,27 @@ beyond the domain models.
 Hard rules, restated here because this is the file a provider author reads first (contract §1):
 
 * ``normalize`` is **pure** — no network, no clock, no randomness, no storage. It is what makes
-  normalization replay (FR-002) and credential-free offline tests (FR-036) possible, and the
+  normalization replay  and credential-free offline tests  possible, and the
   conformance suite calls it twice on one fixture and demands identical output.
 * A provider **never receives a database handle**, another provider's config, or another provider's
-  secrets (FR-037). This is enforced physically: provider code runs in a child process that has no
-  engine and no other provider imported (research.md R2). ``ProviderContext`` is the whole of what
+  secrets . This is enforced physically: provider code runs in a child process that has no
+  engine and no other provider imported (research.md ). ``ProviderContext`` is the whole of what
   the host hands over.
-* A provider **never constructs its own HTTP client** (FR-043). ``ctx.http`` is the only client,
+* A provider **never constructs its own HTTP client** . ``ctx.http`` is the only client,
   because the politeness floors must be un-overridable; an import-linter contract forbids importing
   ``httpx`` anywhere under ``aggregato.providers`` — including this module, which takes the type
   under ``TYPE_CHECKING`` only.
-* A provider **may not invent** a ``media_type``, ``role``, or ``subject_ref`` key (FR-008). The
+* A provider **may not invent** a ``media_type``, ``role``, or ``subject_ref`` key . The
   vocabularies are closed enums; violations become ``ingest_failures`` at the parent-side boundary
   rather than writes.
 * A provider **extracts every identifier** present in a payload, including ones Aggregato has no use
-  for (FR-009) — under the no-enrichment rule this is the largest single lever on match quality.
-* **No CAPTCHA or anti-bot circumvention, in any form** (FR-044). Raise ``BlockedError``; the run
+  for  — under the no-enrichment rule this is the largest single lever on match quality.
+* **No CAPTCHA or anti-bot circumvention, in any form** . Raise ``BlockedError``; the run
   stops and the provider goes to ``degraded`` immediately.
 
 A provider that finds nothing returns an empty iterator. It must not report success on a structural
 failure — raise ``StructureChangedError``, because silence plus delete inference is how an archive
-gets erased (FR-024, FR-026).
+gets erased .
 """
 
 from __future__ import annotations
@@ -58,16 +58,16 @@ class ProviderContext:
     """Everything the host hands a provider for one run — and nothing else (contract §2).
 
     Frozen, because a provider reassigning ``http`` would be exactly the escape from the politeness
-    floors FR-043 forbids. The guarantee attached to each field is contract text, not decoration:
+    floors  forbids. The guarantee attached to each field is contract text, not decoration:
     a provider may rely on it, and may not reimplement it.
 
     The host owns, and a provider must not reimplement: scheduling, jitter, the retry ladder, rate
     limiting, cursor persistence, idempotency, identity resolution, storage, migrations, and image
-    caching (FR-035).
+    caching .
     """
 
     http: AsyncClient
-    """The only HTTP client a provider may use (FR-043, research.md R9).
+    """The only HTTP client a provider may use (, research.md ).
 
     Guaranteed: rate limiting at ``max(declared, host_floor)``, one in-flight request per host for
     ``scrapes`` providers, retry on 5xx/429/transport with jitter, ``Retry-After`` compliance, ETag
@@ -75,20 +75,20 @@ class ProviderContext:
     """
 
     config: BaseModel
-    """The validated ``config_model`` instance for **this** provider only (FR-037).
+    """The validated ``config_model`` instance for **this** provider only .
 
     Typed as ``BaseModel`` because the context is generic; a provider narrows it at the boundary
     and treats a mismatch as a host bug rather than assuming.
     """
 
     secrets: Mapping[str, str]
-    """This provider's credentials only, resolved from the environment at read time (FR-037, R15).
+    """This provider's credentials only, resolved from the environment at read time .
 
     Read-only: secrets are never written back to disk and never returned by the API.
     """
 
     log: logging.Logger
-    """A logger already bound to ``provider_id``, ``run_id``, and ``lineage_id`` (FR-051, R19).
+    """A logger already bound to ``provider_id``, ``run_id``, and ``lineage_id`` .
 
     A provider logs to it and does not configure logging.
     """
@@ -97,7 +97,7 @@ class ProviderContext:
     """A small opaque key/value store, this provider's own, persisted in ``provider_state.kv``.
 
     For things that are not pagination state — a discovered account id, a last-seen etag. Cursor
-    persistence is separate and host-owned (FR-020): yield a ``Checkpoint`` for that.
+    persistence is separate and host-owned : yield a ``Checkpoint`` for that.
     """
 
     import_path: Path | None = None
@@ -120,14 +120,14 @@ class Provider(Protocol):
     id: str
     """Stable slug, e.g. ``"letterboxd"``. It never changes, ever: it is the join key for every
     row the provider has ever written, and it survives a migration to a better acquisition surface
-    (FR-047)."""
+    ."""
 
     name: str
     """Display name, shown in the UI."""
 
     media_types: set[MediaType]
     """Every ``MediaType`` this provider can produce. From the closed enum — a provider cannot
-    invent one (FR-008)."""
+    invent one ."""
 
     capabilities: set[Capability]
     """What the provider can do. Checked against observed behaviour by the conformance suite: a
@@ -135,10 +135,10 @@ class Provider(Protocol):
 
     acquisition: Acquisition
     """Which surface the data comes from. A provider must use the highest surface available
-    (FR-042), and its pull request states which higher surfaces were evaluated and rejected."""
+    , and its pull request states which higher surfaces were evaluated and rejected."""
 
     config_model: type[BaseModel]
-    """Validation **and** the generated settings form (FR-039, research.md R11).
+    """Validation **and** the generated settings form (, research.md ).
 
     Flat scalars, enums and secrets only: the form renderer reads the JSON Schema directly, secrets
     are marked ``writeOnly``, and every field carries a description because the description is the
@@ -146,14 +146,14 @@ class Provider(Protocol):
 
     rating_scales: list[RatingScale]
     """Every scale this provider's opinions can cite. A ``rating_raw`` whose ``rating_scale_id`` is
-    not declared here is uninterpretable and rejected (FR-003)."""
+    not declared here is uninterpretable and rejected ."""
 
     schema_version: int
-    """``>= 1``. Bumping it triggers normalization replay over stored raw payloads (FR-002,
-    research.md R16) — the mechanism for shipping a ``normalize`` fix without re-syncing."""
+    """``>= 1``. Bumping it triggers normalization replay over stored raw payloads (,
+    research.md ) — the mechanism for shipping a ``normalize`` fix without re-syncing."""
 
     default_poll_interval: timedelta
-    """Derived from the platform's own rate limits, not from a global default (FR-018). The
+    """Derived from the platform's own rate limits, not from a global default . The
     scheduler treats it as a floor it may lengthen, never shorten."""
 
     def fetch(
@@ -174,15 +174,15 @@ class Provider(Protocol):
         Yields:
             ``RawRecord`` per platform record, and a ``Checkpoint`` between records wherever
             resumption is meaningful — the host persists the enclosed cursor so a failed run
-            resumes there instead of restarting (FR-020). A provider whose pagination cannot
+            resumes there instead of restarting . A provider whose pagination cannot
             support mid-fetch resumption declares only ``full`` and accepts full resyncs.
 
         Raises:
             AuthError: Credentials missing, wrong, or no longer accepted. No retry.
             BlockedError: A block page, CAPTCHA, or anti-bot challenge. No retry, no circumvention
-                (FR-044).
+                .
             StructureChangedError: The payload no longer looks like what this provider expects.
-                Raised instead of returning empty (FR-024, FR-026).
+                Raised instead of returning empty .
             RateLimited: The platform asked us to slow down; carries ``retry_after`` when stated.
         """
         ...
@@ -192,7 +192,7 @@ class Provider(Protocol):
         cheapest way to make that credible.
 
         No network, no clock, no randomness, no storage: replay re-runs this over stored payloads
-        (FR-002), so two calls on the same record must produce byte-identical output. Every
+        , so two calls on the same record must produce byte-identical output. Every
         timestamp, and every value that looks like "now", comes out of ``raw.payload``.
 
         Args:
@@ -201,10 +201,10 @@ class Provider(Protocol):
 
         Returns:
             A ``NormalizedBatch``. ``logged_precision`` is required on every entry — there is no
-            default, because a default fabricates exactness (FR-004). Every identifier present in
-            the payload appears in ``external_ids`` or ``creator_external_ids`` (FR-009), and
+            default, because a default fabricates exactness . Every identifier present in
+            the payload appears in ``external_ids`` or ``creator_external_ids`` , and
             ``role_raw`` carries the platform's own word verbatim even when ``role`` maps cleanly
-            (FR-016).
+            .
 
         Raises:
             StructureChangedError: The stored payload is not the shape this provider was written

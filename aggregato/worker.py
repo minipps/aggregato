@@ -2,7 +2,7 @@
 
 A separate process from the API, deliberately (plan.md Complexity Tracking). An asyncio task inside
 the API would cover a hang via timeout but not a hard crash or a C-extension deadlock, and it would
-put ingest CPU in the request path against SC-007. Two processes make FR-025's containment a
+put ingest CPU in the request path against . Two processes make 's containment a
 property rather than a hope.
 
 This module is the wiring: read config, build the engine, and run the loop until a signal arrives.
@@ -41,7 +41,7 @@ async def serve(config: Config) -> None:
             but ``load_config`` enforces it anyway, so a misconfigured install fails the same way in
             both processes rather than half-starting.
     """
-    # The scheduler migrates too, rather than assuming the API went first. research.md R14 wants
+    # The scheduler migrates too, rather than assuming the API went first. research.md  wants
     # this process independently restartable, and a scheduler that crash-loops on "no such table"
     # because it booted first is neither restartable nor diagnosable. upgrade_to_head is idempotent;
     # in a thread because Alembic's env.py runs its own asyncio.run.

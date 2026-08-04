@@ -82,7 +82,7 @@ async def test_several_origins_come_from_one_comma_separated_variable(tmp_path: 
 
 
 async def test_authentication_is_still_required_on_the_real_request(tmp_path: Path) -> None:
-    """CORS decides who may ask. It does not decide who gets an answer (FR-032)."""
+    """CORS decides who may ask. It does not decide who gets an answer ."""
     async with app_client(tmp_path, AGGREGATO_CORS_ORIGINS=ORIGIN) as client:
         response = await client.get("/api/v1/entries", headers={"Origin": ORIGIN})
 

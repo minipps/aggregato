@@ -1,10 +1,10 @@
-"""The whole Phase 2 loop, once, for real (T033–T039).
+"""The whole Phase 2 loop, once, for real (–).
 
 Schedule → claim → spawn a child process → fetch → checkpoint → normalize → validate → ingest →
 reschedule, against a real SQLite database and the real bundled provider. No mocks of our own code,
-which is what Constitution II asks of an integration test.
+which is what testing guidance asks of an integration test.
 
-This is not a user story test (those are US1's, T047 onward). It exists because the pieces were
+This is not a user story test (those are 's,  onward). It exists because the pieces were
 built separately, and "each part passes its own tests" is not evidence that they fit together.
 """
 
@@ -67,7 +67,7 @@ pytestmark = pytest.mark.skipif(not _fts5(), reason="the writer maintains an FTS
 
 
 class StepClock:
-    """A clock a test moves by hand (Constitution II)."""
+    """A clock a test moves by hand (testing guidance)."""
 
     def __init__(self, start: datetime = NOW) -> None:
         self._now = start
@@ -143,7 +143,7 @@ async def test_a_newly_enabled_provider_is_immediately_due(engine: AsyncEngine) 
 
 
 async def test_a_disabled_provider_is_never_due(engine: AsyncEngine) -> None:
-    """A fresh install makes zero outbound requests, and this is where that starts (SC-013)."""
+    """A fresh install makes zero outbound requests, and this is where that starts ."""
     async with transaction(engine) as conn:
         await conn.execute(
             providers.insert().values(
@@ -259,7 +259,7 @@ async def test_a_full_run_ingests_the_fixture(engine: AsyncEngine) -> None:
     assert await count(engine, entries) == 5
     assert await count(engine, provider_items) == 5
     # Three records carry a rating or a review; the five records carry 13 identifiers between
-    # them (5 + 2 + 3 + 2 + 1), every one of which must be stored (FR-009).
+    # them (5 + 2 + 3 + 2 + 1), every one of which must be stored .
     assert await count(engine, opinions) == 3
     assert await count(engine, external_ids) == 13
 
@@ -347,7 +347,7 @@ async def test_schema_bump_replays_retained_payloads_before_the_next_sync(
 
 
 async def test_the_run_is_recorded_with_counts(engine: AsyncEngine) -> None:
-    """A run that leaves no trace is the failure operators cannot diagnose (FR-019)."""
+    """A run that leaves no trace is the failure operators cannot diagnose ."""
     await enable_fixture(engine)
     await run_once(
         engine,
@@ -441,7 +441,7 @@ async def test_a_successful_run_reschedules_at_the_normal_interval(engine: Async
     assert state.next_run_at.replace(tzinfo=UTC) == NOW + timedelta(hours=1)
 
 
-# --- Resync writes nothing new (FR-005, SC-003) ------------------------------------------------
+# --- Resync writes nothing new  ------------------------------------------------
 
 
 async def test_a_second_identical_run_writes_nothing_new(engine: AsyncEngine) -> None:
@@ -478,7 +478,7 @@ async def test_a_second_identical_run_writes_nothing_new(engine: AsyncEngine) ->
 async def test_a_structure_change_fails_the_run_without_touching_the_archive(
     engine: AsyncEngine,
 ) -> None:
-    """A broken source must look broken, never like an emptied history (FR-024, FR-026)."""
+    """A broken source must look broken, never like an emptied history ."""
     await enable_fixture(engine)
     clock = StepClock()
 
@@ -599,7 +599,7 @@ async def test_the_scheduler_dispatches_a_due_provider(engine: AsyncEngine) -> N
 
 
 async def test_a_dispatch_that_raises_does_not_kill_the_loop(engine: AsyncEngine) -> None:
-    """One bad provider must never stop the others (FR-025)."""
+    """One bad provider must never stop the others ."""
     await enable_fixture(engine)
 
     async def exploding_dispatch(due: object) -> None:

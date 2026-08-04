@@ -1,4 +1,4 @@
-"""The US2 identity journey through the real writer (T065)."""
+"""The  identity journey through the real writer ."""
 
 from __future__ import annotations
 

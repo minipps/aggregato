@@ -1,4 +1,4 @@
-"""A fresh install makes exactly ZERO outbound requests (T048, SC-013).
+"""A fresh install makes exactly ZERO outbound requests .
 
 One of the four permanently load-bearing tests in this project. It must never be marked skipped.
 

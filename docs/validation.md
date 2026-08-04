@@ -1,6 +1,6 @@
 # Quickstart & Validation Guide: Aggregato
 
-**Date**: 2026-07-29 | **Plan**: [plan.md](./plan.md) | **Contracts**: [openapi.yaml](./contracts/openapi.yaml) · [provider-plugin.md](./contracts/provider-plugin.md)
+**Date**: 2026-07-29 | **Architecture**: [architecture.md](architecture.md) | **Contracts**: [openapi.yaml](contracts/openapi.yaml) · [provider-plugin.md](contracts/provider-plugin.md)
 
 How to run the service and how to prove each user story works. Every check below is runnable; none
 requires a real platform account except where explicitly marked **manual**.
@@ -12,7 +12,7 @@ requires a real platform account except where explicitly marked **manual**.
 | Purpose | Requirement |
 |---|---|
 | Running the release | Docker + Docker Compose only |
-| Developing | Python 3.13, `uv`, Node 20+ (frontend build only — see the deviation note in [research.md](./research.md) R11) |
+| Developing | Python 3.13, `uv`, Node 20+ (frontend build only — see the deviation note in [research.md](./research.md) ) |
 | Tests | Nothing else. No database server, no network, no credentials |
 
 ---
@@ -34,8 +34,8 @@ cd frontend && npm install && npm run dev     # dev server proxies /api to :8000
 ```
 
 `api.token` is the only fatal configuration error: startup fails without it, because there is no
-unauthenticated mode (FR-032). A missing or invalid *provider* configuration never blocks startup —
-that provider is marked `misconfigured` and everything else runs (FR-025).
+unauthenticated mode . A missing or invalid *provider* configuration never blocks startup —
+that provider is marked `misconfigured` and everything else runs .
 
 ---
 
@@ -44,16 +44,16 @@ that provider is marked `misconfigured` and everything else runs (FR-025).
 Run these first; they are the ones whose failure means something silently destructive:
 
 ```bash
-# FR-024 / SC-014 — no inferred deletion for a provider that does not report deletes
+#  /  — no inferred deletion for a provider that does not report deletes
 uv run pytest tests/integration/test_no_inferred_deletes.py -v
 
-# FR-007 — sub-unit records excluded from aggregates BY DEFAULT
+#  — sub-unit records excluded from aggregates BY DEFAULT
 uv run pytest tests/unit/test_subunit_aggregate_default.py -v
 
-# FR-005 / SC-003 — interrupted syncs produce neither loss nor duplication
+#  /  — interrupted syncs produce neither loss nor duplication
 uv run pytest tests/integration/test_idempotent_interrupted_sync.py -v
 
-# SC-013 — a fresh install makes zero outbound requests
+#  — a fresh install makes zero outbound requests
 uv run pytest tests/integration/test_fresh_install_is_silent.py -v
 ```
 
@@ -61,7 +61,7 @@ uv run pytest tests/integration/test_fresh_install_is_silent.py -v
 
 ## Per-story validation
 
-### US1 — One platform's history, local and browsable
+###  — One platform's history, local and browsable
 
 ```bash
 uv run pytest tests/integration/test_us1_single_provider.py -v
@@ -76,7 +76,7 @@ opinion returns `raw`, `scale_id`, and `normalized`; a second run writes nothing
 **Manual check** (real platform, one time): enable a real provider, wait for the first sync, and spot
 check ten entries against the platform's own UI, including one logged with a month-only date.
 
-### US2 — Two platforms, one log
+###  — Two platforms, one log
 
 ```bash
 uv run pytest tests/integration/test_us2_cross_provider_identity.py -v
@@ -91,7 +91,7 @@ Expected: `GET /works/{id}` shows both providers' opinions on the unified item; 
 appears in `GET /resolution-queue` with a reason per candidate; an operator decision survives a
 subsequent resync of both providers.
 
-### US3 — Sync the operator can trust
+###  — Sync the operator can trust
 
 ```bash
 uv run pytest tests/integration/test_us3_failure_matrix.py -v
@@ -99,7 +99,7 @@ uv run pytest tests/integration/test_us3_failure_matrix.py -v
 
 One parametrized case per `error_class`. Assert per case: the resulting `sync_runs` row, whether a
 retry was scheduled and at what interval, the resulting provider status, and that the message names
-an action (SC-005).
+an action .
 
 | Injected failure | Expected |
 |---|---|
@@ -114,7 +114,7 @@ an action (SC-005).
 | provider child hangs | killed at the wall-clock timeout, classified, ladder applies |
 | provider config invalid | `misconfigured`, service starts, other providers sync |
 
-### US4 — Fixing identity by hand
+###  — Fixing identity by hand
 
 ```bash
 uv run pytest tests/integration/test_us4_merge_split.py -v
@@ -125,10 +125,10 @@ creator moves exactly the selected credits; each credit exposes `link_confidence
 credits are distinguishable from identifier-joined ones; a cross-family duplicate appears as a
 `suggestion_kind` item rather than an auto-merge; every operation returns an `undo_url` that works.
 
-**Manual check**: clear ten queue items using only the keyboard and time it — SC-006 budget is under
+**Manual check**: clear ten queue items using only the keyboard and time it —  budget is under
 10 seconds per decision.
 
-### US5 — Platforms with no API
+###  — Platforms with no API
 
 ```bash
 uv run pytest tests/integration/test_us5_file_import.py -v
@@ -138,7 +138,7 @@ Expected: `POST /providers/goodreads/import` with a recorded CSV ingests entries
 identifiers; re-uploading the same file adds nothing; an unrelated file is rejected with a problem
 document and leaves the archive unchanged.
 
-### US6 — Adding support for a new platform
+###  — Adding support for a new platform
 
 ```bash
 uv run pytest tests/conformance/ -v          # every bundled provider, all 9 conformance groups
@@ -147,10 +147,10 @@ uv run lint-imports                          # provider tree cannot reach db or 
 
 Expected: a new provider passes conformance without core changes; `GET /providers/{id}/config-schema`
 renders in `SchemaForm.vue` with no per-provider frontend code; bumping `schema_version` replays the
-archive from stored payloads with no network (SC-011); a scraping provider is labelled, rate-floored,
+archive from stored payloads with no network ; a scraping provider is labelled, rate-floored,
 and refuses to run without fixtures.
 
-### US7 — Owning the archive
+###  — Owning the archive
 
 ```bash
 uv run pytest tests/integration/test_us7_export_restore.py -v
@@ -162,7 +162,7 @@ raw payload retention and image cache, each independently switchable.
 
 ---
 
-## Performance budgets (Constitution VI)
+## Performance budgets (performance guidance)
 
 ```bash
 uv run pytest tests/bench/ -q                      # portable benchmark-budget assertions
@@ -174,11 +174,11 @@ uv run python -m tests.bench.seed --entries 1000000   # generates the fixture da
 | `test_first_page_latency` | p95 < 1000 ms at 1M entries | filter indexes or the search implementation regress |
 | `test_deep_page_latency` | within 20% of first page | keyset pagination was replaced by offset |
 | `test_ingest_throughput` | ≥ 50,000 entries/hour on 4-core / 2 GB | per-row round trips crept into the writer |
-| `test_creator_resolution_batch` | ≥ 20,000 lookups/min, flat as creators grow | a per-credit query crept back in (research.md R8) |
+| `test_creator_resolution_batch` | ≥ 20,000 lookups/min, flat as creators grow | a per-credit query crept back in (research.md ) |
 | `test_ingest_scaling` | 1M-row rate within 10% of 10k-row rate | an index is missing or a scan appeared |
 
 Record the baseline in `tests/bench/baseline.json`. A change worsening any metric by more than 10%
-needs a justification in plan.md Complexity Tracking, per the constitution.
+needs a justification in the architecture documentation, per the engineering guidance.
 
 ---
 
@@ -191,5 +191,5 @@ uv run lint-imports                                                             
 cd frontend && npm run type-check && npm run test:unit
 ```
 
-All four must be clean. Warnings are errors (Constitution I), and the import contract is a merge gate
-rather than a convention (Constitution IV).
+All four must be clean. Warnings are errors (code-quality guidance), and the import contract is a merge gate
+rather than a convention (decoupling guidance).

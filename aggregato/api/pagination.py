@@ -5,9 +5,9 @@ reason this module exists. A cursor holding only ``logged_at`` cannot page throu
 history where thousands of entries share one timestamp: every row with that timestamp either
 repeats on the next page or is skipped, depending on which way the comparison is written. Adding
 ``id`` makes the sort order *total*, so ``(sort_col, id)`` is unique and every row appears exactly
-once (research.md R6).
+once (research.md ).
 
-There is no offset parameter here or anywhere else — FR-030. ``OFFSET`` degrades linearly and the
+There is no offset parameter here or anywhere else — . ``OFFSET`` degrades linearly and the
 spec names it a footgun.
 
 The cursor is opaque, not secret. It is base64-encoded JSON, unsigned: signing it would introduce a

@@ -1,4 +1,4 @@
-"""Phase 4 performance-budget declarations (T064, T068, T069, T082).
+"""Phase 4 performance-budget declarations .
 
 Measured benchmark runs are intentionally opt-in: CI asserts the versioned ceilings are present;
 the operator benchmark harness consumes the same JSON on the target hardware.

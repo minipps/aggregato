@@ -1,6 +1,6 @@
-"""The served schema against contracts/openapi.yaml (T045).
+"""The served schema against contracts/openapi.yaml .
 
-``contracts/openapi.yaml`` is the contract the web UI consumes and the only one (FR-031), so it is
+``contracts/openapi.yaml`` is the contract the web UI consumes and the only one , so it is
 normative rather than documentation. This harness compares what the app actually serves against it
 and fails on drift in either direction:
 
@@ -25,12 +25,10 @@ from fastapi import FastAPI
 from aggregato.config import load_config
 from aggregato.main import API_PREFIX, create_app
 
-CONTRACT = (
-    Path(__file__).parent.parent.parent / "specs/001-media-log-aggregator/contracts/openapi.yaml"
-)
+CONTRACT = Path(__file__).parent.parent.parent / "docs/contracts/openapi.yaml"
 
 #: Contract paths with no implementation yet, each with the task that adds it. Every entry is a
-#: promise rather than an exemption — T144's final gate check expects this dict empty.
+#: promise rather than an exemption — 's final gate check expects this dict empty.
 NOT_YET_IMPLEMENTED: dict[str, str] = {}
 
 
@@ -83,14 +81,14 @@ def test_the_contract_is_valid_yaml_and_declares_its_version(contract: dict[str,
 
 
 def test_the_contract_has_no_unauthenticated_endpoint(contract: dict[str, Any]) -> None:
-    """FR-032 at the document level: a global ``security`` block, and nothing opting out to nothing.
+    """at the document level: a global ``security`` block, and nothing opting out to nothing.
 
     ``POST /auth/session`` narrows to bearer only — which is not an exemption, it is the one
     endpoint a session cookie cannot authenticate because it is what issues the cookie.
 
     ``GET /media/image/{hash}`` is the single real exemption, listed here so adding a second one has
     to be an argued edit rather than a passing test: an ``<img>`` tag sends no credential, and the
-    path carries an unguessable sha256 of artwork the source platform serves publicly (FR-033).
+    path carries an unguessable sha256 of artwork the source platform serves publicly .
     """
     unauthenticated = {("get", "/media/image/{hash}")}
     assert contract["security"], "the contract must declare global security"
@@ -174,7 +172,7 @@ def test_phase_three_paths_are_present(served: dict[str, Any]) -> None:
 
 
 def test_no_endpoint_offers_an_offset_parameter(contract: dict[str, Any]) -> None:
-    """Pagination is keyset-only; ``offset`` is called a footgun by the spec itself (FR-030)."""
+    """Pagination is keyset-only; ``offset`` is called a footgun by the spec itself ."""
     offenders = []
     for path, spec in contract["paths"].items():
         for method, operation in spec.items():
@@ -194,7 +192,7 @@ def test_the_problem_schema_matches_rfc_9457(contract: dict[str, Any]) -> None:
 
 
 def test_the_enum_schemas_match_the_domain_vocabularies(contract: dict[str, Any]) -> None:
-    """The contract and the code must not disagree about a closed vocabulary (FR-008).
+    """The contract and the code must not disagree about a closed vocabulary .
 
     Drift here is the kind that surfaces as a client rejecting a value the server considers valid.
     """

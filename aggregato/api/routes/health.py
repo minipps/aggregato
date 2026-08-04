@@ -1,6 +1,6 @@
-"""``GET /health`` — per-provider status (T043).
+"""``GET /health`` — per-provider status .
 
-Authenticated like every other route (FR-032): there is no public health endpoint, because the
+Authenticated like every other route : there is no public health endpoint, because the
 provider list and its failure counts are operational detail about someone's private log.
 """
 

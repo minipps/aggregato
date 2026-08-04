@@ -1,4 +1,4 @@
-"""Archive statistics (T136).
+"""Archive statistics .
 
 The statistics surface deliberately consumes the same :func:`aggregate_filters` helper as every
 other aggregate.  That keeps an episode or track from quietly becoming a whole-work count simply

@@ -1,4 +1,4 @@
-"""The named regression guard for FR-007 (T137)."""
+"""The named regression guard for  ."""
 
 from __future__ import annotations
 

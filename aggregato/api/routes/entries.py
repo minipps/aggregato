@@ -1,14 +1,14 @@
-"""``GET /entries`` — the primary log feed (T053).
+"""``GET /entries`` — the primary log feed .
 
 The most heavily filtered read in the system, and the one whose defaults matter most:
 
 * ``include_subunits`` defaults **false**. A per-episode logger's feed shows seasons, not 300
-  episodes, unless asked (FR-007, research.md R18).
+  episodes, unless asked (, research.md ).
 * ``include_deleted`` defaults **false**. Tombstoned rows exist forever but are not the log
-  (FR-024).
-* Paging is keyset-only. There is no ``offset`` parameter here or anywhere else (FR-030).
+  .
+* Paging is keyset-only. There is no ``offset`` parameter here or anywhere else .
 * ``logged_at`` always travels with ``logged_precision``, so a client cannot invent an exact time
-  (FR-004).
+  .
 
 An entry has no score column of its own — a score belongs to an opinion — so ``score_min``,
 ``score_max``, ``has_review`` and ``sort=score`` all read the opinion that came from the same
@@ -74,10 +74,10 @@ async def list_entries(
     """One keyset page of the log, newest first by default.
 
     Inputs: every filter the contract declares. ``media_family`` expands to its member media types
-    (FR-029); repeated ``media_type``/``media_family``/``provider`` values are ORed within a
+    ; repeated ``media_type``/``media_family``/``provider`` values are ORed within a
     parameter and ANDed across parameters. ``status=completed`` expands the same way over
     ``kind`` (``COMPLETED_KINDS``), and ANDs with ``kind`` if both are given. ``q`` searches
-    indexed work titles and review text (FR-028).
+    indexed work titles and review text .
 
     Failure modes: 400 problem+json for a cursor this API did not issue — never a silent restart;
     422 problem+json for a value outside a closed vocabulary; 401 without credentials.

@@ -1,4 +1,4 @@
-"""Poison-record capture: one bad record never blocks a run (FR-023).
+"""Poison-record capture: one bad record never blocks a run .
 
 A single unparseable record in a ten-year history is the normal case, not the exceptional one — a
 platform changes a field, an old row predates a convention, a title contains something nobody
@@ -7,7 +7,7 @@ with **its payload**, the run continues, and ``items_failed`` counts it.
 
 Storing the payload is the part that matters. Without it, "one record failed to convert" is an
 unreproducible bug report; with it, a fixed provider replays the stored payload and the entry
-appears without re-syncing the platform (FR-023, the same replay principle as research.md R16).
+appears without re-syncing the platform (, the same replay principle as research.md ).
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ async def mark_resolved(conn: AsyncConnection, failure_ids: Sequence[int], *, no
 
     Rows are kept rather than deleted: the retention job decides when they age out, and it keeps
     failures longer than successes by default because a failure is the thing someone will want to
-    look at later (T133).
+    look at later .
 
     Args:
         conn: Connection inside the replay's transaction.

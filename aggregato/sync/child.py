@@ -1,10 +1,10 @@
-"""The child entrypoint: fetch and normalize, write JSON lines, exit (research.md R2).
+"""The child entrypoint: fetch and normalize, write JSON lines, exit (research.md ).
 
 This process imports **one** provider and has no database engine. That is not a convention the
 review enforces — it is why the process exists. Three separate requirements collapse into it:
 
-* hang and crash containment (FR-025), because the parent can kill a process;
-* no database handle and no other provider's secrets in plugin code (FR-037), because neither is
+* hang and crash containment , because the parent can kill a process;
+* no database handle and no other provider's secrets in plugin code , because neither is
   reachable from here;
 * a per-run wall-clock timeout that actually works (§6.7).
 
@@ -51,7 +51,7 @@ def emit(message: ChildMessage) -> None:
     """Write one protocol message to stdout and flush.
 
     Flushing per message matters: the parent streams these, and a buffered checkpoint that never
-    arrives before a crash is a checkpoint that did not happen (FR-020).
+    arrives before a crash is a checkpoint that did not happen .
     """
     sys.stdout.write(encode(message))
     sys.stdout.flush()
@@ -76,7 +76,7 @@ async def run(
         mode: ``incremental``, ``full``, or ``import``.
         cursor: Where to resume, or ``None`` to start over.
         config: The provider's validated configuration, as a plain dict from the parent.
-        secrets: This provider's credentials only (FR-037).
+        secrets: This provider's credentials only .
         state: The provider's own opaque key/value store.
         import_path: Set only in ``import`` mode.
 
@@ -138,7 +138,7 @@ async def run(
 def _emit_normalized(provider: Any, record: RawRecord) -> None:
     """Normalize one record, or report it as a single failure and keep going.
 
-    A record that will not convert costs its own row, not the run (FR-023). The exception is caught
+    A record that will not convert costs its own row, not the run . The exception is caught
     here rather than in the loop above so that a provider raising a *ProviderError* from
     ``normalize`` still ends the run — that signals a platform-level problem, not a bad record.
     """

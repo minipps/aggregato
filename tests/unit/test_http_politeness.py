@@ -1,7 +1,7 @@
-"""The politeness guarantees are un-overridable (T029, FR-043).
+"""The politeness guarantees are un-overridable .
 
 The point of these tests is not that the limiter works — it is that a *provider* cannot make it not
-work. FR-043 says the floors are not negotiable, and a rule enforced only by review is the kind that
+work.  says the floors are not negotiable, and a rule enforced only by review is the kind that
 eventually leaks, so each guarantee below is asserted from the outside, the way a misbehaving plugin
 would try to break it.
 
@@ -27,7 +27,7 @@ from aggregato.providers.http import (
     PolitenessPolicy,
 )
 
-# Deterministic jitter: Constitution II makes randomness injectable rather than ambient.
+# Deterministic jitter: testing guidance makes randomness injectable rather than ambient.
 FIXED_RNG = 1234
 
 

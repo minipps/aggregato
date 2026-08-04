@@ -1,4 +1,4 @@
-"""Letterboxd's weakest, title-and-year-only identity path remains safe (T111)."""
+"""Letterboxd's weakest, title-and-year-only identity path remains safe ."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Registration and shared fixtures for the provider conformance suite (contract §5).
 
-This suite is a **merge gate** (Constitution II and V) and the third-party compliance proof
-(FR-046). It is therefore parametrized over a registration list rather than written against any one
+This suite is a **merge gate** (testing guidance and V) and the third-party compliance proof
+. It is therefore parametrized over a registration list rather than written against any one
 provider: adding a provider means adding a ``Registration`` below, not writing new tests.
 
 A provider registers by naming its id, the recorded fixture ``fetch`` should read, the fixture that
@@ -115,7 +115,7 @@ shipping a provider without entering it into the gate is not possible (contract 
 class _InertHTTP:
     """Stands in for ``ctx.http``.
 
-    ``ProviderContext.http`` is typed ``AsyncClient`` and the type must not be weakened (FR-043
+    ``ProviderContext.http`` is typed ``AsyncClient`` and the type must not be weakened (
     depends on the host owning the client), so this is cast at the one construction site below.
     Handing over an object that raises on **any** attribute access is safe here because a
     conformance test that touches the network is a failure, not a slow test (contract §5): the
@@ -254,7 +254,7 @@ async def raw_records(provider: Provider, ctx: ProviderContext) -> list[RawRecor
     """The provider's recorded records, obtained through its own ``fetch``.
 
     Groups 3, 4 and 5 run over these, so what they assert about is exactly what a real run would
-    have handed to ``normalize`` and stored for replay (FR-002).
+    have handed to ``normalize`` and stored for replay .
     """
     records = only_records(await fetch_all(provider, ctx, None, FetchMode.FULL))
     assert records, "a registered provider's records fixture must contain at least one record"

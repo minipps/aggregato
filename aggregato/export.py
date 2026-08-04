@@ -1,4 +1,4 @@
-"""Portable, secret-free archive creation and restoration (T130)."""
+"""Portable, secret-free archive creation and restoration ."""
 
 from __future__ import annotations
 

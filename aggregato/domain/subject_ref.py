@@ -1,14 +1,14 @@
 """``subject_ref`` — which sub-unit of a work a record is about.
 
-Six keys, positive integers, nothing else (research.md R17, data-model.md §3). ``None`` means the
+Six keys, positive integers, nothing else (research.md , data-model.md §3). ``None`` means the
 record pertains to the whole work, which is the overwhelmingly common case.
 
 The narrowness is the feature. An open-ended object here becomes a dumping ground for every
 platform's incidental fields within two providers, and once it has, no aggregate query can tell a
-whole-work record from a sub-unit one — which is the silent statistic corruption FR-007 is about.
+whole-work record from a sub-unit one — which is the silent statistic corruption  is about.
 
 Validated in the **parent** process at the ingest boundary, never trusted from the child: the child
-runs plugin code (FR-008). A record with an invalid ``subject_ref`` becomes an ``ingest_failure``,
+runs plugin code . A record with an invalid ``subject_ref`` becomes an ``ingest_failure``,
 not a write with the field quietly dropped.
 """
 

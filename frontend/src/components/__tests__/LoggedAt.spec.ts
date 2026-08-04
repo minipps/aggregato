@@ -24,7 +24,7 @@ describe('LoggedAt', () => {
     expect(wrapper.text()).not.toMatch(CLOCK)
   })
 
-  // FR-004: the platform knew a month. Rendering a clock would state something it never recorded.
+  // : the platform knew a month. Rendering a clock would state something it never recorded.
   it('never renders a month-only date as a time', () => {
     const wrapper = render('2026-03-01T00:00:00+00:00', 'month')
     const time = wrapper.find('time')

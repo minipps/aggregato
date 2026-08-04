@@ -1,4 +1,4 @@
-# Feature Specification: Aggregato — Self-Hosted Media Log Aggregator
+# Product Requirements: Aggregato — Self-Hosted Media Log Aggregator
 
 **Feature Branch**: `001-media-log-aggregator`
 
@@ -18,7 +18,7 @@ implementation must honour.
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - One platform's history, local and browsable (Priority: P1)
+### Product Journey 1: One platform's history, local and browsable (Priority: P1)
 
 A self-hoster deploys Aggregato with a single command, supplies their username or credentials for
 one logging platform, and enables it. The service fetches their history on a schedule and they
@@ -48,7 +48,7 @@ one platform configured.
 
 ---
 
-### User Story 2 - Two platforms, one log (Priority: P1)
+### Product Journey 2: Two platforms, one log (Priority: P1)
 
 The operator enables a second platform. A film they logged on both platforms appears as one item
 with both platforms' ratings and reviews side by side, not as two unrelated rows.
@@ -74,7 +74,7 @@ view even with only two platforms configured.
 
 ---
 
-### User Story 3 - Sync the operator can trust (Priority: P2)
+### Product Journey 3: Sync the operator can trust (Priority: P2)
 
 A platform goes down, changes, rate-limits, or rejects the operator's credentials. Aggregato
 recovers on its own where recovery is possible, says exactly what is wrong where it is not, keeps
@@ -110,7 +110,7 @@ operation independent of which platforms are configured.
 
 ---
 
-### User Story 4 - Fixing identity by hand (Priority: P2)
+### Product Journey 4: Fixing identity by hand (Priority: P2)
 
 The operator works through a queue of items and creators Aggregato refused to guess about, merges
 duplicates it created, and splits apart creators it wrongly joined — for example two different
@@ -139,7 +139,7 @@ the UI. Delivers a correctable archive regardless of automatic match quality.
 
 ---
 
-### User Story 5 - Platforms with no API (Priority: P3)
+### Product Journey 5: Platforms with no API (Priority: P3)
 
 For a platform offering no usable programmatic surface, the operator downloads their own export file
 from that platform and uploads it. Those entries land in the same archive, filterable alongside
@@ -162,7 +162,7 @@ ratings, and identifiers appear correctly in the unified log.
 
 ---
 
-### User Story 6 - Adding support for a new platform (Priority: P3)
+### Product Journey 6: Adding support for a new platform (Priority: P3)
 
 A contributor adds support for a platform Aggregato does not yet cover, by implementing a narrow
 contract — fetch, convert, verify credentials — without needing to understand or modify the core.
@@ -191,7 +191,7 @@ modification.
 
 ---
 
-### User Story 7 - Owning the archive (Priority: P3)
+### Product Journey 7: Owning the archive (Priority: P3)
 
 The operator takes a portable backup of everything, sees what disk is being consumed and by what,
 and turns off the space-hungry parts if they choose.
@@ -247,133 +247,133 @@ intact and browsable.
 
 **Aggregation and storage**
 
-- **FR-001**: System MUST store log entries, ratings, reviews, and creator credits from any number of
+- ****: System MUST store log entries, ratings, reviews, and creator credits from any number of
   configured platforms in one local database.
-- **FR-002**: System MUST retain, for every ingested record, the platform's original payload
+- ****: System MUST retain, for every ingested record, the platform's original payload
   verbatim, and MUST be able to rebuild all derived data from those payloads without contacting the
   platform again. Retention is on by default; disabling it MUST warn the operator.
-- **FR-003**: System MUST retain each rating's original value and scale alongside its normalized
+- ****: System MUST retain each rating's original value and scale alongside its normalized
   value, and MUST NOT present normalized values as cross-platform equivalents.
-- **FR-004**: System MUST record the precision of every logged date and MUST NOT present a fabricated
+- ****: System MUST record the precision of every logged date and MUST NOT present a fabricated
   time as exact.
-- **FR-005**: System MUST treat re-ingesting already-seen data as a no-op.
-- **FR-006**: System MUST support a single user only, and MUST NOT carry any concept of user accounts
+- ****: System MUST treat re-ingesting already-seen data as a no-op.
+- ****: System MUST support a single user only, and MUST NOT carry any concept of user accounts
   in its data.
-- **FR-007**: System MUST preserve activity recorded below item level, attached to its parent item,
+- ****: System MUST preserve activity recorded below item level, attached to its parent item,
   and MUST exclude such activity from that item's aggregate statistics unless explicitly requested.
-- **FR-008**: System MUST NOT allow a platform integration to introduce new media categories or write
+- ****: System MUST NOT allow a platform integration to introduce new media categories or write
   arbitrary data; all ingest MUST be validated against the system's own defined shapes.
 
 **Identity**
 
-- **FR-009**: System MUST unify items across platforms using identifiers those platforms publish in
+- ****: System MUST unify items across platforms using identifiers those platforms publish in
   their own responses, and MUST capture every such identifier a payload offers.
-- **FR-010**: System MUST NOT make outbound requests to any third-party metadata database. The only
+- ****: System MUST NOT make outbound requests to any third-party metadata database. The only
   outbound request to a non-platform host permitted is fetching an image from a URL a platform itself
   supplied.
-- **FR-011**: System MUST unify items lacking a shared identifier only on an unambiguous title,
+- ****: System MUST unify items lacking a shared identifier only on an unambiguous title,
   category, and year match; ambiguous cases MUST be queued for the operator, never guessed.
-- **FR-012**: System MUST prefer creating a duplicate item over performing an uncertain merge.
-- **FR-013**: System MUST provide operator-driven merge for items and both merge and **credit-level
+- ****: System MUST prefer creating a duplicate item over performing an uncertain merge.
+- ****: System MUST provide operator-driven merge for items and both merge and **credit-level
   split** for creators, and MUST record which links were made by name matching versus by a
   platform-supplied identifier so a split is informed.
-- **FR-014**: System MUST make every operator identity decision durable against all subsequent syncs.
-- **FR-015**: System MUST NOT automatically join creators by name across unrelated media domains, and
+- ****: System MUST make every operator identity decision durable against all subsequent syncs.
+- ****: System MUST NOT automatically join creators by name across unrelated media domains, and
   MUST instead surface such pairs as suggestions.
-- **FR-016**: System MUST record every credit's role, the platform's own term for that role verbatim,
+- ****: System MUST record every credit's role, the platform's own term for that role verbatim,
   the name as that item credited them, and their billing order.
-- **FR-017**: Every merge, split, and queue decision MUST be reversible.
+- ****: Every merge, split, and queue decision MUST be reversible.
 
 **Sync and failure handling**
 
-- **FR-018**: System MUST sync each platform on its own configurable schedule, defaulting to a value
+- ****: System MUST sync each platform on its own configurable schedule, defaulting to a value
   the integration declares rather than one global value, and MUST support manual triggering.
-- **FR-019**: System MUST record every sync attempt with its outcome, item counts, and failure
+- ****: System MUST record every sync attempt with its outcome, item counts, and failure
   detail, and MUST group retries of the same failure together for display.
-- **FR-020**: System MUST retry recoverable failures automatically at increasing delays without
+- ****: System MUST retry recoverable failures automatically at increasing delays without
   operator action, and MUST resume a partially-completed sync from its last fully-processed point.
-- **FR-021**: System MUST NOT retry failures that retrying cannot fix — invalid credentials, an access
+- ****: System MUST NOT retry failures that retrying cannot fix — invalid credentials, an access
   block, or a platform whose structure has changed — and MUST tell the operator which occurred and
   what it requires.
-- **FR-022**: System MUST honour platform-supplied rate-limit signals and MUST slow its own cadence in
+- ****: System MUST honour platform-supplied rate-limit signals and MUST slow its own cadence in
   response rather than resuming the previous rate immediately.
-- **FR-023**: System MUST set aside individual records that fail conversion, with their original
+- ****: System MUST set aside individual records that fail conversion, with their original
   payload, continue the run, report the count, and allow them to be re-processed after a fix.
-- **FR-024**: System MUST NOT infer deletions for platforms that do not report deletions; inferred
+- ****: System MUST NOT infer deletions for platforms that do not report deletions; inferred
   deletion MUST be off by default.
-- **FR-025**: A failing, hanging, or crashing platform integration MUST NOT affect any other
+- ****: A failing, hanging, or crashing platform integration MUST NOT affect any other
   platform, the browsing experience, or service startup.
-- **FR-026**: System MUST flag, rather than silently accept, a sync returning fewer items than a
+- ****: System MUST flag, rather than silently accept, a sync returning fewer items than a
   configurable proportion of what the previous run returned for the same window.
 
 **Reading the archive**
 
-- **FR-027**: System MUST expose one documented read interface covering items, entries, opinions,
+- ****: System MUST expose one documented read interface covering items, entries, opinions,
   creators, platforms, sync history, failures, and the resolution queue.
-- **FR-028**: System MUST support filtering the log by media category, media domain, platform, entry
+- ****: System MUST support filtering the log by media category, media domain, platform, entry
   kind, creator, role, date range, score range, presence of a review, and free text over titles and
   review text, with sorting by logged date, ingest date, or score.
-- **FR-029**: System MUST support filtering by media domain as a first-class alternative to
+- ****: System MUST support filtering by media domain as a first-class alternative to
   enumerating individual categories, while keeping every individual category separately addressable.
-- **FR-030**: System MUST page results in a way that does not degrade as the caller reads deeper into
+- ****: System MUST page results in a way that does not degrade as the caller reads deeper into
   a large history.
-- **FR-031**: The web UI MUST consume only the same public read interface available to any other
+- ****: The web UI MUST consume only the same public read interface available to any other
   client; if a screen needs data the interface cannot express, the interface is extended.
-- **FR-032**: System MUST require authentication for all access, with no unauthenticated mode, and
+- ****: System MUST require authentication for all access, with no unauthenticated mode, and
   MUST NOT place the operator's token in browser URLs or page source.
-- **FR-033**: System MUST serve platform-supplied images through a local cache rather than linking to
+- ****: System MUST serve platform-supplied images through a local cache rather than linking to
   the third-party host, MUST fetch them lazily so image availability never affects a sync, and MUST
   show a placeholder rather than falling back to third-party linking when caching is off.
 
 **Platform integrations**
 
-- **FR-034**: Support for each platform MUST be an independent integration implementing a narrow
+- ****: Support for each platform MUST be an independent integration implementing a narrow
   contract, addable without modifying the core.
-- **FR-035**: The system MUST own scheduling, retrying, rate limiting, request pacing, storage, and
+- ****: The system MUST own scheduling, retrying, rate limiting, request pacing, storage, and
   migrations; an integration MUST NOT need to reimplement them.
-- **FR-036**: An integration's data-conversion step MUST be free of network, clock, and storage access
+- ****: An integration's data-conversion step MUST be free of network, clock, and storage access
   so it is testable offline from recorded samples with no credentials.
-- **FR-037**: An integration MUST receive only its own credentials and configuration, and MUST NOT
+- ****: An integration MUST receive only its own credentials and configuration, and MUST NOT
   receive direct storage access or any other integration's secrets.
-- **FR-038**: Integrations MUST be discovered automatically but MUST remain inert until explicitly
+- ****: Integrations MUST be discovered automatically but MUST remain inert until explicitly
   enabled; a fresh install MUST contact nothing.
-- **FR-039**: An integration MUST declare its configuration such that a working settings form is
+- ****: An integration MUST declare its configuration such that a working settings form is
   produced with no additional interface work.
-- **FR-040**: Each integration MUST declare how it obtains data, and that provenance MUST be visible
+- ****: Each integration MUST declare how it obtains data, and that provenance MUST be visible
   to the operator.
-- **FR-041**: Integrations MUST ship with the core release and MUST NOT be installable from within the
+- ****: Integrations MUST ship with the core release and MUST NOT be installable from within the
   application. Any move toward in-application installation or third-party distribution MUST be
   preceded by a re-evaluation of the isolation model, because integrations run with the service's own
   privileges.
-- **FR-042**: Integrations MUST use the highest-fidelity data surface a platform offers, resorting to
+- ****: Integrations MUST use the highest-fidelity data surface a platform offers, resorting to
   scraping only when every better surface is insufficient, and MUST document that evaluation.
-- **FR-043**: For scraping integrations the system MUST enforce, independent of integration behaviour:
+- ****: For scraping integrations the system MUST enforce, independent of integration behaviour:
   conservative pacing with a floor the integration cannot raise, one request at a time per host, an
   identifying user agent naming the project and a contact URL, and backoff on refusal responses.
-- **FR-044**: System MUST NOT circumvent access controls, paywalls, or anti-bot measures, MUST NOT
+- ****: System MUST NOT circumvent access controls, paywalls, or anti-bot measures, MUST NOT
   ship or integrate any solver for them, and MUST stop and report when one is encountered.
-- **FR-045**: A scraping integration MUST retrieve only data the authenticating operator can see in
+- ****: A scraping integration MUST retrieve only data the authenticating operator can see in
   their own browser on their own account, and MUST NOT bundle or share credentials.
-- **FR-046**: A scraping integration MUST ship recorded samples and offline tests as a condition of
+- ****: A scraping integration MUST ship recorded samples and offline tests as a condition of
   acceptance.
-- **FR-047**: When a platform later offers a better data surface, the integration MUST be able to
+- ****: When a platform later offers a better data surface, the integration MUST be able to
   migrate to it without duplicating already-ingested entries where identifiers permit.
 
 **Operation**
 
-- **FR-048**: System MUST deploy as a single unit with one storage location and one command, with no
+- ****: System MUST deploy as a single unit with one storage location and one command, with no
   additional services and no third-party API keys beyond the operator's own platform credentials.
-- **FR-049**: System MUST apply schema migrations automatically on startup, forward-only, taking a
+- ****: System MUST apply schema migrations automatically on startup, forward-only, taking a
   backup of an embedded database first.
-- **FR-050**: System MUST produce a single portable backup artefact containing the archive and the
+- ****: System MUST produce a single portable backup artefact containing the archive and the
   configuration, excluding secrets, restorable into a clean instance without re-syncing.
-- **FR-051**: System MUST report per-platform health including last successful sync, and MUST surface
+- ****: System MUST report per-platform health including last successful sync, and MUST surface
   degraded platforms prominently.
-- **FR-052**: System MUST keep secrets out of on-disk configuration it writes, referencing them from
+- ****: System MUST keep secrets out of on-disk configuration it writes, referencing them from
   the environment instead.
-- **FR-053**: System MUST show current storage usage broken out by each optional retention feature,
+- ****: System MUST show current storage usage broken out by each optional retention feature,
   each of which MUST be independently switchable.
-- **FR-054**: Sync-history retention MUST be configurable, keeping failures longer than successes by
+- ****: Sync-history retention MUST be configurable, keeping failures longer than successes by
   default.
 
 ### Key Entities
@@ -407,37 +407,37 @@ intact and browsable.
 
 ### Measurable Outcomes
 
-- **SC-001**: From a clean machine, an operator reaches a first browsable synced history with one
+- ****: From a clean machine, an operator reaches a first browsable synced history with one
   platform configured in under 15 minutes, having supplied no credentials except their own for that
   platform.
-- **SC-002**: For items logged on two platforms where at least one platform publishes a shared
+- ****: For items logged on two platforms where at least one platform publishes a shared
   identifier, at least 95% unify into a single item with no operator involvement.
-- **SC-003**: No sequence of failed and retried syncs ever produces a lost or duplicated entry;
+- ****: No sequence of failed and retried syncs ever produces a lost or duplicated entry;
   verified by repeatedly interrupting syncs over a fixed data set and comparing the result to an
   uninterrupted run.
-- **SC-004**: A single platform failing — for any of the classified failure reasons — leaves every
+- ****: A single platform failing — for any of the classified failure reasons — leaves every
   other platform's sync unaffected 100% of the time, and never prevents the service from starting.
-- **SC-005**: For every failure the operator sees, the interface names what is wrong and what action
+- ****: For every failure the operator sees, the interface names what is wrong and what action
   it needs; no failure surfaces only as a generic error.
-- **SC-006**: An operator clears a resolution decision in under 10 seconds per decision, working from
+- ****: An operator clears a resolution decision in under 10 seconds per decision, working from
   the keyboard, with an undo available.
-- **SC-007**: Browsing and filtering an archive of 1,000,000 entries returns the first page of results
+- ****: Browsing and filtering an archive of 1,000,000 entries returns the first page of results
   in under 1 second at the 95th percentile, and paging to the far end of that history is no slower
   than paging near the start.
-- **SC-008**: Sustained ingest of a high-volume platform processes at least 50,000 entries per hour on
+- ****: Sustained ingest of a high-volume platform processes at least 50,000 entries per hour on
   modest single-board-class hardware, and ingest throughput does not degrade measurably as the archive
   grows to 1,000,000 entries.
-- **SC-009**: A contributor with no prior knowledge of the codebase adds support for a new platform by
+- ****: A contributor with no prior knowledge of the codebase adds support for a new platform by
   implementing the documented contract only, with zero changes to core code and zero interface work
   for its settings screen.
-- **SC-010**: An integration's data conversion is fully testable with no network access and no
+- ****: An integration's data conversion is fully testable with no network access and no
   credentials, from recorded samples alone.
-- **SC-011**: A correction to how a platform's data is interpreted can be applied to the entire
+- ****: A correction to how a platform's data is interpreted can be applied to the entire
   existing archive without re-contacting that platform.
-- **SC-012**: A backup taken from a populated instance restores into a clean instance with a complete,
+- ****: A backup taken from a populated instance restores into a clean instance with a complete,
   browsable archive and zero re-syncing.
-- **SC-013**: A fresh install with no platform enabled makes zero outbound network requests.
-- **SC-014**: No inferred deletion ever occurs for a platform that does not report deletions, verified
+- ****: A fresh install with no platform enabled makes zero outbound network requests.
+- ****: No inferred deletion ever occurs for a platform that does not report deletions, verified
   against a platform that exposes only recent activity.
 
 ## Out of Scope
@@ -470,7 +470,7 @@ are not derivable from the requirements alone.
 - **No metadata enrichment, ever, as a product position.** The accepted cost is measurably weaker
   automatic unification for platform pairs with no shared identifier — more queue volume, surviving
   duplicates where titles differ, and some genuinely unmatchable pairs. This is why manual curation
-  quality (User Story 4) is load-bearing rather than optional.
+  quality (Product Journey 4) is load-bearing rather than optional.
 - **Items are modelled at the level a platform assigns identity and a rating to**, which differs by
   medium: whole for films and books; series and season for episodic video; track and album for music;
   episode for podcasts. Finer-grained activity is preserved as a reference within an entry, not as its

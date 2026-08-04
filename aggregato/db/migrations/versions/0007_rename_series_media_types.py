@@ -11,7 +11,7 @@ Two stores hold the vocabulary, and both are rewritten:
 
 * ``works.media_type``, pinned by a CHECK constraint that has to be replaced alongside the values.
 * ``merge_log.snapshot``, which keeps a JSON copy of the pre-operation ``works`` rows so an undo can
-  restore them (FR-017). Renaming only the live rows would leave every undo of a TV or anime merge
+  restore them . Renaming only the live rows would leave every undo of a TV or anime merge
   to fail against the new CHECK — a rename that quietly destroyed the undo history it never touched.
 
 Re-runnable, which matters because the SQLite path commits mid-revision (see ``autocommit_block``
@@ -116,7 +116,7 @@ def _update_media_types(renames: Mapping[str, str]) -> None:
 
 
 def _rewrite_snapshots(renames: Mapping[str, str]) -> None:
-    """Rename the media types inside merge_log's pre-operation row snapshots (FR-017)."""
+    """Rename the media types inside merge_log's pre-operation row snapshots ."""
     bind = op.get_bind()
     rows = bind.execute(sa.select(_MERGE_LOG.c.id, _MERGE_LOG.c.snapshot)).fetchall()
     for row_id, snapshot in rows:

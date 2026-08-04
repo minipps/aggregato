@@ -1,4 +1,4 @@
-"""Both processes start from cold, for real (T036, T039, FR-049).
+"""Both processes start from cold, for real .
 
 Every other test in the suite builds its schema with ``metadata.create_all``, which means none of
 them exercises the startup path an operator actually hits. That gap hid two real bugs:
@@ -65,7 +65,7 @@ async def test_the_api_migrates_on_startup_from_an_empty_directory(data_dir: Pat
 
 
 async def test_starting_twice_is_harmless(data_dir: Path) -> None:
-    """An operator restarts the container; migrations must be idempotent (FR-049)."""
+    """An operator restarts the container; migrations must be idempotent ."""
     config = config_for(data_dir)
     for _ in range(2):
         app = create_app(config)
@@ -75,7 +75,7 @@ async def test_starting_twice_is_harmless(data_dir: Path) -> None:
 
 
 async def test_a_second_startup_leaves_a_pre_migration_backup(data_dir: Path) -> None:
-    """FR-049's safety net: a failed migration must never leave no way back."""
+    """'s safety net: a failed migration must never leave no way back."""
     config = config_for(data_dir)
     app = create_app(config)
     async with app.router.lifespan_context(app):
@@ -101,7 +101,7 @@ async def test_the_served_api_answers_after_a_cold_start(data_dir: Path) -> None
                 "/api/v1/health", headers={"Authorization": f"Bearer {TOKEN}"}
             )
 
-    # FR-032: no unauthenticated mode, and the refusal is problem+json like every other failure.
+    # : no unauthenticated mode, and the refusal is problem+json like every other failure.
     assert unauthenticated.status_code == 401
     assert unauthenticated.headers["content-type"] == "application/problem+json"
 
@@ -111,7 +111,7 @@ async def test_the_served_api_answers_after_a_cold_start(data_dir: Path) -> None
 
 
 async def test_a_fresh_install_makes_no_outbound_request(data_dir: Path) -> None:
-    """SC-013, at the startup boundary.
+    """, at the startup boundary.
 
     ``tests/conftest.py`` blocks sockets outright, so a cold start that reached for anything would
     raise here rather than merely be noticed later.
@@ -129,7 +129,7 @@ async def test_a_fresh_install_makes_no_outbound_request(data_dir: Path) -> None
 async def test_the_scheduler_migrates_when_it_starts_first(data_dir: Path) -> None:
     """The regression test for the crash-looping scheduler.
 
-    research.md R14 wants this process independently restartable, so it cannot assume the API went
+    research.md  wants this process independently restartable, so it cannot assume the API went
     first and created the schema for it.
     """
     from aggregato.db.migrate import upgrade_to_head
@@ -148,7 +148,7 @@ async def test_the_scheduler_migrates_when_it_starts_first(data_dir: Path) -> No
 
 
 async def test_an_unset_token_stops_startup(data_dir: Path) -> None:
-    """The only fatal configuration error (FR-032). Fails at build, not on the first request."""
+    """The only fatal configuration error . Fails at build, not on the first request."""
     from aggregato.config import MissingTokenError
 
     with pytest.raises(MissingTokenError, match="AGGREGATO_TOKEN"):

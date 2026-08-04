@@ -1,4 +1,4 @@
-"""A manual work link remains authoritative when the provider resyncs (T100, FR-014)."""
+"""A manual work link remains authoritative when the provider resyncs ."""
 
 from __future__ import annotations
 

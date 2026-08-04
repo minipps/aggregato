@@ -1,15 +1,15 @@
 """Table definitions (data-model.md).
 
-SQLAlchemy Core rather than the ORM (research.md R3): the workload is bulk upsert and analytical
+SQLAlchemy Core rather than the ORM (research.md ): the workload is bulk upsert and analytical
 filtering, so an identity map and lazy loading are liabilities at 50,000 entries/hour, and the hot
 paths are already written as set operations.
 
 Every type choice that differs between SQLite and Postgres lives in ``types.py``; every enum column
 is text plus a ``CHECK`` generated from the vocabulary itself. **There is no ``user_id`` column
-anywhere** (FR-006) — adding one is a v2 schema break, accepted knowingly.
+anywhere**  — adding one is a v2 schema break, accepted knowingly.
 
 Timestamps carry no database or Python default on purpose. The caller passes them from the injected
-clock, so tests can control time (Constitution II) and a row's ``ingested_at`` cannot silently
+clock, so tests can control time (testing guidance) and a row's ``ingested_at`` cannot silently
 disagree with the run that wrote it.
 """
 
@@ -91,13 +91,13 @@ works = Table(
     # season -> series, track -> album. Self-referential; the writer rejects cycles.
     Column("parent_work_id", UUID_PK, ForeignKey("works.id", ondelete="SET NULL")),
     Column("sequence_number", Integer),
-    # Platform payload only, never a URL we invented (FR-010, FR-033).
+    # Platform payload only, never a URL we invented .
     Column("image_url", Text),
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("updated_at", TIMESTAMP, nullable=False),
     check_constraint("media_type", MediaType),
-    # The name-matching lookup (FR-011): media type scopes it, sort_title selects,
+    # The name-matching lookup : media type scopes it, sort_title selects,
     # release_year disambiguates.
     Index(
         "ix_works_media_type_sort_title_release_year", "media_type", "sort_title", "release_year"
@@ -119,7 +119,7 @@ external_ids = Table(
     Column("created_at", TIMESTAMP, nullable=False),
     UniqueConstraint("namespace", "value", "work_id", name="uq_external_ids_namespace_value_work"),
     check_constraint("confidence", Confidence),
-    # The resolution lookup (FR-009) — the cheapest and most reliable way two providers agree.
+    # The resolution lookup  — the cheapest and most reliable way two providers agree.
     Index("ix_external_ids_namespace_value", "namespace", "value"),
     Index("ix_external_ids_work_id", "work_id"),
 )
@@ -132,15 +132,15 @@ provider_items = Table(
     Column("native_id", Text, nullable=False),
     Column("work_id", UUID_PK, ForeignKey("works.id", ondelete="SET NULL")),
     Column("title_as_given", Text, nullable=False),
-    # Verbatim. This is the replay source (FR-002): because normalize is pure, a corrected plugin
+    # Verbatim. This is the replay source : because normalize is pure, a corrected plugin
     # re-derives everything from here with no network.
     Column("raw_payload", JSON_COL, nullable=False),
     Column("schema_version", Integer, nullable=False),
     Column("first_seen_at", TIMESTAMP, nullable=False),
     Column("last_seen_at", TIMESTAMP, nullable=False),
-    # The idempotency key (FR-005). A resync writes nothing new because of this one constraint.
+    # The idempotency key . A resync writes nothing new because of this one constraint.
     UniqueConstraint("provider_id", "native_id", name="uq_provider_items_provider_id_native_id"),
-    # How replay finds stale rows (research.md R16).
+    # How replay finds stale rows (research.md ).
     Index("ix_provider_items_provider_id_schema_version", "provider_id", "schema_version"),
     Index("ix_provider_items_work_id", "work_id"),
 )
@@ -162,7 +162,7 @@ entries = Table(
     Column("native_id", Text),
     Column("kind", String(16), nullable=False),
     Column("logged_at", TIMESTAMP, nullable=False),
-    # Required, no default: a default would silently fabricate exactness (FR-004).
+    # Required, no default: a default would silently fabricate exactness .
     Column("logged_precision", String(16), nullable=False),
     Column("subject_ref", JSON_COL),
     # How far through — deliberately distinct from subject_ref, which says *which* sub-unit.
@@ -170,7 +170,7 @@ entries = Table(
     Column("progress_unit", String(32)),
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("ingested_at", TIMESTAMP, nullable=False),
-    # Soft delete. Tombstoned rows are never hard-deleted (FR-024).
+    # Soft delete. Tombstoned rows are never hard-deleted .
     Column("deleted_at", TIMESTAMP),
     check_constraint("kind", EntryKind),
     check_constraint("logged_precision", LoggedPrecision),
@@ -190,7 +190,7 @@ entries = Table(
         sqlite_where=text("native_id IS NOT NULL"),
         postgresql_where=text("native_id IS NOT NULL"),
     ),
-    # The default keyset order (research.md R6). id breaks ties so the order is total, and no row
+    # The default keyset order (research.md ). id breaks ties so the order is total, and no row
     # is skipped or repeated when timestamps collide — which they will, in bulk-imported history.
     Index("ix_entries_logged_at_id", text("logged_at DESC"), text("id DESC")),
     Index("ix_entries_work_id", "work_id"),
@@ -228,7 +228,7 @@ opinions = Table(
     ),
     Column("rating_raw", DECIMAL),
     Column("rating_scale_id", String(64), ForeignKey("rating_scales.id")),
-    # Derived from rating_raw and the scale (research.md R7). Recomputable, so a corrected scale
+    # Derived from rating_raw and the scale (research.md ). Recomputable, so a corrected scale
     # definition is repaired by replay rather than by re-syncing every platform.
     Column("rating_normalized", Integer),
     Column("subject_ref", JSON_COL),
@@ -244,7 +244,7 @@ opinions = Table(
         "provider_id", "provider_item_id", name="uq_opinions_provider_id_provider_item_id"
     ),
     check_constraint("review_format", ReviewFormat),
-    # A raw rating means nothing without the scale it came from (FR-003).
+    # A raw rating means nothing without the scale it came from .
     CheckConstraint(
         "rating_raw IS NULL OR rating_scale_id IS NOT NULL",
         name="rating_needs_scale",
@@ -307,7 +307,7 @@ creator_aliases = Table(
     Column("creator_id", UUID_PK, ForeignKey("creators.id", ondelete="CASCADE"), nullable=False),
     Column("name", Text, nullable=False),
     Column("normalized", Text, nullable=False),
-    # The scope this name form is trusted in (FR-015). One creator legitimately holds aliases in
+    # The scope this name form is trusted in . One creator legitimately holds aliases in
     # several families — that is exactly what a cross-family merge produces.
     Column("media_family", String(16), nullable=False),
     Column("kind", String(16), nullable=False),
@@ -316,7 +316,7 @@ creator_aliases = Table(
         "creator_id", "normalized", "media_family", name="uq_creator_aliases_creator_normalized"
     ),
     check_constraint("kind", AliasKind),
-    # The hot lookup (research.md R8): one batched SELECT per run, never one per credit.
+    # The hot lookup (research.md ): one batched SELECT per run, never one per credit.
     Index("ix_creator_aliases_normalized_media_family", "normalized", "media_family"),
 )
 
@@ -334,7 +334,7 @@ creator_external_ids = Table(
     ),
     check_constraint("confidence", Confidence),
     # Deliberately **unscoped by family**, unlike aliases: an asserted identifier is identity
-    # everywhere (FR-009 against FR-015).
+    # everywhere ( against ).
     Index("ix_creator_external_ids_namespace_value", "namespace", "value"),
 )
 
@@ -345,14 +345,14 @@ work_credits = Table(
     Column("work_id", UUID_PK, ForeignKey("works.id", ondelete="CASCADE"), nullable=False),
     Column("creator_id", UUID_PK, ForeignKey("creators.id", ondelete="CASCADE"), nullable=False),
     Column("role", String(32), nullable=False),
-    # The platform's own term, verbatim, always — even when `role` maps cleanly (FR-016). This is
+    # The platform's own term, verbatim, always — even when `role` maps cleanly . This is
     # what replay re-derives from when the role vocabulary widens.
     Column("role_raw", Text),
     Column("credited_as", Text),
     # 0 = first-billed; payload order where the platform does not express billing.
     Column("position", Integer, nullable=False),
     Column("source", String(64), nullable=False),
-    # How this creator's identity was established. Required by FR-013: a split must show the
+    # How this creator's identity was established. Required by : a split must show the
     # operator which credits were joined by name rather than by an asserted identifier, and per
     # credit is the only place that information survives.
     Column("link_confidence", String(16), nullable=False),
@@ -376,14 +376,14 @@ resolution_queue = Table(
     Column("provider_id", String(64), nullable=False),
     Column("payload_ref", AUTO_FK, ForeignKey("provider_items.id", ondelete="CASCADE")),
     # Ranked candidates, each carrying **the reason it was proposed** — shown in the UI, because a
-    # candidate list without reasons is not a decision an operator can make (US4 scenario 1).
+    # candidate list without reasons is not a decision an operator can make ( scenario 1).
     Column("candidates", JSON_COL, nullable=False, server_default=text("'[]'")),
     Column("proposed", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("decided_at", TIMESTAMP),
     Column("decision", String(16)),
-    # Distinguishes a genuine ambiguity from a proactive cross-family creator suggestion (FR-015).
-    # The two must not be counted together, or queue depth stops being a risk signal (SC-002).
+    # Distinguishes a genuine ambiguity from a proactive cross-family creator suggestion .
+    # The two must not be counted together, or queue depth stops being a risk signal .
     Column("suggestion_kind", String(32)),
     check_constraint("subject", ResolutionSubject),
     check_constraint("decision", ResolutionDecision),
@@ -402,7 +402,7 @@ merge_log = Table(
     Column("moved_credit_ids", JSON_COL),
     Column("performed_at", TIMESTAMP, nullable=False),
     Column("undone_at", TIMESTAMP),
-    # The pre-operation row state. This is what makes undo possible (FR-017) without event-sourcing
+    # The pre-operation row state. This is what makes undo possible  without event-sourcing
     # the whole database.
     Column("snapshot", JSON_COL, nullable=False),
     check_constraint("subject", ResolutionSubject),
@@ -420,10 +420,10 @@ providers = Table(
     Column("status", String(16), nullable=False),
     Column("acquisition", String(16), nullable=False),
     Column("schema_version", Integer, nullable=False),
-    # False for drop-in development providers, which the UI labels `unreviewed` (FR-041).
+    # False for drop-in development providers, which the UI labels `unreviewed` .
     Column("reviewed", Boolean, nullable=False, server_default=text("1")),
     # Database overrides only. File values are not copied here, so "file-pinned" stays answerable
-    # (research.md R15).
+    # (research.md ).
     Column("config", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("last_error", JSON_COL),
     Column("created_at", TIMESTAMP, nullable=False),
@@ -440,7 +440,7 @@ provider_state = Table(
     ),
     # Opaque and provider-owned. The host persists it and never interprets it.
     Column("cursor", JSON_COL),
-    # The schedule *is* this column (research.md R1). No cron expression, no second store.
+    # The schedule *is* this column (research.md ). No cron expression, no second store.
     Column("next_run_at", TIMESTAMP),
     Column("effective_interval_seconds", Integer, nullable=False),
     Column("consecutive_failures", Integer, nullable=False, server_default=text("0")),
@@ -449,13 +449,13 @@ provider_state = Table(
     # Set when an operator asks for a specific mode, read and cleared by the next dispatch. The
     # schedule itself has no mode: a scheduled run is always incremental, so "full" is a one-shot
     # request that has to outlive the request that made it — the API cannot spawn the run itself
-    # (research.md R1), and without this the mode was silently downgraded on the way to the child.
+    # (research.md ), and without this the mode was silently downgraded on the way to the child.
     Column("requested_mode", String(16)),
-    # The sanity baseline (research.md R21): the previous run's item count for the same window.
+    # The sanity baseline (research.md ): the previous run's item count for the same window.
     # This is the guard that makes a broken scraper look like a broken scraper rather than like an
     # emptied history.
     Column("last_window_item_count", Integer),
-    # The provider's own opaque key/value store (FR-037).
+    # The provider's own opaque key/value store .
     Column("kv", JSON_COL, nullable=False, server_default=text("'{}'")),
     # The only thing the scheduler selects on.
     Index("ix_provider_state_next_run_at", "next_run_at"),
@@ -484,7 +484,7 @@ sync_runs = Table(
     metadata,
     Column("id", AUTO_PK, primary_key=True, autoincrement=True),
     Column("provider_id", String(64), nullable=False),
-    # Groups the retries of one logical piece of work (FR-019), so the UI can show four attempts as
+    # Groups the retries of one logical piece of work , so the UI can show four attempts as
     # one failing sync rather than four unrelated failures.
     Column("lineage_id", UUID_PK, nullable=False),
     Column("attempt", Integer, nullable=False),
@@ -513,7 +513,7 @@ ingest_failures = Table(
     Column("id", AUTO_PK, primary_key=True, autoincrement=True),
     Column("provider_id", String(64), nullable=False),
     Column("sync_run_id", AUTO_FK, ForeignKey("sync_runs.id", ondelete="CASCADE"), nullable=False),
-    # Stored so a fixed plugin can replay it (FR-023). Without the payload, "one bad record" is an
+    # Stored so a fixed plugin can replay it . Without the payload, "one bad record" is an
     # unreproducible bug report.
     Column("raw_payload", JSON_COL, nullable=False),
     Column("error", Text, nullable=False),
@@ -531,7 +531,7 @@ sessions = Table(
     Column("id", String(64), primary_key=True),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("expires_at", TIMESTAMP, nullable=False),
-    # So rotating api.token invalidates every existing session (research.md R12). Sessions live in
+    # So rotating api.token invalidates every existing session (research.md ). Sessions live in
     # the database precisely so rotation can actually reach them.
     Column("token_fingerprint", String(64), nullable=False),
     Index("ix_sessions_expires_at", "expires_at"),

@@ -1,6 +1,6 @@
 """The ``koito`` provider: listens from a self-hosted Koito server (https://github.com/gabehf/Koito).
 
-``acquisition`` is ``api`` and no higher surface exists (FR-042, contract §6). Koito is
+``acquisition`` is ``api`` and no higher surface exists (, contract §6). Koito is
 *ListenBrainz-compatible for submission only* — ``/apis/listenbrainz/1`` exposes ``submit-listens``
 and ``validate-token`` and nothing that reads a history — so the ``listenbrainz`` provider aimed
 at a Koito base URL would read nothing. The history lives on Koito's own web API,
@@ -10,7 +10,7 @@ it is a lower surface, not a higher one.
 
 Paging walks **backwards** in time by the ``to`` query parameter, which Koito applies as an
 inclusive ``listened_at BETWEEN from AND to``. A ``Checkpoint`` after each page carries the next
-boundary, so a run that dies resumes there (FR-020). ``incremental`` moves ``from`` up to one second
+boundary, so a run that dies resumes there . ``incremental`` moves ``from`` up to one second
 past the newest listen already seen.
 
 Two Koito details drive the request shape and are not obvious from the endpoint:
@@ -23,7 +23,7 @@ Two Koito details drive the request shape and are not obvious from the endpoint:
 
 A listen is a **track** and nothing else: the payload names no release, and Koito's own identifiers
 for the track and its artists are integers scoped to that installation, filed under ``koito_track``
-and ``koito_artist`` (FR-009).
+and ``koito_artist`` .
 
 Artwork needs one more step than the other providers. ``track.image`` holds a path per size
 (``xs``/``small``/``medium``/``large``/``xl``) **relative to the configured server**, and an empty
@@ -79,7 +79,7 @@ from aggregato.providers.errors import (
 PAGE_SIZE = 100
 """Listens per request. Koito's own default, and its cap is 500 — a request over the cap is silently
 reduced to 100 rather than rejected, so asking for more buys nothing. A smaller page also means a
-crash loses less work, because the checkpoint boundary is the page (FR-020)."""
+crash loses less work, because the checkpoint boundary is the page ."""
 
 EPOCH_FLOOR = 1
 """The ``from`` value for a walk with no lower bound. Not ``0``: Koito treats a zero ``from`` as
@@ -87,7 +87,7 @@ EPOCH_FLOOR = 1
 
 
 class KoitoConfig(BaseModel):
-    """Settings for the Koito provider — and the settings form the UI renders (FR-039)."""
+    """Settings for the Koito provider — and the settings form the UI renders ."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -146,7 +146,7 @@ class KoitoProvider:
     schema_version: int = 1
     # Koito is the operator's own server: its only rate limit is ten requests a minute on the login
     # route, which this provider never calls. So the interval is a courtesy to a small self-hosted
-    # box rather than a quota division (FR-018) — five minutes keeps a listening session near-live
+    # box rather than a quota division  — five minutes keeps a listening session near-live
     # at under 300 requests a day against a host the operator owns.
     default_poll_interval: timedelta = timedelta(minutes=5)
 
@@ -157,7 +157,7 @@ class KoitoProvider:
 
         Args:
             ctx: Host context. ``ctx.config`` must be a ``KoitoConfig``; ``ctx.http`` is the only
-                client used (FR-043).
+                client used .
             cursor: ``{"newest_ts": int | None, "to_ts": int | None}`` from a previous checkpoint.
                 ``to_ts`` is the inclusive upper bound the next page should start at, one second
                 below the oldest listen already emitted. ``newest_ts`` is the high-water mark an
@@ -205,7 +205,7 @@ class KoitoProvider:
 
             for listen in listens:
                 # Before the record is yielded, so the payload the host retains is the one replay
-                # will read (FR-002). This is the last point that knows the server the paths belong
+                # will read . This is the last point that knows the server the paths belong
                 # to. ponytail: an operator who moves the server keeps the old host in payloads
                 # already stored; re-polling restamps them, and the cache only fetches a URL once.
                 _absolutize_image(config, listen)
@@ -224,24 +224,24 @@ class KoitoProvider:
             newest_ts = max([*stamps, newest_ts]) if newest_ts is not None else max(stamps)
             to_ts = oldest - 1
             # After the page, not before: the cursor names where to continue, so a crash here
-            # re-emits nothing that was already ingested (FR-020).
+            # re-emits nothing that was already ingested .
             yield Checkpoint(cursor=Cursor(state={"newest_ts": newest_ts, "to_ts": to_ts}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         """Map one listen onto the host vocabulary. Pure: no clock, no I/O, no randomness.
 
         ``time`` is an RFC 3339 instant *in the payload*. Replay re-runs this over old payloads, and
-        a clock read would rewrite history on the second pass (FR-002).
+        a clock read would rewrite history on the second pass .
 
         Args:
             raw: A listen as ``fetch`` yielded it, or as replay read it back.
 
         Returns:
             A ``NormalizedBatch`` — identical on every call for the same input. Every identifier in
-            the payload is extracted (FR-009) and ``role_raw`` keeps Koito's own field name verbatim
-            (FR-016). ``image_url`` is whichever size ``IMAGE_SIZES`` prefers, and only ever an
+            the payload is extracted  and ``role_raw`` keeps Koito's own field name verbatim
+            . ``image_url`` is whichever size ``IMAGE_SIZES`` prefers, and only ever an
             absolute URL — the host stores the platform's own artwork URL and never goes looking for
-            art of its own (FR-010, FR-033).
+            art of its own .
 
         Raises:
             StructureChangedError: The stored payload is not a listen — no parsable ``time``, or no
@@ -271,7 +271,7 @@ class KoitoProvider:
                     # parsed twice, so the entry and the paging cursor cannot disagree.
                     logged_at=datetime.fromtimestamp(_listened_at(listen), tz=UTC),
                     # `exact`, and honestly so: Koito recorded the instant the scrobble was
-                    # submitted for. Nothing here was widened or narrowed (FR-004).
+                    # submitted for. Nothing here was widened or narrowed .
                     logged_precision=LoggedPrecision.EXACT,
                     native_id=raw.native_id,
                 )
@@ -280,10 +280,10 @@ class KoitoProvider:
                 NormalizedCredit(
                     creator_name=_require_text(artist.get("name")),
                     # Koito does not say whether an artist is a person or a band, and guessing from
-                    # the name is exactly the kind of invention FR-008 forbids.
+                    # the name is exactly the kind of invention  forbids.
                     creator_kind=CreatorKind.UNKNOWN,
                     role=Role.PERFORMER,
-                    # Koito's own term for this field, verbatim (FR-016): it has no word for the
+                    # Koito's own term for this field, verbatim : it has no word for the
                     # relationship beyond the key it files the names under.
                     role_raw="artists",
                     position=position,
@@ -321,7 +321,7 @@ class KoitoProvider:
             return CheckResult(ok=False, error_class=exc.error_class, detail=str(exc))
         except Exception as exc:
             # Deliberately broad, and it cannot be narrower here: naming `httpx.TransportError`
-            # would mean importing httpx, which the FR-043 import contract forbids in a provider
+            # would mean importing httpx, which the  import contract forbids in a provider
             # package. `check` is a diagnostic the operator asked for (contract §1), so a DNS
             # failure has to come back as the answer rather than as a crash in the settings UI.
             return CheckResult(
@@ -395,7 +395,7 @@ def _listens(body: object) -> list[dict[str, Any]]:
 
     Raises:
         StructureChangedError: The response is not that shape. Never a silent empty result, because
-            silence plus delete inference is how an archive gets erased (FR-024, FR-026).
+            silence plus delete inference is how an archive gets erased .
     """
     if not isinstance(body, dict):
         raise StructureChangedError("listens response is not a JSON object")
@@ -427,7 +427,7 @@ def _listened_at(listen: Mapping[str, Any]) -> int:
             moment = None
         if moment is not None:
             # A Koito response is UTC-stamped, but a naive value would make the unix second depend
-            # on the reader's timezone — which is a clock read by another name (FR-002).
+            # on the reader's timezone — which is a clock read by another name .
             return int(moment.replace(tzinfo=moment.tzinfo or UTC).timestamp())
     raise StructureChangedError(f"a listen carries no RFC 3339 `time`: {value!r}")
 
@@ -456,7 +456,7 @@ def _ids(
 def _ids_raw(
     node: Mapping[str, Any], id_namespace: str, mbid_namespace: str
 ) -> list[tuple[str, str, Confidence]]:
-    """Every identifier Koito states about a track or an artist (FR-009).
+    """Every identifier Koito states about a track or an artist .
 
     ``id`` is always present. ``musicbrainz_id`` is not — Koito omits it from the trimmed track and
     artist objects a listen carries today, and states it on the full ones. It is read here anyway,
