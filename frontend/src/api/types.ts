@@ -229,6 +229,8 @@ export interface Provider {
   consecutive_failures?: number
   last_error?: ProviderError | null
   file_pinned_settings?: string[]
+  /** Configured values that the API has classified as safe to show; credentials are omitted. */
+  current_settings?: Record<string, unknown>
 }
 
 export interface CheckResult {

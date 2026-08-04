@@ -74,6 +74,8 @@ class ProviderView(BaseModel):
     last_error: LastError | None = None
     #: Settings fixed by the config file, which the UI shows as uneditable (research.md R15).
     file_pinned_settings: list[str] = []
+    #: Configured values that are safe to render.  Write-only and secret fields never leave the API.
+    current_settings: dict[str, Any] = {}
 
 
 class SyncQueued(BaseModel):
@@ -158,9 +160,10 @@ async def update_provider_config(
 ) -> ProviderView:
     """Validate and persist one provider's configuration without enabling it.
 
-    The opaque settings stay in the local database and are deliberately never included in a
-    response: provider schemas can contain credentials. The scheduler reads this row for its next
-    run, so this endpoint is a real configuration write rather than UI-only state.
+    The opaque settings stay in the local database. Responses include only the subset declared
+    safe to render by the provider schema; credentials never leave the API. The scheduler reads
+    this row for its next run, so this endpoint is a real configuration write rather than UI-only
+    state.
 
     Failure modes: 404 for an unavailable provider; 409 when its settings are pinned by the YAML
     file; 422 when the body does not satisfy the provider's own configuration model.
@@ -513,6 +516,7 @@ async def _provider_rows(engine: AsyncEngine) -> dict[str, Any]:
                 provider_state.c.last_success_at,
                 provider_state.c.consecutive_failures,
                 provider_state.c.effective_interval_seconds,
+                providers.c.config,
             ).join(
                 provider_state,
                 provider_state.c.provider_id == providers.c.id,
@@ -526,6 +530,14 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
     """Merge a provider's declaration with its database state into the contract's shape."""
     pinned = sorted(p for p in config.file_pinned if p.startswith(f"providers.{info.id}."))
     interval = int(info.default_poll_interval.total_seconds())
+    stored_settings = getattr(row, "config", None) if row is not None else None
+    settings = stored_settings if isinstance(stored_settings, dict) and stored_settings else None
+    if settings is None:
+        fallback = config.providers.get(info.id)
+        settings = fallback.settings if fallback is not None else {}
+    current_settings = _public_settings(
+        load_provider(info.id, config.provider_dir).config_model, settings
+    )
 
     if row is None:
         # Discovered but never enabled: the fresh-install state, and not an error.
@@ -540,6 +552,7 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
             media_types=[MediaType(m) for m in sorted(info.media_types)],
             poll_interval_seconds=interval,
             file_pinned_settings=pinned,
+            current_settings=current_settings,
         )
 
     return ProviderView(
@@ -557,6 +570,55 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
         consecutive_failures=int(row.consecutive_failures or 0),
         last_error=LastError.model_validate(row.last_error) if row.last_error else None,
         file_pinned_settings=pinned,
+        current_settings=current_settings,
+    )
+
+
+def _public_settings(model: type[BaseModel], settings: dict[str, Any]) -> dict[str, Any]:
+    """Return only configuration values that are explicitly safe to send to the browser.
+
+    Provider settings can contain credentials.  The provider-owned JSON Schema is the authority:
+    unknown keys are omitted, as are ``writeOnly``/password fields and conventionally named
+    credential fields.  Recursing through declared object fields keeps that guarantee true for
+    future nested provider settings too.
+    """
+    schema = model.model_json_schema()
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        return {}
+    return {
+        key: _public_value(value, field_schema)
+        for key, value in settings.items()
+        if isinstance(key, str)
+        and isinstance(field_schema := properties.get(key), dict)
+        and not _is_sensitive_setting(key, field_schema)
+    }
+
+
+def _public_value(value: Any, schema: dict[str, Any]) -> Any:
+    """Remove secret descendants from a value described by one JSON Schema node."""
+    properties = schema.get("properties")
+    if isinstance(value, dict) and isinstance(properties, dict):
+        return {
+            key: _public_value(child, child_schema)
+            for key, child in value.items()
+            if isinstance(key, str)
+            and isinstance(child_schema := properties.get(key), dict)
+            and not _is_sensitive_setting(key, child_schema)
+        }
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        return [_public_value(item, schema["items"]) for item in value]
+    return value
+
+
+def _is_sensitive_setting(name: str, schema: dict[str, Any]) -> bool:
+    """Recognise both schema-marked secrets and defensively named credential fields."""
+    normalized = name.lower().replace("-", "_")
+    sensitive_names = {"api_key", "apikey", "key", "password", "secret", "token", "credential"}
+    return (
+        bool(schema.get("writeOnly"))
+        or schema.get("format") == "password"
+        or normalized in sensitive_names
     )
 
 

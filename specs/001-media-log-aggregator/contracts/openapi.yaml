@@ -889,6 +889,10 @@ components:
           type: array
           items: { type: string }
           description: Settings fixed by the config file, which the UI must show as uneditable (R15)
+        current_settings:
+          type: object
+          additionalProperties: true
+          description: Configured values safe to display; passwords, API keys, and other write-only settings are omitted.
 
     SyncRun:
       type: object
