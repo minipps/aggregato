@@ -221,7 +221,7 @@ def _username_from_rss(payload: bytes) -> str | None:
     except (DefusedXmlException, ET.ParseError):
         return None
     link = root.findtext("./channel/link")
-    if not link:
+    if not isinstance(link, str) or not link:
         return None
     parsed = urlsplit(link.strip())
     if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
