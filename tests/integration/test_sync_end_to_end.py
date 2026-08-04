@@ -575,7 +575,9 @@ async def test_a_failed_run_leaves_the_cursor_alone(engine: AsyncEngine) -> None
 
 def test_sqlite_runs_are_serialized_but_server_databases_keep_parallelism() -> None:
     """A post-restart backlog must not overlap SQLite writers."""
-    assert max_concurrent_runs("sqlite+aiosqlite:///data/aggregato.db") == SQLITE_MAX_CONCURRENT_RUNS
+    assert (
+        max_concurrent_runs("sqlite+aiosqlite:///data/aggregato.db") == SQLITE_MAX_CONCURRENT_RUNS
+    )
     assert max_concurrent_runs("postgresql+asyncpg://user:secret@db/aggregato") == (
         DEFAULT_MAX_CONCURRENT_RUNS
     )
