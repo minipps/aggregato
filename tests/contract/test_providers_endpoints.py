@@ -83,9 +83,9 @@ async def test_listing_returns_the_contract_shape(client: httpx.AsyncClient) -> 
 async def test_a_discovered_provider_is_listed_before_it_is_enabled(
     client: httpx.AsyncClient,
 ) -> None:
-    """Discovery is not activation. Listing must work with no database rows at all ."""
+    """Discovery is not activation, and test-only providers are not advertised ."""
     body = (await client.get("/api/v1/providers")).json()
-    assert {p["id"] for p in body} >= {"fixture"}
+    assert "fixture" not in {p["id"] for p in body}
     assert all(p["enabled"] is False for p in body)
 
 

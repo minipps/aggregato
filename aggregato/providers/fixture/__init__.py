@@ -360,6 +360,7 @@ def _parse_pages(text: str, path: Path) -> Iterator[tuple[int, list[dict[str, An
 
 
 provider: Provider = FixtureProvider()
+api_visible = False
 """The registration point (aggregato/providers/registry.py convention 2).
 
 Annotated as ``Provider`` so the type checker proves this class satisfies the protocol here, at the

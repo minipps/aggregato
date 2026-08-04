@@ -71,6 +71,8 @@ class ProviderInfo:
     reviewed: bool
     """``True`` for bundled providers; ``False`` for drop-ins, which the UI labels as unreviewed
     and warns about on the enable action ."""
+    api_visible: bool
+    """Whether the provider should be advertised by the operator-facing API."""
 
 
 def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
@@ -175,6 +177,7 @@ def _drop_in_info(path: Path) -> ProviderInfo:
         schema_version=provider.schema_version,
         default_poll_interval=provider.default_poll_interval,
         reviewed=False,
+        api_visible=bool(getattr(sys.modules[_drop_in_module_path(path)], "api_visible", True)),
     )
 
 
@@ -205,6 +208,7 @@ def _drop_in_module_path(path: Path) -> str:
 
 def _info(package_name: str, *, reviewed: bool) -> ProviderInfo:
     module_path = f"{__package__}.{package_name}"
+    module = importlib.import_module(module_path)
     provider = _provider_object(module_path, package_name)
     return ProviderInfo(
         id=provider.id,
@@ -218,6 +222,7 @@ def _info(package_name: str, *, reviewed: bool) -> ProviderInfo:
         schema_version=provider.schema_version,
         default_poll_interval=provider.default_poll_interval,
         reviewed=reviewed,
+        api_visible=bool(getattr(module, "api_visible", True)),
     )
 
 
