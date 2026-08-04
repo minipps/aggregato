@@ -15,6 +15,7 @@
 .codex/           export-ignore
 .codegraph/       export-ignore
 CLAUDE.md         export-ignore
+AGENTS.md         export-ignore
 CONTRIBUTING.md   export-ignore
 # Cuts releases from a checkout; useless inside the artefact it produces.
 scripts/          export-ignore
