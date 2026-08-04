@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, select, update
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.db.engine import transaction
@@ -45,12 +46,30 @@ POLL_INTERVAL_SECONDS = 5.0
 #: a politeness one — politeness is per host and lives in the HTTP client.
 DEFAULT_MAX_CONCURRENT_RUNS = 3
 
+# SQLite accepts only one writer at a time.  After downtime several providers can be due together;
+# letting their ingest transactions overlap turns that backlog into avoidable ``database is locked``
+# failures.  Other backends retain the normal parallelism.
+SQLITE_MAX_CONCURRENT_RUNS = 1
+
 #: Spread on the first scheduling after boot. Without it, providers enabled in one sitting sync in
 #: lockstep forever after, turning a restart into a thundering herd against several platforms at
 #: once (FR-018).
 BOOT_JITTER_SECONDS = 120
 
 log = logging.getLogger(__name__)
+
+
+def max_concurrent_runs(database_url: str) -> int:
+    """Return the safe scheduler concurrency for the configured database backend.
+
+    SQLite's WAL mode lets reads proceed during a write, but it does not make writes concurrent.
+    Serializing provider runs there is particularly important just after restart, when many overdue
+    providers may be dispatched together.  Postgres and other supported server databases retain
+    the regular worker parallelism.
+    """
+    if make_url(database_url).get_backend_name() == "sqlite":
+        return SQLITE_MAX_CONCURRENT_RUNS
+    return DEFAULT_MAX_CONCURRENT_RUNS
 
 
 @dataclass(frozen=True)
