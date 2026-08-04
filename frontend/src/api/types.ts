@@ -268,7 +268,7 @@ export interface ArchiveSettings {
   storage: { raw_payload_bytes: number; image_cache_bytes: number; database_bytes: number }
 }
 
-export type StatsPeriod = 'all' | 'year' | 'month' | 'week'
+export type StatsPeriod = 'all' | 'year' | 'month' | 'week' | 'day'
 
 export interface StatsSummary {
   period: StatsPeriod

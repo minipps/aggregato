@@ -22,7 +22,7 @@ from aggregato.domain.enums import MediaType, Role
 
 router = APIRouter(tags=["log"])
 
-Period = Literal["all", "year", "month", "week"]
+Period = Literal["all", "year", "month", "week", "day"]
 TopGroup = Literal["work", "creator"]
 
 
@@ -78,8 +78,13 @@ def _bucket(period: Period, dialect_name: str) -> ColumnElement[str]:
     """
     if period == "all":
         return cast("all", String)
-    sqlite_patterns = {"year": "%Y", "month": "%Y-%m", "week": "%Y-W%W"}
-    postgres_patterns = {"year": "YYYY", "month": "YYYY-MM", "week": 'IYYY-"W"IW'}
+    sqlite_patterns = {"year": "%Y", "month": "%Y-%m", "week": "%Y-W%W", "day": "%Y-%m-%d"}
+    postgres_patterns = {
+        "year": "YYYY",
+        "month": "YYYY-MM",
+        "week": 'IYYY-"W"IW',
+        "day": "YYYY-MM-DD",
+    }
     if dialect_name == "postgresql":
         return func.to_char(entries.c.logged_at, postgres_patterns[period])
     return func.strftime(sqlite_patterns[period], entries.c.logged_at)
