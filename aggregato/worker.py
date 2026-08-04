@@ -28,7 +28,7 @@ from aggregato.db.retention import cleanup
 from aggregato.domain.clock import SYSTEM_CLOCK
 from aggregato.logging import configure_logging
 from aggregato.sync.dispatch import build_dispatch
-from aggregato.sync.scheduler import Scheduler, recover_interrupted_runs
+from aggregato.sync.scheduler import Scheduler, max_concurrent_runs, recover_interrupted_runs
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +55,11 @@ async def serve(config: Config) -> None:
     recovered = await recover_interrupted_runs(engine, now=SYSTEM_CLOCK.now())
     if recovered:
         log.warning("recovered interrupted syncs for %s", ", ".join(recovered))
-    scheduler = Scheduler(engine, dispatch=build_dispatch(engine, config))
+    scheduler = Scheduler(
+        engine,
+        dispatch=build_dispatch(engine, config),
+        max_concurrent=max_concurrent_runs(config.database_url),
+    )
     retention_task = asyncio.create_task(
         _retention_loop(engine, config.data_dir), name="retention-cleanup"
     )

@@ -37,7 +37,15 @@ from aggregato.db.search import create_search_index
 from aggregato.domain.enums import ErrorClass, FetchMode, ProviderStatus, RunStatus
 from aggregato.providers.fixture import FixtureProvider
 from aggregato.sync.dispatch import build_dispatch, run_once
-from aggregato.sync.scheduler import Scheduler, claim, due_providers, recover_interrupted_runs
+from aggregato.sync.scheduler import (
+    DEFAULT_MAX_CONCURRENT_RUNS,
+    SQLITE_MAX_CONCURRENT_RUNS,
+    Scheduler,
+    claim,
+    due_providers,
+    max_concurrent_runs,
+    recover_interrupted_runs,
+)
 
 FIXTURE = (Path(__file__).parent.parent / "fixtures/fixture/log-two-pages.jsonl").resolve()
 BROKEN = (Path(__file__).parent.parent / "fixtures/fixture/unreadable-not-json.jsonl").resolve()
@@ -563,6 +571,14 @@ async def test_a_failed_run_leaves_the_cursor_alone(engine: AsyncEngine) -> None
 
 
 # --- The scheduler loop dispatches ------------------------------------------------------------
+
+
+def test_sqlite_runs_are_serialized_but_server_databases_keep_parallelism() -> None:
+    """A post-restart backlog must not overlap SQLite writers."""
+    assert max_concurrent_runs("sqlite+aiosqlite:///data/aggregato.db") == SQLITE_MAX_CONCURRENT_RUNS
+    assert max_concurrent_runs("postgresql+asyncpg://user:secret@db/aggregato") == (
+        DEFAULT_MAX_CONCURRENT_RUNS
+    )
 
 
 async def test_the_scheduler_dispatches_a_due_provider(engine: AsyncEngine) -> None:
