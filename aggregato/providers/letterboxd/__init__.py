@@ -95,9 +95,10 @@ class LetterboxdProvider:
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: FetchMode
     ) -> AsyncIterator[RawRecord | Checkpoint]:
-        if cursor is not None and cursor.state.get("feed_complete"):
-            yield Checkpoint(cursor=cursor)
-            return
+        # An RSS feed is a rolling snapshot, rather than a paginated history.  In particular, a
+        # completed earlier poll must never suppress the next scheduled poll: new diary entries
+        # only appear by fetching the feed again.  `cursor` is intentionally unused here; the
+        # writer's `(provider_id, native_id)` key makes repeatedly observed GUIDs idempotent.
         if mode is FetchMode.IMPORT:
             if ctx.import_path is None:
                 raise ProviderError("Letterboxd import mode requires an RSS or XML export")
@@ -122,7 +123,7 @@ class LetterboxdProvider:
                 payload = response.content
         for item in _items(payload):
             yield RawRecord(native_id=item["guid"], payload=item)
-        yield Checkpoint(cursor=Cursor(state={"feed_complete": True}))
+        yield Checkpoint(cursor=Cursor(state={}))
 
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         item = raw.payload
@@ -198,7 +199,7 @@ def _config(ctx: ProviderContext) -> LetterboxdConfig:
 def _rss_url(config: LetterboxdConfig) -> str | None:
     if config.rss_url is not None:
         return str(config.rss_url)
-    return f"https://letterboxd.com/{config.username}/rss/" if config.username else None
+    return f"https://letterboxd.com/{config.username}/rss" if config.username else None
 
 
 def _items(payload: bytes) -> list[dict[str, Any]]:
