@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.config import Config
@@ -83,9 +83,16 @@ def build_dispatch(
         replay_job = (
             None if job is not None else await _next_replay_job(engine, due.provider_id, now=now)
         )
-        # Cleared before the run, not after: a full run that crashed would otherwise be full again
-        # on every retry, re-walking an entire history each time the ladder fires.
-        requested, requested_lineage = await _claim_requested_mode(engine, due)
+        # Import/replay jobs have their own durable lineage and must not consume an ordinary sync
+        # request while they are being serviced. For an ordinary run, request consumption happens
+        # inside the same transaction that inserts sync_runs below.
+        ordinary_request = job is None and replay_job is None
+        requested_mode = due.requested_mode if ordinary_request else None
+        requested_lineage = due.requested_lineage_id if due.requested_mode is not None else None
+        preserve_requested_request = not ordinary_request and due.requested_mode is not None
+        requested = (
+            FetchMode.FULL if requested_mode == str(FetchMode.FULL) else FetchMode.INCREMENTAL
+        )
         lineage = (
             job[2]
             if job is not None and job[2] is not None
@@ -115,6 +122,9 @@ def build_dispatch(
                 interval_seconds=due.interval_seconds,
                 clock=clock,
                 lineage_id=lineage,
+                requested_mode=requested_mode,
+                requested_lineage_id=requested_lineage,
+                preserve_requested_request=preserve_requested_request,
                 import_path=job[1] if job is not None else None,
                 replay_records=[replay_job[2]] if replay_job is not None else None,
                 replay_only=replay_job is not None,
@@ -129,8 +139,9 @@ def build_dispatch(
             raise
         if job is not None:
             if outcome.status is RunStatus.SUCCESS:
-                await _finish_import_job(engine, job[0], owner=job[3], now=clock.now())
-                await _remove_import_file(job[1])
+                finished = await _finish_import_job(engine, job[0], owner=job[3], now=clock.now())
+                if finished:
+                    await _remove_import_file(job[1])
             else:
                 await _fail_import_job(
                     engine,
@@ -156,39 +167,6 @@ def build_dispatch(
     return dispatch
 
 
-async def _claim_requested_mode(
-    engine: AsyncEngine, due: DueProvider
-) -> tuple[FetchMode, uuid.UUID | None]:
-    """The mode this run should use, consuming an operator's one-shot request.
-
-    A scheduled run is always ``incremental``: the schedule is a timestamp column and carries no
-    mode (research.md ). ``POST /providers/{id}/sync {"mode": "full"}`` therefore leaves its
-    request on ``provider_state.requested_mode`` for whichever dispatch picks the provider up, and
-    this consumes it — a request honored twice would mean an operator's single click re-walked a
-    platform's whole history on every subsequent poll.
-
-    Only ``full`` is accepted from the column. ``import`` is driven by a queued job rather than a
-    mode request, and an unrecognized value must not be able to reach a provider's ``fetch``.
-    """
-    if due.requested_mode is None:
-        return FetchMode.INCREMENTAL, None
-    requested_lineage = getattr(due, "requested_lineage_id", None)
-    async with transaction(engine) as conn:
-        await conn.execute(
-            update(provider_state)
-            .where(
-                provider_state.c.provider_id == due.provider_id,
-                provider_state.c.requested_mode == due.requested_mode,
-                provider_state.c.requested_lineage_id == requested_lineage,
-            )
-            .values(requested_mode=None, requested_lineage_id=None)
-        )
-    return (
-        FetchMode.FULL if due.requested_mode == str(FetchMode.FULL) else FetchMode.INCREMENTAL,
-        requested_lineage,
-    )
-
-
 async def _next_import_job(
     engine: AsyncEngine, provider_id: str, *, now: datetime
 ) -> tuple[int, Path, uuid.UUID | None, str] | None:
@@ -202,7 +180,11 @@ async def _next_import_job(
                     import_jobs.c.provider_id == provider_id,
                     import_jobs.c.finished_at.is_(None),
                     import_jobs.c.failed_at.is_(None),
-                    import_jobs.c.started_at.is_(None) | (import_jobs.c.lease_expires_at <= now),
+                    or_(
+                        import_jobs.c.started_at.is_(None),
+                        import_jobs.c.lease_expires_at.is_(None),
+                        import_jobs.c.lease_expires_at <= now,
+                    ),
                 )
                 .order_by(import_jobs.c.id)
                 .limit(1)
@@ -217,7 +199,11 @@ async def _next_import_job(
                     import_jobs.c.id == job_id,
                     import_jobs.c.finished_at.is_(None),
                     import_jobs.c.failed_at.is_(None),
-                    import_jobs.c.started_at.is_(None) | (import_jobs.c.lease_expires_at <= now),
+                    or_(
+                        import_jobs.c.started_at.is_(None),
+                        import_jobs.c.lease_expires_at.is_(None),
+                        import_jobs.c.lease_expires_at <= now,
+                    ),
                 )
                 .values(
                     started_at=now,
@@ -234,13 +220,18 @@ async def _next_import_job(
 
 async def _finish_import_job(
     engine: AsyncEngine, job_id: int, *, owner: str, now: datetime
-) -> None:
+) -> bool:
     async with transaction(engine) as conn:
-        await conn.execute(
+        result = await conn.execute(
             update(import_jobs)
-            .where(import_jobs.c.id == job_id, import_jobs.c.lease_owner == owner)
+            .where(
+                import_jobs.c.id == job_id,
+                import_jobs.c.finished_at.is_(None),
+                import_jobs.c.lease_owner == owner,
+            )
             .values(finished_at=now, lease_owner=None, lease_expires_at=None)
         )
+        return result.rowcount == 1
 
 
 async def _fail_import_job(
@@ -280,7 +271,11 @@ async def _next_replay_job(
                     replay_jobs.c.provider_id == provider_id,
                     replay_jobs.c.finished_at.is_(None),
                     replay_jobs.c.failed_at.is_(None),
-                    replay_jobs.c.claimed_at.is_(None) | (replay_jobs.c.lease_expires_at <= now),
+                    or_(
+                        replay_jobs.c.claimed_at.is_(None),
+                        replay_jobs.c.lease_expires_at.is_(None),
+                        replay_jobs.c.lease_expires_at <= now,
+                    ),
                     ingest_failures.c.resolved_at.is_(None),
                     ingest_failures.c.native_id.is_not(None),
                 )
@@ -297,7 +292,11 @@ async def _next_replay_job(
                 replay_jobs.c.id == job_id,
                 replay_jobs.c.finished_at.is_(None),
                 replay_jobs.c.failed_at.is_(None),
-                replay_jobs.c.claimed_at.is_(None) | (replay_jobs.c.lease_expires_at <= now),
+                or_(
+                    replay_jobs.c.claimed_at.is_(None),
+                    replay_jobs.c.lease_expires_at.is_(None),
+                    replay_jobs.c.lease_expires_at <= now,
+                ),
             )
             .values(
                 claimed_at=now,
@@ -474,6 +473,9 @@ async def run_once(
     interval_seconds: int,
     clock: Clock = SYSTEM_CLOCK,
     lineage_id: uuid.UUID | None = None,
+    requested_mode: str | None = None,
+    requested_lineage_id: uuid.UUID | None = None,
+    preserve_requested_request: bool = False,
     import_path: Path | None = None,
     replay_records: list[RawRecord] | None = None,
     replay_only: bool = False,
@@ -492,6 +494,11 @@ async def run_once(
         clock: Time source.
         lineage_id: Set when this run is a retry of earlier work, so the UI groups attempts
             . ``None`` starts a new lineage.
+        requested_mode: The durable one-shot request being consumed, if this is its first ordinary
+            run. It is consumed atomically with the run row.
+        requested_lineage_id: The lineage stored with ``requested_mode``.
+        preserve_requested_request: Keep a pending ordinary request intact when an import or replay
+            job takes priority for this run.
         import_path: Set only in ``import`` mode.
         replay_records: Explicit failure payloads to normalize in the child.
         replay_only: Do not fetch after replaying ``replay_records``.
@@ -511,6 +518,8 @@ async def run_once(
         mode=mode,
         cursor_before=cursor,
         now=now,
+        requested_mode=requested_mode,
+        requested_lineage_id=requested_lineage_id,
     )
 
     try:
@@ -534,6 +543,8 @@ async def run_once(
             replay_records=replay_records,
             replay_only=replay_only,
             now=now,
+            preserve_requested_request=preserve_requested_request,
+            requested_lineage_id=requested_lineage_id,
         )
     except Exception as exc:
         await _finalize_host_failure(
@@ -545,6 +556,10 @@ async def run_once(
             interval_seconds=interval_seconds,
             now=clock.now(),
             error=exc,
+            clock=clock,
+            lineage_id=lineage,
+            preserve_requested_request=preserve_requested_request,
+            requested_lineage_id=requested_lineage_id,
         )
         return RunOutcome(
             status=RunStatus.FAILED,
@@ -572,6 +587,8 @@ async def _run_opened(
     replay_records: list[RawRecord] | None,
     replay_only: bool,
     now: datetime,
+    preserve_requested_request: bool,
+    requested_lineage_id: uuid.UUID | None,
 ) -> RunOutcome:
     """Execute the post-insertion portion of a run."""
     stored_replay_records = (
@@ -590,6 +607,7 @@ async def _run_opened(
                 config=_public_provider_settings(provider.config_schema, provider_settings),
                 secrets=_secret_provider_settings(provider.config_schema, provider_settings),
                 provider_dir=config.provider_dir,
+                host_state_dir=config.data_dir / "http-host-state",
                 replay_records=stored_replay_records,
             )
         )
@@ -621,6 +639,7 @@ async def _run_opened(
                 secrets=_secret_provider_settings(provider.config_schema, provider_settings),
                 import_path=import_path,
                 provider_dir=config.provider_dir,
+                host_state_dir=config.data_dir / "http-host-state",
             )
         )
 
@@ -665,6 +684,8 @@ async def _run_opened(
         interval_seconds=interval_seconds,
         lineage_id=lineage,
         clock=clock,
+        preserve_requested_request=preserve_requested_request,
+        requested_lineage_id=requested_lineage_id,
     )
     return outcome
 
@@ -690,9 +711,21 @@ async def _finalize_host_failure(
     interval_seconds: int,
     now: datetime,
     error: BaseException,
+    clock: Clock,
+    lineage_id: uuid.UUID,
+    preserve_requested_request: bool,
+    requested_lineage_id: uuid.UUID | None,
 ) -> None:
     """Close an open run and make its provider retryable in one transaction."""
     message = f"{type(error).__name__}: {str(error)[:1000]}"
+    decision = plan_after_failure(
+        clock=clock,
+        error_class=ErrorClass.INTERNAL,
+        retry_step=retry_step,
+        consecutive_failures=consecutive_failures,
+        normal_interval=timedelta(seconds=interval_seconds),
+        lineage_id=lineage_id,
+    )
     async with transaction(engine) as conn:
         run_result = await conn.execute(
             update(sync_runs)
@@ -717,12 +750,12 @@ async def _finalize_host_failure(
                 providers.c.status == str(ProviderStatus.SYNCING),
             )
             .values(
-                status=str(ProviderStatus.DEGRADED),
+                status=str(decision.status),
                 updated_at=now,
                 last_error={
                     "error_class": str(ErrorClass.INTERNAL),
                     "message": message,
-                    "action_required": "inspect the worker error and retry the provider",
+                    "action_required": action_required(ErrorClass.INTERNAL),
                 },
             )
         )
@@ -730,10 +763,10 @@ async def _finalize_host_failure(
             update(provider_state)
             .where(provider_state.c.provider_id == provider_id)
             .values(
-                next_run_at=now + timedelta(seconds=interval_seconds),
-                retry_step=retry_step + 1,
-                consecutive_failures=consecutive_failures + 1,
-                requested_lineage_id=None,
+                next_run_at=decision.next_run_at,
+                retry_step=decision.retry_step,
+                consecutive_failures=decision.consecutive_failures,
+                requested_lineage_id=(requested_lineage_id if preserve_requested_request else None),
             )
         )
         if state_result.rowcount != 1:
@@ -749,8 +782,10 @@ async def _open_run(
     mode: FetchMode,
     cursor_before: Cursor | None,
     now: datetime,
+    requested_mode: str | None = None,
+    requested_lineage_id: uuid.UUID | None = None,
 ) -> int:
-    """Record the run as ``running`` before anything can go wrong."""
+    """Record the run and consume an ordinary request as one atomic state transition."""
     async with transaction(engine) as conn:
         result = await conn.execute(
             sync_runs.insert().values(
@@ -765,10 +800,24 @@ async def _open_run(
         )
         primary_key = result.inserted_primary_key
         assert primary_key is not None
+        if requested_mode is not None:
+            request_result = await conn.execute(
+                update(provider_state)
+                .where(
+                    provider_state.c.provider_id == provider_id,
+                    provider_state.c.requested_mode == requested_mode,
+                    provider_state.c.requested_lineage_id == requested_lineage_id,
+                )
+                .values(requested_mode=None, requested_lineage_id=None)
+            )
+            if request_result.rowcount != 1:
+                raise RuntimeError(
+                    f"requested sync for provider {provider_id!r} changed before run creation"
+                )
         # ``run_once`` is also a direct orchestration seam for recovery/import callers and focused
         # tests that do not pass through ``claim``. Make the same durable provider lock explicit
         # here; a scheduler claim that already set ``syncing`` is idempotent.
-        await conn.execute(
+        provider_result = await conn.execute(
             update(providers)
             .where(
                 providers.c.id == provider_id,
@@ -777,6 +826,33 @@ async def _open_run(
             )
             .values(status=str(ProviderStatus.SYNCING), updated_at=now)
         )
+        running_elsewhere = (
+            await conn.execute(
+                select(sync_runs.c.id)
+                .where(
+                    sync_runs.c.provider_id == provider_id,
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                    sync_runs.c.id != primary_key[0],
+                )
+                .limit(1)
+            )
+        ).first()
+        if running_elsewhere is not None:
+            raise RuntimeError(f"provider {provider_id!r} already has a running sync")
+        if provider_result.rowcount != 1:
+            provider_row = (
+                await conn.execute(
+                    select(providers.c.enabled, providers.c.status).where(
+                        providers.c.id == provider_id
+                    )
+                )
+            ).first()
+            if (
+                provider_row is None
+                or not provider_row.enabled
+                or provider_row.status != str(ProviderStatus.SYNCING)
+            ):
+                raise RuntimeError(f"provider {provider_id!r} was not admitted for a sync")
         return int(primary_key[0])
 
 
@@ -865,6 +941,8 @@ async def _reschedule(
     interval_seconds: int,
     lineage_id: uuid.UUID,
     clock: Clock,
+    preserve_requested_request: bool,
+    requested_lineage_id: uuid.UUID | None,
 ) -> None:
     """Advance the cursor and set the next run time from the ladder's decision."""
     from datetime import timedelta
@@ -927,7 +1005,9 @@ async def _reschedule(
         error_message=outcome.error_message,
         log_excerpt=outcome.log_excerpt,
         cursor_after=outcome.cursor_after.state if outcome.cursor_after else None,
-        requested_lineage_id=decision.lineage_id,
+        requested_lineage_id=(
+            requested_lineage_id if preserve_requested_request else decision.lineage_id
+        ),
     )
 
 

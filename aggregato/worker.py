@@ -31,7 +31,7 @@ from aggregato.config import Config, ConfigError, load_config
 from aggregato.db.engine import create_engine
 from aggregato.db.migrate import upgrade_to_head
 from aggregato.db.retention import cleanup
-from aggregato.domain.clock import SYSTEM_CLOCK
+from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.logging import configure_logging
 from aggregato.sync.dispatch import build_dispatch
 from aggregato.sync.scheduler import Scheduler, max_concurrent_runs, recover_interrupted_runs
@@ -39,7 +39,7 @@ from aggregato.sync.scheduler import Scheduler, max_concurrent_runs, recover_int
 log = logging.getLogger(__name__)
 
 
-async def serve(config: Config) -> None:
+async def serve(config: Config, *, clock: Clock = SYSTEM_CLOCK) -> None:
     """Run the scheduler until stopped.
 
     Args:
@@ -57,17 +57,18 @@ async def serve(config: Config) -> None:
     await asyncio.to_thread(upgrade_to_head, config.database_url)
 
     engine = create_engine(config.database_url)
-    recovered = await recover_interrupted_runs(engine, now=SYSTEM_CLOCK.now())
+    recovered = await recover_interrupted_runs(engine, now=clock.now())
     if recovered:
         log.warning("recovered interrupted syncs for %s", ", ".join(recovered))
     scheduler = Scheduler(
         engine,
-        dispatch=build_dispatch(engine, config),
+        clock=clock,
+        dispatch=build_dispatch(engine, config, clock=clock),
         max_concurrent=max_concurrent_runs(config.database_url),
         provider_dir=config.provider_dir,
     )
     retention_task = asyncio.create_task(
-        _retention_loop(engine, config.data_dir), name="retention-cleanup"
+        _retention_loop(engine, config.data_dir, clock=clock), name="retention-cleanup"
     )
 
     loop = asyncio.get_running_loop()
@@ -87,11 +88,13 @@ async def serve(config: Config) -> None:
         log.info("scheduler stopped")
 
 
-async def _retention_loop(engine: AsyncEngine, data_dir: Path) -> None:
+async def _retention_loop(
+    engine: AsyncEngine, data_dir: Path, *, clock: Clock = SYSTEM_CLOCK
+) -> None:
     """Run retention cleanup at boot and daily; it remains independent of provider runs."""
     while True:
         try:
-            await cleanup(engine, data_dir, now=SYSTEM_CLOCK.now())
+            await cleanup(engine, data_dir, now=clock.now())
         except Exception:
             log.exception("retention cleanup failed")
         await asyncio.sleep(24 * 60 * 60)

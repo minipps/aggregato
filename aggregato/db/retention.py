@@ -151,6 +151,7 @@ def _cleanup_import_files(import_root: Path, active_paths: set[Path], *, now: da
     """Remove orphaned completed uploads while preserving every queued/leased job."""
     if not import_root.is_dir():
         return
+    active_paths = {path.resolve() for path in active_paths}
     stale_uploading_before = now.timestamp() - 24 * 60 * 60
     for path in sorted(import_root.rglob("*"), reverse=True):
         if path.is_file():

@@ -14,11 +14,12 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import Connection, Engine
 
 from aggregato.db.engine import transaction
-from aggregato.db.schema import metadata, provider_state, providers
-from aggregato.domain.enums import Capability, ProviderStatus
+from aggregato.db.schema import import_jobs, metadata, provider_state, providers, sync_runs
+from aggregato.domain.enums import Capability, ErrorClass, ProviderStatus, RunStatus
 from aggregato.providers.registry import ProviderInfo
 from aggregato.sync import scheduler as scheduler_module
-from aggregato.sync.scheduler import claim, due_providers, release
+from aggregato.sync.scheduler import DueProvider, Scheduler, claim, due_providers, release
+from tests.conftest import FrozenClock
 from tests.unit._sync_connection import SyncConnectionAdapter
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
@@ -193,6 +194,106 @@ async def test_claim_revalidates_every_admission_predicate(
     assert results == [False, False, False, False]
     provider, _ = await _provider_and_state(engine, "healthy")
     assert provider.status == str(ProviderStatus.IDLE)
+
+
+async def test_non_poll_provider_with_a_queued_import_is_admitted(
+    engine: _SyncAsyncEngine, static_metadata: None, tmp_path: Path
+) -> None:
+    await _insert_provider(engine, "non-poll", next_run_at=NOW + timedelta(hours=1))
+    async with transaction(engine) as conn:
+        await conn.execute(
+            import_jobs.insert().values(
+                provider_id="non-poll",
+                path=str(tmp_path / "queued.csv"),
+                created_at=NOW,
+                started_at=NOW - timedelta(minutes=20),
+                lease_owner="dead-worker",
+                lease_expires_at=NOW - timedelta(minutes=1),
+                attempts=0,
+            )
+        )
+
+    due = await due_providers(engine, now=NOW)
+
+    assert [item.provider_id for item in due] == ["non-poll"]
+    assert await claim(engine, "non-poll", now=NOW)
+
+
+async def test_release_refuses_to_overwrite_state_while_another_run_is_open(
+    engine: _SyncAsyncEngine, static_metadata: None
+) -> None:
+    await _insert_provider(engine, "healthy")
+    assert await claim(engine, "healthy", now=NOW)
+    async with transaction(engine) as conn:
+        first_result = await conn.execute(
+            sync_runs.insert()
+            .values(
+                provider_id="healthy",
+                lineage_id=uuid.uuid4(),
+                attempt=1,
+                mode="incremental",
+                status=str(RunStatus.RUNNING),
+                started_at=NOW,
+            )
+            .returning(sync_runs.c.id)
+        )
+        first_id = int(first_result.scalar_one())
+        await conn.execute(
+            sync_runs.insert().values(
+                provider_id="healthy",
+                lineage_id=uuid.uuid4(),
+                attempt=1,
+                mode="incremental",
+                status=str(RunStatus.RUNNING),
+                started_at=NOW,
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="another running sync"):
+        await release(
+            engine,
+            "healthy",
+            status=ProviderStatus.IDLE,
+            next_run_at=NOW + timedelta(hours=1),
+            retry_step=0,
+            consecutive_failures=0,
+            now=NOW,
+            run_id=first_id,
+            run_status=RunStatus.SUCCESS,
+        )
+
+    async with transaction(engine) as conn:
+        statuses = [row.status for row in await conn.execute(select(sync_runs.c.status))]
+        state = (await conn.execute(select(provider_state.c.next_run_at))).scalar_one()
+    assert statuses == [str(RunStatus.RUNNING), str(RunStatus.RUNNING)]
+    assert state is None
+
+
+async def test_guarded_dispatch_persists_host_error_details(
+    engine: _SyncAsyncEngine, static_metadata: None
+) -> None:
+    await _insert_provider(engine, "healthy")
+    assert await claim(engine, "healthy", now=NOW)
+
+    async def fail(_: DueProvider) -> None:
+        raise RuntimeError("dispatch exploded")
+
+    scheduler = Scheduler(engine, dispatch=fail, clock=FrozenClock(NOW))
+    await scheduler._guarded(
+        DueProvider(
+            provider_id="healthy",
+            interval_seconds=3600,
+            retry_step=0,
+            consecutive_failures=0,
+            cursor=None,
+        )
+    )
+
+    provider, state = await _provider_and_state(engine, "healthy")
+    assert provider.status == str(ProviderStatus.DEGRADED)
+    assert provider.last_error["error_class"] == str(ErrorClass.INTERNAL)
+    assert "dispatch exploded" in provider.last_error["message"]
+    assert state.next_run_at == (NOW + timedelta(hours=1)).replace(tzinfo=None)
 
 
 async def test_two_actors_have_exactly_one_successful_claim(

@@ -26,18 +26,30 @@ from aggregato.db.engine import create_engine, transaction
 from aggregato.db.schema import (
     entries,
     external_ids,
+    import_jobs,
+    ingest_failures,
     metadata,
     opinions,
     provider_items,
     provider_state,
     providers,
+    replay_jobs,
     sync_runs,
     works,
 )
 from aggregato.db.search import create_search_index
-from aggregato.domain.enums import ErrorClass, FetchMode, ProviderStatus, RunStatus
+from aggregato.domain.enums import ErrorClass, FetchMode, IngestStage, ProviderStatus, RunStatus
 from aggregato.providers.fixture import FixtureProvider
-from aggregato.sync.dispatch import build_dispatch, run_once
+from aggregato.sync.dispatch import (
+    _finish_import_job,
+    _next_import_job,
+    _next_replay_job,
+    _open_run,
+    _reschedule,
+    build_dispatch,
+    run_once,
+)
+from aggregato.sync.runner import RunOutcome
 from aggregato.sync.scheduler import (
     DEFAULT_MAX_CONCURRENT_RUNS,
     SQLITE_MAX_CONCURRENT_RUNS,
@@ -283,11 +295,12 @@ async def test_a_requested_full_mode_is_honoured_once_and_then_consumed(
     history on every poll from then on, including on each rung of the retry ladder.
     """
     await enable_fixture(engine)
+    lineage = uuid.uuid4()
     async with transaction(engine) as conn:
         await conn.execute(
             update(provider_state)
             .where(provider_state.c.provider_id == "fixture")
-            .values(requested_mode="full")
+            .values(requested_mode="full", requested_lineage_id=lineage)
         )
 
     dispatch = build_dispatch(engine, config_for(FIXTURE), clock=StepClock())
@@ -295,9 +308,10 @@ async def test_a_requested_full_mode_is_honoured_once_and_then_consumed(
     await dispatch(due)
 
     async with transaction(engine) as conn:
-        modes = [row.mode for row in await conn.execute(select(sync_runs.c.mode))]
+        run = (await conn.execute(select(sync_runs.c.mode, sync_runs.c.lineage_id))).one()
         left = (await conn.execute(select(provider_state.c.requested_mode))).scalar_one()
-    assert modes == [str(FetchMode.FULL)]
+    assert run.mode == str(FetchMode.FULL)
+    assert uuid.UUID(str(run.lineage_id)) == lineage
     assert left is None
 
     # The next scheduled poll is an ordinary incremental run again.
@@ -306,6 +320,253 @@ async def test_a_requested_full_mode_is_honoured_once_and_then_consumed(
     async with transaction(engine) as conn:
         modes = [row.mode for row in await conn.execute(select(sync_runs.c.mode))]
     assert modes == [str(FetchMode.FULL), str(FetchMode.INCREMENTAL)]
+
+
+async def test_a_stale_requested_run_keeps_the_new_request_and_inserts_no_run(
+    engine: AsyncEngine,
+) -> None:
+    """A failed admission cannot consume a request before its run exists."""
+    await enable_fixture(engine)
+    stored_lineage = uuid.uuid4()
+    stale_lineage = uuid.uuid4()
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(requested_mode="full", requested_lineage_id=stored_lineage)
+        )
+
+    with pytest.raises(RuntimeError, match="changed before run creation"):
+        await _open_run(
+            engine,
+            provider_id="fixture",
+            lineage_id=stale_lineage,
+            attempt=1,
+            mode=FetchMode.FULL,
+            cursor_before=None,
+            now=NOW,
+            requested_mode="full",
+            requested_lineage_id=stale_lineage,
+        )
+
+    async with transaction(engine) as conn:
+        state = (
+            await conn.execute(
+                select(provider_state.c.requested_mode, provider_state.c.requested_lineage_id)
+            )
+        ).one()
+        run_count = (await conn.execute(select(func.count()).select_from(sync_runs))).scalar_one()
+    assert state.requested_mode == "full"
+    assert uuid.UUID(str(state.requested_lineage_id)) == stored_lineage
+    assert run_count == 0
+
+
+async def test_import_priority_preserves_a_pending_requested_lineage(engine: AsyncEngine) -> None:
+    await enable_fixture(engine)
+    requested_lineage = uuid.uuid4()
+    import_lineage = uuid.uuid4()
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(requested_mode="full", requested_lineage_id=requested_lineage)
+        )
+
+    run_id = await _open_run(
+        engine,
+        provider_id="fixture",
+        lineage_id=import_lineage,
+        attempt=1,
+        mode=FetchMode.IMPORT,
+        cursor_before=None,
+        now=NOW,
+    )
+    await _reschedule(
+        engine,
+        provider_id="fixture",
+        run_id=run_id,
+        outcome=RunOutcome(status=RunStatus.SUCCESS),
+        written=0,
+        failed=0,
+        retry_step=0,
+        consecutive_failures=0,
+        interval_seconds=3600,
+        lineage_id=import_lineage,
+        clock=StepClock(),
+        preserve_requested_request=True,
+        requested_lineage_id=requested_lineage,
+    )
+
+    async with transaction(engine) as conn:
+        state = (
+            await conn.execute(
+                select(provider_state.c.requested_mode, provider_state.c.requested_lineage_id)
+            )
+        ).one()
+    assert state.requested_mode == str(FetchMode.FULL)
+    assert uuid.UUID(str(state.requested_lineage_id)) == requested_lineage
+
+
+async def test_import_with_null_lease_expiry_is_reclaimed(
+    engine: AsyncEngine, tmp_path: Path
+) -> None:
+    await enable_fixture(engine)
+    path = tmp_path / "queued.csv"
+    path.write_text("id,title\n1,Queued\n", encoding="utf-8")
+    async with transaction(engine) as conn:
+        await conn.execute(
+            import_jobs.insert().values(
+                provider_id="fixture",
+                path=str(path),
+                created_at=NOW,
+                started_at=NOW - timedelta(minutes=20),
+                lease_owner="dead-worker",
+                lease_expires_at=None,
+                attempts=1,
+            )
+        )
+
+    job = await _next_import_job(engine, "fixture", now=NOW)
+
+    assert job is not None
+    assert job[1] == path
+    async with transaction(engine) as conn:
+        row = (
+            await conn.execute(
+                select(
+                    import_jobs.c.lease_owner,
+                    import_jobs.c.lease_expires_at,
+                    import_jobs.c.attempts,
+                )
+            )
+        ).one()
+    assert row.lease_owner == job[3]
+    assert row.lease_expires_at == (NOW + timedelta(minutes=15)).replace(tzinfo=None)
+    assert row.attempts == 2
+
+    assert not await _finish_import_job(engine, job[0], owner="stale-worker", now=NOW)
+    async with transaction(engine) as conn:
+        row = (await conn.execute(select(import_jobs.c.finished_at))).one()
+    assert row.finished_at is None
+    assert path.is_file()
+
+
+async def test_direct_run_cannot_open_a_second_running_row(engine: AsyncEngine) -> None:
+    await enable_fixture(engine)
+    first_id = await _open_run(
+        engine,
+        provider_id="fixture",
+        lineage_id=uuid.uuid4(),
+        attempt=1,
+        mode=FetchMode.INCREMENTAL,
+        cursor_before=None,
+        now=NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="already has a running sync"):
+        await _open_run(
+            engine,
+            provider_id="fixture",
+            lineage_id=uuid.uuid4(),
+            attempt=1,
+            mode=FetchMode.INCREMENTAL,
+            cursor_before=None,
+            now=NOW,
+        )
+
+    async with transaction(engine) as conn:
+        run_ids = [row.id for row in await conn.execute(select(sync_runs.c.id))]
+    assert run_ids == [first_id]
+
+
+async def test_host_failure_after_run_creation_is_finalized(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await enable_fixture(engine)
+
+    def fail_provider_info(*_: object) -> object:
+        raise RuntimeError("provider metadata unavailable")
+
+    monkeypatch.setattr("aggregato.sync.dispatch._provider_info", fail_provider_info)
+    outcome = await run_once(
+        engine,
+        config_for(FIXTURE),
+        provider_id="fixture",
+        mode=FetchMode.INCREMENTAL,
+        cursor=None,
+        retry_step=0,
+        consecutive_failures=0,
+        interval_seconds=3600,
+        clock=StepClock(),
+    )
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+    async with transaction(engine) as conn:
+        run = (await conn.execute(select(sync_runs))).one()
+        provider = (await conn.execute(select(providers))).one()
+        state = (await conn.execute(select(provider_state))).one()
+    assert run.status == str(RunStatus.FAILED)
+    assert run.error_class == str(ErrorClass.INTERNAL)
+    assert "provider metadata unavailable" in run.error_message
+    assert provider.status == str(ProviderStatus.IDLE)
+    assert state.retry_step == 1
+    assert state.consecutive_failures == 1
+    assert state.next_run_at == (NOW + timedelta(minutes=1)).replace(tzinfo=None)
+
+
+async def test_replay_with_null_lease_expiry_is_reclaimed(engine: AsyncEngine) -> None:
+    await enable_fixture(engine)
+    lineage = uuid.uuid4()
+    async with transaction(engine) as conn:
+        run_result = await conn.execute(
+            sync_runs.insert()
+            .values(
+                provider_id="fixture",
+                lineage_id=lineage,
+                attempt=1,
+                mode=str(FetchMode.INCREMENTAL),
+                status=str(RunStatus.SUCCESS),
+                started_at=NOW,
+            )
+            .returning(sync_runs.c.id)
+        )
+        run_id = int(run_result.scalar_one())
+        failure_result = await conn.execute(
+            ingest_failures.insert()
+            .values(
+                provider_id="fixture",
+                sync_run_id=run_id,
+                native_id="native-1",
+                raw_payload={"title": "Queued"},
+                error="normalization failed",
+                stage=str(IngestStage.NORMALIZE),
+                created_at=NOW,
+            )
+            .returning(ingest_failures.c.id)
+        )
+        failure_id = int(failure_result.scalar_one())
+        await conn.execute(
+            replay_jobs.insert().values(
+                failure_id=failure_id,
+                provider_id="fixture",
+                lineage_id=uuid.uuid4(),
+                created_at=NOW,
+                claimed_at=NOW - timedelta(minutes=20),
+                lease_owner="dead-worker",
+                lease_expires_at=None,
+            )
+        )
+
+    job = await _next_replay_job(engine, "fixture", now=NOW)
+
+    assert job is not None
+    async with transaction(engine) as conn:
+        row = (
+            await conn.execute(select(replay_jobs.c.lease_owner, replay_jobs.c.lease_expires_at))
+        ).one()
+    assert row.lease_owner == job[3]
+    assert row.lease_expires_at == (NOW + timedelta(minutes=15)).replace(tzinfo=None)
 
 
 async def test_schema_bump_replays_retained_payloads_before_the_next_sync(

@@ -34,11 +34,19 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.db.engine import transaction
-from aggregato.db.schema import provider_state, providers, sync_runs
+from aggregato.db.schema import (
+    import_jobs,
+    ingest_failures,
+    provider_state,
+    providers,
+    replay_jobs,
+    sync_runs,
+)
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.domain.enums import Capability, ErrorClass, ProviderStatus, RunStatus
 from aggregato.logging import bind_run
 from aggregato.providers.registry import discover_providers
+from aggregato.sync.errors import action_required
 
 #: How often the loop looks for due work. Seconds rather than minutes because a "sync now" button
 #: writes ``next_run_at = now`` and the operator is watching; minutes rather than milliseconds
@@ -122,13 +130,67 @@ def _claim_due_state(now: datetime) -> ColumnElement[bool]:
     )
 
 
+def _has_claimable_worker_job(now: datetime) -> ColumnElement[bool]:
+    """Allow queued import/replay work without admitting ordinary non-poll providers."""
+    import_ready = exists(
+        select(1)
+        .select_from(import_jobs)
+        .where(
+            import_jobs.c.provider_id == providers.c.id,
+            import_jobs.c.finished_at.is_(None),
+            import_jobs.c.failed_at.is_(None),
+            or_(
+                import_jobs.c.started_at.is_(None),
+                import_jobs.c.lease_expires_at.is_(None),
+                import_jobs.c.lease_expires_at <= now,
+            ),
+        )
+    )
+    replay_ready = exists(
+        select(1)
+        .select_from(
+            replay_jobs.join(ingest_failures, replay_jobs.c.failure_id == ingest_failures.c.id)
+        )
+        .where(
+            replay_jobs.c.provider_id == providers.c.id,
+            replay_jobs.c.finished_at.is_(None),
+            replay_jobs.c.failed_at.is_(None),
+            or_(
+                replay_jobs.c.claimed_at.is_(None),
+                replay_jobs.c.lease_expires_at.is_(None),
+                replay_jobs.c.lease_expires_at <= now,
+            ),
+            ingest_failures.c.resolved_at.is_(None),
+            ingest_failures.c.native_id.is_not(None),
+        )
+    )
+    return or_(import_ready, replay_ready)
+
+
+def _admission_capability(now: datetime, pollable_ids: frozenset[str]) -> ColumnElement[bool]:
+    """Admit polling providers or providers with a reclaimable worker-owned job."""
+    return or_(providers.c.id.in_(pollable_ids), _has_claimable_worker_job(now))
+
+
+def _state_due_or_worker_job(now: datetime) -> ColumnElement[bool]:
+    """Run scheduled work or queued worker jobs regardless of the ordinary schedule timestamp."""
+    return or_(_state_is_due(now), _has_claimable_worker_job(now))
+
+
+def _claim_due_or_worker_job(now: datetime) -> ColumnElement[bool]:
+    """Recheck either the schedule or a queued worker job in the atomic provider claim."""
+    return or_(_claim_due_state(now), _has_claimable_worker_job(now))
+
+
 async def due_providers(
     engine: AsyncEngine, *, now: datetime, provider_dir: Path | None = None
 ) -> list[DueProvider]:
     """The providers whose ``next_run_at`` has arrived.
 
     This is the whole of the schedule (research.md ). ``next_run_at IS NULL`` counts as due, which
-    is how a newly enabled provider gets its first run without a separate code path.
+    is how a newly enabled provider gets its first run without a separate code path. A reclaimable
+    import or replay job is due independently of that timestamp, so queued work cannot be stranded
+    behind a prior run's future reschedule.
 
     Args:
         engine: The database engine.
@@ -151,10 +213,10 @@ async def due_providers(
         .join(providers, providers.c.id == provider_state.c.provider_id)
         .where(
             and_(
-                providers.c.id.in_(pollable_ids),
+                _admission_capability(now, pollable_ids),
                 providers.c.enabled.is_(True),
                 providers.c.status.in_((str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))),
-                _state_is_due(now),
+                _state_due_or_worker_job(now),
             )
         )
         .order_by(provider_state.c.next_run_at.asc().nulls_first(), provider_state.c.provider_id)
@@ -187,7 +249,7 @@ async def claim(
     The conditional ``UPDATE`` is the claim: two schedulers, or one scheduler with an overlapping
     poll, cannot both win. Every admission condition is in that same statement, so a stale due-list
     row cannot bypass a disable, a configuration failure, a capability change, or a newly-future
-    schedule.
+    schedule; a reclaimable import/replay job is the intentional exception to the schedule check.
     """
     pollable_ids = _pollable_provider_ids(provider_dir)
     async with transaction(engine) as conn:
@@ -196,12 +258,12 @@ async def claim(
             .where(
                 and_(
                     providers.c.id == provider_id,
-                    providers.c.id.in_(pollable_ids),
+                    _admission_capability(now, pollable_ids),
                     providers.c.enabled.is_(True),
                     providers.c.status.in_(
                         (str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))
                     ),
-                    _claim_due_state(now),
+                    _claim_due_or_worker_job(now),
                 )
             )
             .values(status=str(ProviderStatus.SYNCING), updated_at=now)
@@ -346,13 +408,26 @@ async def release(
             values["requested_lineage_id"] = requested_lineage_id
         if cursor_after is not None:
             values["cursor"] = cursor_after
+        running_elsewhere = (
+            select(1)
+            .select_from(sync_runs)
+            .where(
+                sync_runs.c.provider_id == provider_id,
+                sync_runs.c.status == str(RunStatus.RUNNING),
+            )
+        )
+        if run_id is not None:
+            running_elsewhere = running_elsewhere.where(sync_runs.c.id != run_id)
         state_result = await conn.execute(
-            update(provider_state).where(provider_state.c.provider_id == provider_id).values(values)
+            update(provider_state)
+            .where(
+                provider_state.c.provider_id == provider_id,
+                ~exists(running_elsewhere),
+            )
+            .values(values)
         )
-        assert state_result.rowcount == 1, (
-            f"release expected one provider_state row for {provider_id!r}, "
-            f"updated {state_result.rowcount}"
-        )
+        if state_result.rowcount != 1:
+            raise RuntimeError(f"release found another running sync for provider {provider_id!r}")
 
 
 class Scheduler:
@@ -456,18 +531,27 @@ class Scheduler:
             with bind_run(provider_id=due.provider_id):
                 try:
                     await self._dispatch(due)
-                except Exception:
+                except Exception as exc:
                     log.exception(
                         "sync run for %s failed outside the child process", due.provider_id
                     )
+                    now = self._clock.now()
+                    message = f"{type(exc).__name__}: {str(exc)[:1000]}"
                     await release(
                         self._engine,
                         due.provider_id,
                         status=ProviderStatus.DEGRADED,
-                        next_run_at=self._clock.now() + timedelta(seconds=due.interval_seconds),
+                        next_run_at=now + timedelta(seconds=due.interval_seconds),
                         retry_step=due.retry_step,
                         consecutive_failures=due.consecutive_failures + 1,
-                        now=self._clock.now(),
+                        now=now,
+                        last_error={
+                            "error_class": str(ErrorClass.INTERNAL),
+                            "message": message,
+                            "action_required": action_required(ErrorClass.INTERNAL),
+                        },
+                        error_class=ErrorClass.INTERNAL,
+                        error_message=message,
                     )
 
     async def run_forever(self) -> None:
