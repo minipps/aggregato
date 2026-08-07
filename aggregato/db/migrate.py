@@ -10,14 +10,16 @@ that point nothing else has opened the database.
 
 from __future__ import annotations
 
+import fcntl
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import make_url
+
+from aggregato.domain.clock import SYSTEM_CLOCK
 
 __all__ = ["backup_sqlite", "upgrade_to_head"]
 
@@ -51,7 +53,7 @@ def backup_sqlite(url: str) -> Path | None:
 
     # Timestamped, never a fixed name: a second startup after a failed migration must not overwrite
     # the one good copy with the half-migrated file.
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    stamp = SYSTEM_CLOCK.now().strftime("%Y%m%dT%H%M%S")
     backup = source.with_name(f"{source.name}.{stamp}.bak")
     # sqlite3's backup API rather than shutil.copy2, for one reason: WAL. A plain copy of the `.db`
     # alone silently drops every committed transaction still sitting in the `-wal` file, which is
@@ -68,10 +70,26 @@ def upgrade_to_head(url: str) -> None:
     Idempotent: already at head means Alembic runs nothing. The URL comes from the caller
     (``aggregato.config``), never from alembic.ini.
     """
-    backup_sqlite(url)
-    config = Config()
-    config.set_main_option("script_location", str(_SCRIPT_LOCATION))
-    # `%` doubled because ConfigParser interpolates main options, and a URL-encoded password is
-    # allowed to contain one.
-    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
-    command.upgrade(config, "head")
+    parsed = make_url(url)
+    lock_path: Path | None = None
+    if parsed.get_backend_name() == "sqlite" and parsed.database not in {None, ":memory:"}:
+        lock_path = Path(parsed.database).with_name(f"{Path(parsed.database).name}.migration.lock")
+
+    def migrate() -> None:
+        backup_sqlite(url)
+        config = Config()
+        config.set_main_option("script_location", str(_SCRIPT_LOCATION))
+        # `%` doubled because ConfigParser interpolates main options, and a URL-encoded password
+        # is allowed to contain one.
+        config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+        command.upgrade(config, "head")
+
+    if lock_path is None:
+        migrate()
+        return
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            migrate()
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)

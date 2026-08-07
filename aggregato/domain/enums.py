@@ -183,11 +183,12 @@ class ResolutionDecision(StrEnum):
 
 
 class FetchMode(StrEnum):
-    """What a run is asking a provider to do. ``import`` sets ``ctx.import_path``."""
+    """What a run is asking the child to do. ``import`` sets ``ctx.import_path``."""
 
     INCREMENTAL = "incremental"
     FULL = "full"
     IMPORT = "import"
+    REPLAY = "replay"
 
 
 class IngestStage(StrEnum):

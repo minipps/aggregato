@@ -28,21 +28,30 @@ class WorkResolution:
     ambiguous_candidates: tuple[uuid.UUID, ...] = ()
 
 
+class WorkIdentityConflict(ValueError):
+    """One payload's asserted identifiers resolve to different works."""
+
+
 async def resolve_work(
     conn: AsyncConnection, batch: NormalizedBatch, *, now: datetime
 ) -> WorkResolution:
     """Resolve asserted id → unique exact title/year → create, never guessing across ambiguity."""
+    matched_ids: set[uuid.UUID] = set()
     for external in batch.external_ids:
-        row = (
-            await conn.execute(
-                select(external_ids.c.work_id).where(
-                    external_ids.c.namespace == external.namespace,
-                    external_ids.c.value == external.value,
-                )
+        rows = await conn.execute(
+            select(external_ids.c.work_id).where(
+                external_ids.c.namespace == external.namespace,
+                external_ids.c.value == external.value,
             )
-        ).first()
-        if row is not None:
-            return WorkResolution(row.work_id, Confidence.ASSERTED)
+        )
+        matched_ids.update(row.work_id for row in rows)
+    if len(matched_ids) > 1:
+        raise WorkIdentityConflict(
+            "asserted work identifiers resolve to different works: "
+            + ", ".join(sorted(str(work_id) for work_id in matched_ids))
+        )
+    if matched_ids:
+        return WorkResolution(next(iter(matched_ids)), Confidence.ASSERTED)
 
     # A provider that asserts an identifier has already said which work this is.  If that identifier
     # is new, title/year must not override it: two differently identified works can share a title

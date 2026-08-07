@@ -150,6 +150,11 @@ DB constraint); `review_text` requires `review_format`.
 
 ### `rating_scales`
 
+Scale ids are global, immutable keys rather than provider-local names. Providers must choose
+stable, namespaced ids; reusing an id with a different definition rejects the run before any
+opinion is written. This keeps stored raw ratings recomputable and prevents two platforms from
+silently assigning different meanings to the same `rating_scale_id`.
+
 `id` text pk · `min_value` numeric · `max_value` numeric · `step` numeric · `kind` enum ·
 `labels` json null (the explicit `value → normalized` map, required when `kind = ordinal`).
 Validation: `max_value > min_value`; `step > 0`; ordinal scales must map every permitted value.
@@ -358,7 +363,7 @@ Once a revision has run anywhere — including a development container — its i
 `alembic_version`. Deleting the file, renaming it, or rewriting its `down_revision` leaves that
 database pointing at a revision that no longer exists, and startup dies with `Can't locate revision
 identified by '…'` on every boot. Reverting a schema change means **a new revision forward**, never
-editing history. See the recovery runbook in [docs/operations.md](../../docs/operations.md).
+editing history. See the recovery runbook in [operations.md](operations.md).
 
 ---
 

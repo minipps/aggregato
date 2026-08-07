@@ -14,6 +14,8 @@ import asyncio
 
 from alembic import context
 from sqlalchemy import Connection
+from sqlalchemy import create_engine as create_sync_engine
+from sqlalchemy.engine import make_url
 
 from aggregato.db.engine import create_engine
 from aggregato.db.schema import metadata
@@ -46,13 +48,41 @@ def _run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+def _run_locked_postgres_migrations(connection: Connection) -> None:
+    """Serialize API/worker migration startup on one Postgres database."""
+    connection.exec_driver_sql("SELECT pg_advisory_lock(482901734)")
+    try:
+        _run_migrations(connection)
+    finally:
+        connection.exec_driver_sql("SELECT pg_advisory_unlock(482901734)")
+
+
 async def _main() -> None:
-    # The project engine rather than Alembic's own: it attaches the SQLite PRAGMAs (foreign_keys,
-    # WAL), so the migration runs under the same connection settings as the application.
-    engine = create_engine(_url())
+    url = _url()
+    # Alembic is called from a synchronous migration hook. Using aiosqlite here starts a worker
+    # thread and its event-loop handoff can deadlock under the test socket guard; application reads
+    # and writes remain async. A synchronous SQLite connection is also the natural shape for DDL.
+    if make_url(url).get_backend_name() == "sqlite":
+        engine = create_sync_engine(
+            make_url(url).set(drivername="sqlite"),
+            connect_args={"check_same_thread": False},
+        )
+        try:
+            with engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+                connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+                connection.commit()
+                _run_migrations(connection)
+        finally:
+            engine.dispose()
+        return
+
+    # PostgreSQL uses the project's async engine because asyncpg is the supported optional driver.
+    engine = create_engine(url)
     try:
         async with engine.connect() as connection:
-            await connection.run_sync(_run_migrations)
+            # Session-level locking avoids a version-table race between API and worker cold starts.
+            await connection.run_sync(_run_locked_postgres_migrations)
     finally:
         await engine.dispose()
 

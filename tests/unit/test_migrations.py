@@ -338,3 +338,35 @@ def test_0008_repairs_duplicate_creator_identifiers_before_constraining_them(
                 " VALUES (?, 'anilist', '7', 'anilist', 'asserted')",
                 (winner,),
             )
+
+
+def test_0009_preserves_existing_failures_when_adding_native_identity(
+    tmp_path: Path,
+) -> None:
+    """The envelope column is additive; old captured payloads must survive the rebuild."""
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0008")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO sync_runs "
+            "(id, provider_id, lineage_id, attempt, mode, status, started_at) "
+            "VALUES (1, 'test', ?, 1, 'incremental', 'running', '2026-01-01')",
+            ("1" * 32,),
+        )
+        conn.execute(
+            "INSERT INTO ingest_failures "
+            "(provider_id, sync_run_id, raw_payload, error, stage, created_at) "
+            "VALUES ('test', 1, ?, 'bad', 'normalize', '2026-01-01')",
+            (json.dumps({"id": "payload-only"}),),
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        row = conn.execute(
+            "SELECT native_id, raw_payload FROM ingest_failures WHERE id = 1"
+        ).fetchone()
+    assert row[0] is None
+    assert json.loads(row[1]) == {"id": "payload-only"}

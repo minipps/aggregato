@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from sqlalchemy import ColumnElement, Connection, Text, column, text
+from sqlalchemy import ColumnElement, Connection, Text, column, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+from aggregato.db.schema import provider_items, works
 
 
 class SearchKind(StrEnum):
@@ -133,6 +135,26 @@ async def unindex_document(conn: AsyncConnection, kind: SearchKind, ref_id: str)
     )
 
 
+async def rebuild_work_document(conn: AsyncConnection, work_id: object) -> None:
+    """Rebuild one work's title projection from the row and every provider title."""
+    rows = await conn.execute(
+        select(works.c.title, works.c.original_title, provider_items.c.title_as_given)
+        .select_from(works.outerjoin(provider_items, provider_items.c.work_id == works.c.id))
+        .where(works.c.id == work_id)
+    )
+    found = False
+    forms: list[str] = []
+    for row in rows:
+        found = True
+        for value in (row.title, row.original_title, row.title_as_given):
+            if isinstance(value, str) and value and value not in forms:
+                forms.append(value)
+    if not found:
+        await unindex_document(conn, SearchKind.WORK_TITLE, str(work_id))
+        return
+    await index_document(conn, SearchKind.WORK_TITLE, str(work_id), " ".join(forms))
+
+
 def search_condition(
     dialect: str,
     target: ColumnElement[str],
@@ -178,7 +200,7 @@ def search_condition(
 
 
 async def matching_ref_ids(
-    conn: AsyncConnection, kind: SearchKind, term: str, *, limit: int = 500
+    conn: AsyncConnection, kind: SearchKind, term: str, *, limit: int | None = None
 ) -> list[str]:
     """The ``ref_id``s matching ``term``, as text.
 
@@ -186,13 +208,14 @@ async def matching_ref_ids(
     dialects render a UUID to text differently — SQLite stores ``CHAR(32)`` with no dashes, Postgres
     casts to the canonical dashed form — so a ``CAST(id AS TEXT) IN (SELECT ref_id ...)`` subquery
     silently matches nothing on one of them. Fetching the ids and parsing them in Python is
-    dialect-neutral, and the result set is bounded by ``limit`` anyway.
+    dialect-neutral. Callers may provide an explicit limit when they intentionally want a bounded
+    candidate set; the default is complete so a large search result cannot silently lose matches.
 
     Args:
         conn: Any connection.
         kind: Which documents to search.
         term: Raw operator input; sanitized the same way as in :func:`search_condition`.
-        limit: Maximum ids to return.
+        limit: Optional maximum ids to return. ``None`` returns every match.
 
     Returns:
         Matching ``ref_id`` values, as stored.
@@ -202,15 +225,26 @@ async def matching_ref_ids(
     """
     dialect = conn.dialect.name
     if dialect == "sqlite":
-        statement = text(
-            "SELECT ref_id FROM search_index WHERE kind = :kind AND search_index MATCH :term "
-            "LIMIT :limit"
-        ).bindparams(kind=str(kind), term=_sanitize_sqlite_term(term), limit=limit)
+        if limit is None:
+            statement = text(
+                "SELECT ref_id FROM search_index WHERE kind = :kind AND search_index MATCH :term"
+            ).bindparams(kind=str(kind), term=_sanitize_sqlite_term(term))
+        else:
+            statement = text(
+                "SELECT ref_id FROM search_index WHERE kind = :kind "
+                "AND search_index MATCH :term LIMIT :limit"
+            ).bindparams(kind=str(kind), term=_sanitize_sqlite_term(term), limit=limit)
     elif dialect == "postgresql":
-        statement = text(
-            "SELECT ref_id FROM search_index WHERE kind = :kind "
-            "AND tsv @@ websearch_to_tsquery('simple', :term) LIMIT :limit"
-        ).bindparams(kind=str(kind), term=term, limit=limit)
+        if limit is None:
+            statement = text(
+                "SELECT ref_id FROM search_index WHERE kind = :kind "
+                "AND tsv @@ websearch_to_tsquery('simple', :term)"
+            ).bindparams(kind=str(kind), term=term)
+        else:
+            statement = text(
+                "SELECT ref_id FROM search_index WHERE kind = :kind "
+                "AND tsv @@ websearch_to_tsquery('simple', :term) LIMIT :limit"
+            ).bindparams(kind=str(kind), term=term, limit=limit)
     else:
         raise ValueError(f"unsupported dialect {dialect!r}; expected sqlite or postgresql")
     result = await conn.execute(statement)

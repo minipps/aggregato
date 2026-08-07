@@ -148,7 +148,7 @@ is the loser's descendant/ancestor. It can create a self-parent or cycle; see
 [merge.py:45](../../aggregato/ingest/merge.py:45).
 
 The inverse/restore path deletes current rows and reinserts a snapshot without an optimistic version
-or operation-generation check; see [identity.py:128](../../aggregato/ingest/identity.py:128).
+or operation-generation check; see [identity.py:128](../../aggregato/api/routes/identity.py:128).
 
 Impact:
 

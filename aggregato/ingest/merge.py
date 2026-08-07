@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import (
@@ -27,7 +27,7 @@ from aggregato.db.schema import (
     work_credits,
     works,
 )
-from aggregato.db.search import SearchKind, unindex_document
+from aggregato.db.search import SearchKind, rebuild_work_document, unindex_document
 from aggregato.domain.enums import ResolutionSubject
 
 
@@ -37,6 +37,7 @@ async def merge_works(
     """Move every work-owned record to ``winner_id`` and retire the duplicates."""
     ids = _merge_ids(winner_id, loser_ids)
     await _require_rows(conn, works, ids, "work")
+    await _ensure_parent_merge_safe(conn, winner_id, set(loser_ids))
     snapshot = await _work_snapshot(conn, ids)
     losers = ids[1:]
     for loser in losers:
@@ -60,13 +61,15 @@ async def merge_works(
         )
         # Identical asserted IDs need only one live copy after the merge. Their pre-merge rows are
         # in the snapshot, so undo restores provenance exactly.
+        winner_external_ids = external_ids.alias("winner_external_ids")
         duplicate_ids = select(external_ids.c.id).where(
             external_ids.c.work_id == loser,
-            external_ids.c.namespace.in_(
-                select(external_ids.c.namespace).where(external_ids.c.work_id == winner_id)
-            ),
-            external_ids.c.value.in_(
-                select(external_ids.c.value).where(external_ids.c.work_id == winner_id)
+            exists(
+                select(1).where(
+                    winner_external_ids.c.work_id == winner_id,
+                    winner_external_ids.c.namespace == external_ids.c.namespace,
+                    winner_external_ids.c.value == external_ids.c.value,
+                )
             ),
         )
         await conn.execute(delete(external_ids).where(external_ids.c.id.in_(duplicate_ids)))
@@ -75,6 +78,7 @@ async def merge_works(
         )
         await unindex_document(conn, SearchKind.WORK_TITLE, str(loser))
     await conn.execute(delete(works).where(works.c.id.in_(losers)))
+    await rebuild_work_document(conn, winner_id)
     return await _log(conn, ResolutionSubject.WORK, "merge", winner_id, losers, None, snapshot, now)
 
 
@@ -99,13 +103,14 @@ async def merge_creators(
             (creator_aliases, ("normalized", "media_family")),
             (creator_external_ids, ("namespace", "value")),
         ):
-            clauses = [
-                getattr(table.c, name).in_(
-                    select(getattr(table.c, name)).where(table.c.creator_id == winner_id)
+            winner_rows = table.alias(f"winner_{table.name}")
+            pair_exists = exists(
+                select(1).where(
+                    winner_rows.c.creator_id == winner_id,
+                    *[winner_rows.c[name] == table.c[name] for name in columns],
                 )
-                for name in columns
-            ]
-            await conn.execute(delete(table).where(table.c.creator_id == loser, *clauses))
+            )
+            await conn.execute(delete(table).where(table.c.creator_id == loser, pair_exists))
             await conn.execute(
                 update(table).where(table.c.creator_id == loser).values(creator_id=winner_id)
             )
@@ -194,6 +199,23 @@ async def _require_rows(
     found = set((await conn.execute(select(table.c.id).where(table.c.id.in_(ids)))).scalars())
     if found != set(ids):
         raise LookupError(f"unknown {label}")
+
+
+async def _ensure_parent_merge_safe(
+    conn: AsyncConnection, winner_id: uuid.UUID, loser_ids: set[uuid.UUID]
+) -> None:
+    """Reject a merge that would make the winner its own ancestor."""
+    current: uuid.UUID | None = winner_id
+    visited: set[uuid.UUID] = set()
+    while current is not None:
+        if current in loser_ids:
+            raise ValueError("cannot merge a work into one of its own ancestors")
+        if current in visited:
+            raise ValueError("work parent hierarchy already contains a cycle")
+        visited.add(current)
+        current = (
+            await conn.execute(select(works.c.parent_work_id).where(works.c.id == current))
+        ).scalar_one_or_none()
 
 
 async def _remove_work_credit_collisions(

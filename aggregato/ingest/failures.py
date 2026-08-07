@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import ingest_failures
 from aggregato.domain.enums import IngestStage
-from aggregato.domain.models import NormalizedBatch, RawRecord
+from aggregato.domain.models import FAILURE_ENVELOPE_VERSION, NormalizedBatch, RawRecord
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,7 @@ class CapturedFailure:
     id: int
     provider_id: str
     sync_run_id: int
+    native_id: str | None
     stage: IngestStage
     error: str
     raw_payload: dict[str, Any]
@@ -46,6 +47,7 @@ async def capture_failure(
     error: BaseException | str,
     raw_payload: dict[str, Any],
     now: datetime,
+    native_id: str | None = None,
 ) -> int:
     """Record one failed record and return its id.
 
@@ -58,17 +60,21 @@ async def capture_failure(
         error: The exception or an explanatory message. Exceptions are rendered as
             ``ClassName: message``, because the class alone rarely says enough and the traceback is
             too much for a list view (it goes to the run's ``log_excerpt`` instead).
-        raw_payload: The record verbatim. This is the replay source; a failure stored without it is
-            barely worth storing.
+        raw_payload: The record verbatim, or the protocol's failure envelope. This is the replay
+            source; a failure stored without it is barely worth storing.
         now: From the injected clock.
+        native_id: The provider's native record identity. Child failures carry this inside the
+            typed envelope because the dispatch boundary forwards that mapping.
 
     Returns:
         The new row's id.
     """
+    native_id, raw_payload = _unpack_envelope(raw_payload, native_id)
     result = await conn.execute(
         ingest_failures.insert().values(
             provider_id=provider_id,
             sync_run_id=sync_run_id,
+            native_id=native_id,
             raw_payload=raw_payload,
             error=_render(error),
             stage=str(stage),
@@ -109,6 +115,7 @@ async def unresolved_failures(
         ingest_failures.c.id,
         ingest_failures.c.provider_id,
         ingest_failures.c.sync_run_id,
+        ingest_failures.c.native_id,
         ingest_failures.c.stage,
         ingest_failures.c.error,
         ingest_failures.c.raw_payload,
@@ -122,6 +129,7 @@ async def unresolved_failures(
             id=row.id,
             provider_id=row.provider_id,
             sync_run_id=row.sync_run_id,
+            native_id=row.native_id,
             stage=IngestStage(row.stage),
             error=row.error,
             raw_payload=row.raw_payload,
@@ -172,8 +180,12 @@ async def replay_failure(
 
     normalizer = cast(Callable[[RawRecord], NormalizedBatch], normalize)
     writer = cast(Callable[[RawRecord, NormalizedBatch], Awaitable[None]], write)
+    if failure.native_id is None:
+        # A malformed legacy/protocol failure without a native identity cannot be safely replayed.
+        # In particular, never substitute the failure row id or inspect arbitrary payload keys.
+        return False
     payload = dict(failure.raw_payload)
-    native_id = str(payload.get("id", failure.id))
+    native_id = failure.native_id
     try:
         batch = normalizer(RawRecord(native_id=native_id, payload=payload))
         await writer(RawRecord(native_id=native_id, payload=payload), batch)
@@ -181,3 +193,18 @@ async def replay_failure(
         return False
     await mark_resolved(conn, [failure.id], now=now)
     return True
+
+
+def _unpack_envelope(
+    raw_payload: dict[str, Any], native_id: str | None
+) -> tuple[str | None, dict[str, Any]]:
+    """Extract protocol metadata without treating provider payload keys as identity."""
+    if native_id is not None or raw_payload.get("envelope") != FAILURE_ENVELOPE_VERSION:
+        return native_id, raw_payload
+    envelope_native_id = raw_payload.get("native_id")
+    envelope_payload = raw_payload.get("raw_payload")
+    if (
+        envelope_native_id is not None and not isinstance(envelope_native_id, str)
+    ) or not isinstance(envelope_payload, dict):
+        return native_id, raw_payload
+    return envelope_native_id, dict(envelope_payload)
