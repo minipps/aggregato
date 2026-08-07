@@ -27,8 +27,6 @@ const MEDIA_TYPES: MediaType[] = [
   'album',
   'track',
   'game',
-  'podcast',
-  'podcast_episode',
   'other',
 ]
 const MEDIA_FAMILIES: MediaFamily[] = ['screen', 'print', 'audio', 'interactive', 'other']

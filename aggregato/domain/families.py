@@ -25,8 +25,6 @@ _FAMILY_MEMBERS: dict[MediaFamily, frozenset[MediaType]] = {
         {
             MediaType.ALBUM,
             MediaType.TRACK,
-            MediaType.PODCAST,
-            MediaType.PODCAST_EPISODE,
         }
     ),
     MediaFamily.INTERACTIVE: frozenset({MediaType.GAME}),

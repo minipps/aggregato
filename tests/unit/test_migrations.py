@@ -198,6 +198,167 @@ def test_head_rejects_the_retired_season_media_types(tmp_path: Path) -> None:
                 )
 
 
+def test_head_rejects_the_retired_podcast_media_types(tmp_path: Path) -> None:
+    db = tmp_path / "aggregato.db"
+    upgrade_to_head(_url(db))
+    with closing(sqlite3.connect(db)) as conn:
+        for media_type in ("podcast", "podcast_episode"):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+                    " VALUES ('x', ?, 't', 't', '2026-01-01', '2026-01-01')",
+                    (media_type,),
+                )
+
+
+@pytest.mark.parametrize("retired", ["podcast", "podcast_episode"])
+def test_0015_retypes_legacy_podcast_rows_without_losing_the_log(
+    tmp_path: Path, retired: str
+) -> None:
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0014")
+    snapshot = {"works": [{"id": "w", "media_type": retired, "title": "t"}], "entries": []}
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+            " VALUES ('w', ?, 't', 't', '2026-01-01', '2026-01-01')",
+            (retired,),
+        )
+        conn.execute(
+            "INSERT INTO provider_items (id, provider_id, native_id, title_as_given, raw_payload,"
+            " schema_version, first_seen_at, last_seen_at)"
+            " VALUES (1, 'legacy', 'n', 't', '{}', 1, '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO entries (work_id, provider_id, provider_item_id, kind, logged_at,"
+            " logged_precision, ingested_at)"
+            " VALUES ('w', 'legacy', 1, 'listen', '2026-01-01', 'exact', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, performed_at,"
+            " snapshot) VALUES (1, 'work', 'merge', 'w', '[]', '2026-01-01', ?)",
+            (json.dumps(snapshot),),
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT media_type FROM works").fetchall() == [("other",)]
+        assert conn.execute("SELECT count(*) FROM entries").fetchone() == (1,)
+        assert conn.execute("SELECT count(*) FROM provider_items").fetchone() == (1,)
+        stored_snapshot = json.loads(conn.execute("SELECT snapshot FROM merge_log").fetchone()[0])
+    assert stored_snapshot["works"][0]["media_type"] == "other"
+
+
+def test_0015_preserves_every_work_related_row_during_the_rebuild(tmp_path: Path) -> None:
+    """The SQLite CHECK replacement must not cascade-delete any work-owned data."""
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0014")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+            " VALUES ('w', 'podcast_episode', 'Legacy audio', 'legacy audio',"
+            " '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, parent_work_id,"
+            " created_at, updated_at) VALUES ('child', 'tv', 'Child', 'child', 'w',"
+            " '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
+            " VALUES ('untouched', 'film', 'Untouched', 'untouched', '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES ('creator', 'person', 'Creator', 'creator', '{}', '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO external_ids (id, work_id, namespace, value, source, confidence,"
+            " created_at)"
+            " VALUES (1, 'w', 'fixture', 'legacy-work', 'legacy', 'asserted', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO provider_items (id, provider_id, native_id, work_id, title_as_given,"
+            " raw_payload, schema_version, first_seen_at, last_seen_at)"
+            " VALUES (1, 'legacy', 'n', 'w', 'Legacy audio', '{}', 1, '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO entries (id, work_id, provider_id, provider_item_id, native_id, kind,"
+            " logged_at, logged_precision, ingested_at)"
+            " VALUES (1, 'w', 'legacy', 1, 'event', 'listen', '2026-01-01', 'exact', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO opinions (id, work_id, provider_id, provider_item_id, updated_at)"
+            " VALUES (1, 'w', 'legacy', 1, '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO work_credits (id, work_id, creator_id, role, role_raw, position,"
+            " source, link_confidence) VALUES (1, 'w', 'creator', 'author', 'Host', 0,"
+            " 'legacy', 'asserted')"
+        )
+        conn.execute(
+            "INSERT INTO resolution_queue (id, subject, provider_id, payload_ref, candidates,"
+            " proposed, created_at) VALUES (1, 'work', 'legacy', 1, '[]', '{}', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, performed_at,"
+            " snapshot) VALUES (1, 'work', 'merge', 'w', '[]', '2026-01-01', ?)",
+            (json.dumps({"works": [{"id": "w", "media_type": "podcast_episode"}]}),),
+        )
+        conn.execute(
+            "INSERT INTO search_index (kind, ref_id, content) VALUES ('work_title', 'w',"
+            " 'Legacy audio')"
+        )
+        before = {
+            "works": conn.execute("SELECT * FROM works ORDER BY id").fetchall(),
+            "external_ids": conn.execute("SELECT * FROM external_ids ORDER BY id").fetchall(),
+            "provider_items": conn.execute("SELECT * FROM provider_items ORDER BY id").fetchall(),
+            "entries": conn.execute("SELECT * FROM entries ORDER BY id").fetchall(),
+            "opinions": conn.execute("SELECT * FROM opinions ORDER BY id").fetchall(),
+            "work_credits": conn.execute("SELECT * FROM work_credits ORDER BY id").fetchall(),
+            "resolution_queue": conn.execute(
+                "SELECT * FROM resolution_queue ORDER BY id"
+            ).fetchall(),
+            "search_index": conn.execute(
+                "SELECT kind, ref_id, content FROM search_index ORDER BY kind, ref_id"
+            ).fetchall(),
+        }
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        after_works = conn.execute("SELECT * FROM works ORDER BY id").fetchall()
+        expected_works = [
+            (*row[:1], "other" if row[1] == "podcast_episode" else row[1], *row[2:])
+            for row in before["works"]
+        ]
+        assert after_works == expected_works
+        for statement, table in (
+            ("SELECT * FROM external_ids ORDER BY id", "external_ids"),
+            ("SELECT * FROM provider_items ORDER BY id", "provider_items"),
+            ("SELECT * FROM entries ORDER BY id", "entries"),
+            ("SELECT * FROM opinions ORDER BY id", "opinions"),
+            ("SELECT * FROM work_credits ORDER BY id", "work_credits"),
+            ("SELECT * FROM resolution_queue ORDER BY id", "resolution_queue"),
+        ):
+            assert conn.execute(statement).fetchall() == before[table]
+        assert (
+            conn.execute(
+                "SELECT kind, ref_id, content FROM search_index ORDER BY kind, ref_id"
+            ).fetchall()
+            == before["search_index"]
+        )
+        snapshot = json.loads(conn.execute("SELECT snapshot FROM merge_log").fetchone()[0])
+        assert snapshot == {"works": [{"id": "w", "media_type": "other"}]}
+
+
 def test_0005_keeps_the_log_it_retypes(tmp_path: Path) -> None:
     """A season's entries must survive the rebuild.
 

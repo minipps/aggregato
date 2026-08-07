@@ -711,7 +711,7 @@ components:
     MediaType:
       type: string
       enum: [film, tv, book, comic, manga, anime,
-             album, track, game, podcast, podcast_episode, other]
+             album, track, game, other]
     MediaFamily:
       type: string
       enum: [screen, print, audio, interactive, other]
