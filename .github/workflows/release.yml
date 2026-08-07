@@ -92,7 +92,7 @@ jobs:
       # it: a self-hosted single-user service lands on Raspberry Pis and Apple silicon at least as
       # often as on amd64, and an operator there cannot build their way out of an amd64-only image.
       - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v3
         with:
