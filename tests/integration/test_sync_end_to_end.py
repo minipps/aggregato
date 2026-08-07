@@ -10,6 +10,7 @@ built separately, and "each part passes its own tests" is not evidence that they
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import uuid
 from collections.abc import AsyncIterator
@@ -99,12 +100,14 @@ def config_for(path: Path) -> Config:
     )
 
 
-async def enable_fixture(engine: AsyncEngine, *, interval_seconds: int = 3600) -> None:
-    """Enable the provider the way the API's enable endpoint will."""
+async def enable_provider(
+    engine: AsyncEngine, provider_id: str, *, interval_seconds: int = 3600
+) -> None:
+    """Enable a provider the way the API's enable endpoint will."""
     async with transaction(engine) as conn:
         await conn.execute(
             providers.insert().values(
-                id="fixture",
+                id=provider_id,
                 enabled=True,
                 status=str(ProviderStatus.IDLE),
                 acquisition="export",
@@ -117,13 +120,18 @@ async def enable_fixture(engine: AsyncEngine, *, interval_seconds: int = 3600) -
         )
         await conn.execute(
             provider_state.insert().values(
-                provider_id="fixture",
+                provider_id=provider_id,
                 effective_interval_seconds=interval_seconds,
                 consecutive_failures=0,
                 retry_step=0,
                 kv={},
             )
         )
+
+
+async def enable_fixture(engine: AsyncEngine, *, interval_seconds: int = 3600) -> None:
+    """Enable the fixture provider the way the API's enable endpoint will."""
+    await enable_provider(engine, "fixture", interval_seconds=interval_seconds)
 
 
 async def count(engine: AsyncEngine, table: object) -> int:
@@ -596,6 +604,47 @@ async def test_the_scheduler_dispatches_a_due_provider(engine: AsyncEngine) -> N
 
     assert started == 1
     assert dispatched == ["fixture"]
+
+
+async def test_the_scheduler_does_not_claim_beyond_available_slots(
+    engine: AsyncEngine,
+) -> None:
+    """A queued provider stays idle until SQLite has a slot for its run."""
+    await enable_provider(engine, "first")
+    await enable_provider(engine, "second")
+    dispatch_started = asyncio.Event()
+    release_dispatch = asyncio.Event()
+    dispatched: list[str] = []
+
+    async def blocking_dispatch(due: object) -> None:
+        dispatched.append(due.provider_id)  # type: ignore[attr-defined]
+        dispatch_started.set()
+        await release_dispatch.wait()
+
+    scheduler = Scheduler(
+        engine,
+        dispatch=blocking_dispatch,
+        clock=StepClock(),
+        max_concurrent=SQLITE_MAX_CONCURRENT_RUNS,
+    )
+    try:
+        assert await scheduler.poll_once() == 1
+        await dispatch_started.wait()
+
+        # The second due provider must not be claimed while the one SQLite run slot is occupied.
+        assert await scheduler.poll_once() == 0
+        async with transaction(engine) as conn:
+            rows = (await conn.execute(select(providers.c.id, providers.c.status))).all()
+            statuses = {str(row.id): str(row.status) for row in rows}
+        claimed_provider = dispatched[0]
+        waiting_provider = "second" if claimed_provider == "first" else "first"
+        assert statuses[claimed_provider] == str(ProviderStatus.SYNCING)
+        assert statuses[waiting_provider] == str(ProviderStatus.IDLE)
+    finally:
+        release_dispatch.set()
+        await scheduler.stop()
+
+    assert len(dispatched) == 1
 
 
 async def test_a_dispatch_that_raises_does_not_kill_the_loop(engine: AsyncEngine) -> None:
