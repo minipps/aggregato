@@ -51,8 +51,19 @@ def _run_migrations(connection: Connection) -> None:
 def _run_locked_postgres_migrations(connection: Connection) -> None:
     """Serialize API/worker migration startup on one Postgres database."""
     connection.exec_driver_sql("SELECT pg_advisory_lock(482901734)")
+    # The lock function is a statement, so SQLAlchemy has already opened an implicit transaction.
+    # End that lock-acquisition transaction before Alembic starts its own; otherwise Alembic treats
+    # the migration transaction as already active and the outer connection context rolls all DDL
+    # back on exit.
+    connection.commit()
     try:
         _run_migrations(connection)
+    except BaseException:
+        # A failed DDL statement leaves the session transaction aborted. Clear it before releasing
+        # the session-level lock, otherwise the cleanup query masks the migration error and makes
+        # the operator debug the wrong failure.
+        connection.rollback()
+        raise
     finally:
         connection.exec_driver_sql("SELECT pg_advisory_unlock(482901734)")
 

@@ -71,9 +71,11 @@ def _rename(renames: Mapping[str, str], *, check: str) -> None:
 
 def _rewrite_works(renames: Mapping[str, str], check: str) -> None:
     """Drop the CHECK, rewrite the values, put the new CHECK back. No table rebuild involved."""
-    op.drop_constraint("ck_works_media_type", "works", type_="check")
+    # The check naming convention includes the existing constraint name; ``op.f`` preserves the
+    # frozen name instead of producing ``ck_works_ck_works_media_type`` on PostgreSQL.
+    op.drop_constraint(op.f("ck_works_media_type"), "works", type_="check")
     _update_media_types(renames)
-    op.create_check_constraint("media_type", "works", check)
+    op.create_check_constraint(op.f("ck_works_media_type"), "works", check)
 
 
 def _sqlite_rewrite_works(renames: Mapping[str, str], check: str) -> None:
@@ -93,8 +95,8 @@ def _sqlite_rewrite_works(renames: Mapping[str, str], check: str) -> None:
     # performs an implicit DELETE FROM, which fires every ON DELETE CASCADE pointing at works —
     # entries, opinions, work_credits, provider_items. Without this the revision would delete the
     # log it is only renaming, which is the failure 0005 had to be built around.
-    # PRAGMA foreign_keys is a no-op inside a transaction, hence autocommit_block; defer_foreign_keys
-    # does not help, because the implicit delete still runs the cascade actions.
+    # PRAGMA foreign_keys is a no-op inside a transaction, hence autocommit_block;
+    # defer_foreign_keys does not help, because the implicit delete still runs the cascade actions.
     context = op.get_context()
     with context.autocommit_block():
         op.execute("PRAGMA foreign_keys=OFF")

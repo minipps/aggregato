@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.schema import CreateIndex, CreateTable
 
-from aggregato.db.schema import entries, metadata, provider_items
+from aggregato.db.schema import entries, metadata, provider_items, providers
 
 DIALECTS: list[tuple[str, Dialect]] = [
     ("sqlite", sqlite.dialect()),
@@ -47,6 +47,20 @@ def test_no_native_database_enums() -> None:
         if isinstance(column.type, SAEnum)
     ]
     assert offenders == [], f"native database enums found: {offenders}"
+
+
+def test_boolean_defaults_compile_for_both_dialects() -> None:
+    """Fresh PostgreSQL installs must not receive SQLite's integer boolean literals."""
+    for dialect in (sqlite.dialect(), postgresql.dialect()):
+        compiled = str(CreateTable(providers).compile(dialect=dialect)).lower()
+        assert "enabled boolean" in compiled
+        assert "reviewed boolean" in compiled
+        if dialect.name == "postgresql":
+            assert "default false" in compiled
+            assert "default true" in compiled
+        else:
+            assert "default 0" in compiled
+            assert "default 1" in compiled
 
 
 def test_no_naive_timestamp_columns() -> None:

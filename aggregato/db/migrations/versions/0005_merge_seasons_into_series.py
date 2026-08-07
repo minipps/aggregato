@@ -49,8 +49,10 @@ def _replace_check(expression: str) -> None:
             with context.autocommit_block():
                 op.execute("PRAGMA foreign_keys=ON")
         return
-    op.drop_constraint("ck_works_media_type", "works", type_="check")
-    op.create_check_constraint("media_type", "works", expression)
+    # ``ck`` includes ``%(constraint_name)s`` in the metadata convention. Mark the frozen name
+    # with ``op.f`` so Alembic does not apply that convention a second time on PostgreSQL.
+    op.drop_constraint(op.f("ck_works_media_type"), "works", type_="check")
+    op.create_check_constraint(op.f("ck_works_media_type"), "works", expression)
 
 
 def upgrade() -> None:

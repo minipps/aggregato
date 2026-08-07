@@ -98,11 +98,11 @@ def upgrade() -> None:
     op.create_table(
         "providers",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("enabled", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+        sa.Column("enabled", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("acquisition", sa.String(length=16), nullable=False),
         sa.Column("schema_version", sa.Integer(), nullable=False),
-        sa.Column("reviewed", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("reviewed", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("config", JSON_COL, server_default=sa.text("'{}'"), nullable=False),
         sa.Column("last_error", JSON_COL, nullable=True),
         sa.Column("created_at", TS, nullable=False),

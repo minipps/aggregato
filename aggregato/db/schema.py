@@ -27,7 +27,9 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
     text,
+    true,
 )
 
 from aggregato.db.types import AUTO_FK, AUTO_PK, DECIMAL, JSON_COL, TIMESTAMP, UUID_PK
@@ -430,12 +432,12 @@ providers = Table(
     "providers",
     metadata,
     Column("id", String(64), primary_key=True),
-    Column("enabled", Boolean, nullable=False, server_default=text("0")),
+    Column("enabled", Boolean, nullable=False, server_default=false()),
     Column("status", String(16), nullable=False),
     Column("acquisition", String(16), nullable=False),
     Column("schema_version", Integer, nullable=False),
     # False for drop-in development providers, which the UI labels `unreviewed` .
-    Column("reviewed", Boolean, nullable=False, server_default=text("1")),
+    Column("reviewed", Boolean, nullable=False, server_default=true()),
     # Database overrides only. File values are not copied here, so "file-pinned" stays answerable
     # (research.md ).
     Column("config", JSON_COL, nullable=False, server_default=text("'{}'")),
