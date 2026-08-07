@@ -20,8 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 
 #: How long SQLite waits on a locked database before raising. WAL keeps readers off the writer's
 #: back, but two writers (the API and a sync run) still serialize, and the loser must wait rather
-#: than fail — a few seconds covers a batch commit.
-SQLITE_BUSY_TIMEOUT_MS = 5000
+#: than fail. The scheduler admits only one SQLite run at a time; this covers the remaining short
+#: API/retention write overlap without making lock waits unbounded.
+SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
 def create_engine(url: str, *, echo: bool = False) -> AsyncEngine:

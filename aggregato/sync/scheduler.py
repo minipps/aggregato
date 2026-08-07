@@ -272,6 +272,7 @@ class Scheduler:
         self._dispatch = dispatch
         self._clock = clock
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
+        self._max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._poll_interval = poll_interval_seconds
         self._running: dict[str, asyncio.Task[None]] = {}
@@ -288,9 +289,18 @@ class Scheduler:
         clock rather than racing a sleep.
         """
         started = 0
+        available_slots = self._max_concurrent - len(self._running)
+        if available_slots <= 0:
+            return started
+
         for due in await due_providers(self._engine, now=self._clock.now()):
             if due.provider_id in self._running:
                 continue
+            # Claiming is itself a database write. Do not claim work that must wait for the
+            # semaphore: on SQLite, that claim could collide with the active run's ingest
+            # transaction even though the run tasks themselves are serialized.
+            if available_slots == 0:
+                break
             if not await claim(self._engine, due.provider_id, now=self._clock.now()):
                 # Someone else got it. Not an error; the next poll will find it if it is still due.
                 continue
@@ -298,6 +308,7 @@ class Scheduler:
             self._running[due.provider_id] = task
             task.add_done_callback(self._forget(due.provider_id))
             started += 1
+            available_slots -= 1
         return started
 
     def _forget(self, provider_id: str) -> Callable[[asyncio.Task[None]], None]:
