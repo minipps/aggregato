@@ -43,8 +43,8 @@ from hashlib import sha256
 from typing import Final, Literal
 
 from fastapi import FastAPI
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import delete, select, text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from starlette.requests import Request
 
 from aggregato.api.clock import now as request_now
@@ -80,6 +80,9 @@ SESSION_TTL: Final = timedelta(days=14)
 
 MAX_ACTIVE_SESSIONS: Final = 100
 """Bound the number of live sessions a leaked token can mint before cleanup runs."""
+
+_SESSION_ISSUANCE_LOCK_KEY: Final = 482901735
+"""PostgreSQL transaction-lock key shared by every API process issuing sessions."""
 
 AUTH_FAILURE_WINDOW_SECONDS: Final = 60.0
 AUTH_FAILURE_LIMIT: Final = 20
@@ -232,6 +235,7 @@ async def issue_session(request: Request) -> tuple[str, str]:
     session_id = secrets.token_urlsafe(32)
     now = request_now(request)
     async with transaction(_engine(request)) as conn:
+        await _lock_session_issuance(conn)
         # Housekeeping on the one write path this table has, so expired rows cannot accumulate
         # forever without a separate sweeper job.
         await conn.execute(delete(sessions).where(sessions.c.expires_at <= now))
@@ -240,15 +244,14 @@ async def issue_session(request: Request) -> tuple[str, str]:
                 select(sessions.c.id)
                 .where(sessions.c.expires_at > now)
                 .order_by(sessions.c.created_at.desc(), sessions.c.id.desc())
-                .limit(MAX_ACTIVE_SESSIONS)
+                .with_for_update()
             )
         )
         # Keep one slot for the new session. This is deliberately cleanup rather than rejection:
         # repeated legitimate logins cannot turn into a denial-of-service against the operator.
-        if len(active) == MAX_ACTIVE_SESSIONS:
-            await conn.execute(
-                delete(sessions).where(sessions.c.id.in_([row.id for row in active[-1:]]))
-            )
+        if len(active) >= MAX_ACTIVE_SESSIONS:
+            evicted = [row.id for row in active[MAX_ACTIVE_SESSIONS - 1 :]]
+            await conn.execute(delete(sessions).where(sessions.c.id.in_(evicted)))
         await conn.execute(
             sessions.insert().values(
                 id=session_id,
@@ -258,6 +261,20 @@ async def issue_session(request: Request) -> tuple[str, str]:
             )
         )
     return f"{session_id}.{_sign(token, session_id)}", _csrf_token(token, session_id)
+
+
+async def _lock_session_issuance(conn: AsyncConnection) -> None:
+    """Serialize session-cap checks across API processes on PostgreSQL.
+
+    SQLite obtains its database writer lock from the expiry cleanup ``DELETE`` below. PostgreSQL
+    otherwise has no gap lock when the active-session set is empty or below the cap, so an
+    application-wide transaction advisory lock closes that race without a schema sentinel row.
+    """
+    if conn.dialect.name == "postgresql":
+        await conn.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _SESSION_ISSUANCE_LOCK_KEY},
+        )
 
 
 def _token(request: Request) -> str:

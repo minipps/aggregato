@@ -18,9 +18,13 @@ trap shutdown TERM INT
 # AGGREGATO_RELOAD is the development overlay's switch (docker/compose.dev.yml), which bind-mounts
 # the source over /app/aggregato. Empty or unset in production: a watcher there is overhead, and a
 # code change means a new image.
+# Trust forwarded scheme/host headers only from the explicitly configured proxy addresses. When a
+# trusted proxy reports HTTPS, the API derives Secure session cookies from that request scheme.
 uvicorn aggregato.main:app \
     --host "${AGGREGATO_HOST:-0.0.0.0}" \
     --port "${AGGREGATO_PORT:-8000}" \
+    --proxy-headers \
+    --forwarded-allow-ips "${AGGREGATO_FORWARDED_ALLOW_IPS:-127.0.0.1}" \
     ${AGGREGATO_RELOAD:+--reload} &
 api_pid=$!
 

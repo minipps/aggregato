@@ -22,16 +22,17 @@ import os
 import re
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 from urllib.parse import urlsplit
 
 from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from fastapi import APIRouter, Body, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from starlette.requests import Request
 
 from aggregato.api.clock import now as request_now
@@ -105,7 +106,17 @@ class SyncRequest(BaseModel):
 
 
 MAX_IMPORT_BYTES = 50 * 1024 * 1024
-MAX_IMPORT_QUOTA_BYTES = 512 * 1024 * 1024
+_IMPORT_QUOTA_LOCK_KEY: Final = 482901736
+"""PostgreSQL transaction-lock key shared by every API process admitting an import."""
+
+
+@dataclass(frozen=True, slots=True)
+class StoredImport:
+    """A staged upload and the durable path it will receive after admission."""
+
+    path: Path
+    temporary: Path
+    size: int
 
 
 class LastRunView(BaseModel):
@@ -464,23 +475,11 @@ async def import_file(
             type=error_type("provider-misconfigured"),
         )
 
-    used_bytes = await asyncio.to_thread(_import_usage, config.data_dir / "imports" / id)
-    if used_bytes >= MAX_IMPORT_QUOTA_BYTES:
-        raise ProblemError(
-            status=413,
-            title="Import storage quota exceeded",
-            detail=(
-                f"imports for {id} already use {used_bytes} bytes; remove completed files before "
-                "uploading another export"
-            ),
-            type=error_type("import-quota-exceeded"),
-        )
-
-    path = await _store_import(config.data_dir, id, file)
+    stored = await _store_import(config.data_dir, id, file)
     try:
         inferred_settings = await _settings_inferred_from_import(
             info,
-            path,
+            stored.temporary,
             enabled=not any(
                 setting.startswith(f"providers.{id}.") for setting in config.file_pinned
             ),
@@ -521,11 +520,55 @@ async def import_file(
                     detail=f"fix {id}'s configuration before importing an export",
                     type=error_type("provider-misconfigured"),
                 )
+            # This update is both the durable admission claim and the SQLite writer lock. It keeps
+            # two uploads for one provider from checking the filesystem quota at the same time;
+            # PostgreSQL holds the row lock until this transaction commits, while SQLite serializes
+            # the write transaction. The staged .uploading file is deliberately excluded from the
+            # usage scan, so add this request's actual byte count explicitly.
+            state_update = await conn.execute(
+                update(provider_state)
+                .where(provider_state.c.provider_id == id)
+                .values(next_run_at=now)
+            )
+            if state_update.rowcount != 1:
+                raise ProblemError(
+                    status=503,
+                    title="Provider state is incomplete",
+                    detail="the provider has no scheduling state; repair it before importing",
+                    type=error_type("provider-state-missing"),
+                )
+            await _lock_import_quota(conn)
+            used_bytes = await asyncio.to_thread(_import_usage, stored.path.parent)
+            provider_total_bytes = used_bytes + stored.size
+            if provider_total_bytes > config.api.import_quota_bytes:
+                raise ProblemError(
+                    status=413,
+                    title="Import storage quota exceeded",
+                    detail=(
+                        f"imports for {id} would use {provider_total_bytes} bytes including this "
+                        "upload; "
+                        f"the configured quota is {config.api.import_quota_bytes} bytes"
+                    ),
+                    type=error_type("import-quota-exceeded"),
+                )
+            total_used_bytes = await asyncio.to_thread(_import_usage, config.data_dir / "imports")
+            total_bytes = total_used_bytes + stored.size
+            if total_bytes > config.api.import_total_quota_bytes:
+                raise ProblemError(
+                    status=413,
+                    title="Total import storage quota exceeded",
+                    detail=(
+                        f"imports would use {total_bytes} bytes including this upload; the "
+                        f"configured total quota is {config.api.import_total_quota_bytes} bytes"
+                    ),
+                    type=error_type("import-total-quota-exceeded"),
+                )
+            await asyncio.to_thread(stored.temporary.replace, stored.path)
             if inferred_settings:
-                stored = (
+                stored_config = (
                     await conn.execute(select(providers.c.config).where(providers.c.id == id))
                 ).scalar_one_or_none()
-                merged_settings = dict(stored) if isinstance(stored, dict) else {}
+                merged_settings = dict(stored_config) if isinstance(stored_config, dict) else {}
                 # A value chosen explicitly in the UI always wins over a value discoverable in an
                 # export. This also avoids replacing an explicit RSS URL with a derived username
                 # URL.
@@ -539,33 +582,22 @@ async def import_file(
             await conn.execute(
                 import_jobs.insert().values(
                     provider_id=id,
-                    path=str(path),
+                    path=str(stored.path),
                     lineage_id=lineage,
                     created_at=now,
                     attempts=0,
                 )
             )
-            state_update = await conn.execute(
-                update(provider_state)
-                .where(provider_state.c.provider_id == id)
-                .values(next_run_at=now)
-            )
-            if state_update.rowcount != 1:
-                raise ProblemError(
-                    status=503,
-                    title="Provider state is incomplete",
-                    detail="the provider has no scheduling state; repair it before importing",
-                    type=error_type("provider-state-missing"),
-                )
     except Exception:
         # The file has no owner until the import_jobs row commits. Do not leave a private orphan
         # behind when the second, race-safe admission check rejects it.
-        await asyncio.to_thread(path.unlink, missing_ok=True)
+        await asyncio.to_thread(stored.path.unlink, missing_ok=True)
+        await asyncio.to_thread(stored.temporary.unlink, missing_ok=True)
         raise
     return SyncQueued(lineage_id=lineage)
 
 
-async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) -> Path:
+async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) -> StoredImport:
     """Save an upload privately, bounded in size, without trusting its filename as a path."""
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix not in {".csv", ".rss", ".xml"}:
@@ -595,13 +627,12 @@ async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) ->
                         type=error_type("import-too-large"),
                     )
                 await asyncio.to_thread(output.write, chunk)
-        temporary.replace(target)
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
     finally:
         await upload.close()
-    return target
+    return StoredImport(path=target, temporary=temporary, size=total)
 
 
 def _import_usage(directory: Path) -> int:
@@ -609,13 +640,27 @@ def _import_usage(directory: Path) -> int:
     if not directory.is_dir():
         return 0
     total = 0
-    for path in directory.iterdir():
+    for path in directory.rglob("*"):
         if path.is_file() and not path.name.endswith(".uploading"):
             try:
                 total += path.stat().st_size
             except OSError:
                 continue
     return total
+
+
+async def _lock_import_quota(conn: AsyncConnection) -> None:
+    """Serialize total-quota checks across PostgreSQL API processes.
+
+    SQLite already holds its database-wide writer lock from the provider-state ``UPDATE`` in the
+    admission transaction. PostgreSQL needs an explicit transaction advisory lock because imports
+    for different providers update different state rows.
+    """
+    if conn.dialect.name == "postgresql":
+        await conn.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _IMPORT_QUOTA_LOCK_KEY},
+        )
 
 
 async def _settings_inferred_from_import(

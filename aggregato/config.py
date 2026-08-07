@@ -51,6 +51,8 @@ ENV_SETTINGS: Mapping[str, str] = {
     "AGGREGATO_TOKEN": "api.token",
     "AGGREGATO_READONLY_TOKEN": "api.readonly_token",
     "AGGREGATO_CORS_ORIGINS": "api.cors_origins",
+    "AGGREGATO_IMPORT_QUOTA_BYTES": "api.import_quota_bytes",
+    "AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES": "api.import_total_quota_bytes",
     "AGGREGATO_HOST": "api.host",
     "AGGREGATO_PORT": "api.port",
     "AGGREGATO_DATA": "data_dir",
@@ -103,6 +105,12 @@ class ApiSettings(BaseModel):
     #: neither is ever cross-origin and neither ever preflights. Set it only for a browser client
     #: served from somewhere else.
     cors_origins: tuple[str, ...] = ()
+    #: Maximum retained import-file bytes per provider. The upload itself is included in the
+    #: admission check, so this is a storage quota rather than just a pre-existing-usage warning.
+    import_quota_bytes: int = Field(default=512 * 1024 * 1024, ge=0)
+    #: Maximum retained import-file bytes across all providers. The per-provider quota still applies
+    #: independently, so either limit may reject an upload.
+    import_total_quota_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=0)
     host: str = "127.0.0.1"
     port: int = 8000
 

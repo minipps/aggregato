@@ -168,6 +168,33 @@ def test_phase_three_paths_are_present(served: dict[str, Any]) -> None:
     } <= set(_served_paths(served))
 
 
+def test_import_contract_documents_all_admission_failure_classes(
+    contract: dict[str, Any],
+) -> None:
+    operation = contract["paths"]["/providers/{id}/import"]["post"]
+    responses = operation["responses"]
+
+    assert {"404", "409", "413", "422", "503"} <= set(responses)
+    assert "415" not in responses
+    assert "configured total and per-provider import storage quotas" in operation["description"]
+
+
+def test_replay_contract_documents_queued_worker_semantics(contract: dict[str, Any]) -> None:
+    operation = contract["paths"]["/ingest-failures/{id}/replay"]["post"]
+    responses = operation["responses"]
+
+    assert "202" in responses
+    assert "200" not in responses
+    assert "worker" in responses["202"]["description"]
+    schema = responses["202"]["content"]["application/json"]["schema"]
+    assert set(schema["required"]) == {"replayed", "queued"}
+
+
+def test_failure_contract_exposes_replay_identity(contract: dict[str, Any]) -> None:
+    properties = contract["components"]["schemas"]["IngestFailure"]["properties"]
+    assert properties["native_id"]["nullable"] is True
+
+
 # --- Conventions the contract states and the app must not contradict ----------------------------
 
 

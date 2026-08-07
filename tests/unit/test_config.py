@@ -37,6 +37,37 @@ def test_precedence_defaults_then_file_then_env_then_database(tmp_path: Path) ->
     assert cfg.api.port == 9003
 
 
+def test_import_quotas_are_configurable_and_nonnegative() -> None:
+    cfg = load_config(
+        env={
+            "AGGREGATO_TOKEN": TOKEN,
+            "AGGREGATO_IMPORT_QUOTA_BYTES": "1234",
+            "AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES": "4321",
+        }
+    )
+    assert cfg.api.import_quota_bytes == 1234
+    assert cfg.api.import_total_quota_bytes == 4321
+
+    overridden = load_config(
+        env={
+            "AGGREGATO_TOKEN": TOKEN,
+            "AGGREGATO_IMPORT_QUOTA_BYTES": "1234",
+            "AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES": "4321",
+        },
+        db_overrides={
+            "api.import_quota_bytes": 5678,
+            "api.import_total_quota_bytes": 8765,
+        },
+    )
+    assert overridden.api.import_quota_bytes == 5678
+    assert overridden.api.import_total_quota_bytes == 8765
+
+    with pytest.raises(ConfigError, match="import_quota_bytes"):
+        load_config(env={"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_IMPORT_QUOTA_BYTES": "-1"})
+    with pytest.raises(ConfigError, match="import_total_quota_bytes"):
+        load_config(env={"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES": "-1"})
+
+
 def test_missing_token_is_fatal_and_names_the_setting() -> None:
     """The only fatal configuration error: there is no unauthenticated mode ."""
     with pytest.raises(MissingTokenError) as exc:

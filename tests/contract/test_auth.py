@@ -8,17 +8,22 @@ database, so the autouse socket blocker in ``tests/conftest.py`` is satisfied.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from fastapi import Depends, FastAPI
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from aggregato.api import deps as auth_deps
 from aggregato.api.deps import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -143,6 +148,46 @@ async def test_session_exchange_sets_httponly_cookie(client: httpx.AsyncClient) 
     # Plain HTTP is a supported LAN deployment, so Secure must not be forced on .
     assert "Secure" not in session_cookie
     assert client.cookies[CSRF_COOKIE]
+
+
+async def test_session_exchange_marks_cookies_secure_over_https(
+    app: FastAPI,
+) -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://t") as secure_client:
+        response = await secure_client.post(
+            "/auth/session", headers={"Authorization": f"Bearer {TOKEN}"}
+        )
+    assert response.status_code == 204
+    assert all("Secure" in value for value in response.headers.get_list("set-cookie"))
+
+
+async def test_concurrent_session_issuance_keeps_the_active_cap(
+    client: httpx.AsyncClient,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_deps, "MAX_ACTIVE_SESSIONS", 2)
+    responses = await asyncio.gather(
+        *(
+            client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
+            for _ in range(8)
+        )
+    )
+    assert all(response.status_code == 204 for response in responses)
+    async with transaction(engine) as conn:
+        count = await conn.scalar(select(func.count()).select_from(sessions))
+    assert count == 2
+
+
+async def test_postgres_session_issuance_uses_a_transaction_lock() -> None:
+    conn = AsyncMock()
+    conn.dialect = SimpleNamespace(name="postgresql")
+
+    await auth_deps._lock_session_issuance(conn)
+
+    statement = conn.execute.await_args.args[0]
+    assert "pg_advisory_xact_lock" in str(statement)
 
 
 async def test_cookie_authenticates_a_get(client: httpx.AsyncClient) -> None:

@@ -363,7 +363,7 @@ paths:
     post:
       tags: [providers]
       summary: Upload a user-supplied export file (import mode)
-      description: Accepts `.csv`, `.rss`, or `.xml` files up to 50 MiB. The API stores the bytes privately and queues an import; provider-specific structural validation and ingestion happen asynchronously in the worker child.
+      description: Accepts `.csv`, `.rss`, or `.xml` files up to 50 MiB, subject to the configured total and per-provider import storage quotas. The API stages the bytes privately and queues an import; provider-specific structural validation and ingestion happen asynchronously in the worker child.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       requestBody:
         required: true
@@ -383,11 +383,13 @@ paths:
                 type: object
                 required: [lineage_id]
                 properties: { lineage_id: { type: string, format: uuid } }
-        "415":
-          $ref: "#/components/responses/Problem"
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
         "422":
           description: File rejected; the archive is unchanged ( scenario 3)
           $ref: "#/components/responses/Problem"
+        "503": { $ref: "#/components/responses/Problem" }
 
   /resolution-queue:
     get:
@@ -531,15 +533,19 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
       responses:
-        "200":
-          description: The retained payload was reprocessed synchronously after a provider fix; a successful replay marks the failure resolved.
+        "202":
+          description: A replay job was queued for the worker; normalization and writing remain behind the child/parent process boundary.
           content:
             application/json:
               schema:
                 type: object
-                required: [replayed]
+                required: [replayed, queued]
                 properties:
                   replayed: { type: boolean }
+                  queued: { type: boolean }
+                  job_id: { type: integer, format: int64, nullable: true }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
 
   /stats/summary:
     get:
@@ -987,6 +993,7 @@ components:
         id: { type: integer, format: int64 }
         provider_id: { type: string }
         sync_run_id: { type: integer, format: int64 }
+        native_id: { type: string, nullable: true, description: Immutable provider identity captured for safe replay }
         stage: { type: string, enum: [fetch, validate, normalize, write] }
         error: { type: string }
         raw_payload:

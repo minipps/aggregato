@@ -323,6 +323,7 @@ export interface IngestFailure {
   id: number
   provider_id: string
   sync_run_id: number
+  native_id: string | null
   stage: 'fetch' | 'validate' | 'normalize' | 'write'
   error: string
   raw_payload: Record<string, unknown>
