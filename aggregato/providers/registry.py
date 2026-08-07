@@ -95,7 +95,9 @@ def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
     A provider package is extension code, not metadata. Discovery therefore reads host-owned
     bundled manifests or a drop-in's manifest.json and never imports __init__.py. A legacy
     drop-in without a manifest is listed with conservative metadata for compatibility, but remains
-    unreviewed and is imported only if an operator selects it for a child run.
+    unreviewed and is imported only if an operator selects it for a child run. A malformed drop-in
+    is warned about and skipped on its own, so unrelated extension files cannot hide bundled or
+    otherwise valid providers.
 
     Returns:
         One ``ProviderInfo`` per bundled provider, sorted by ``id`` so the UI order is stable.
@@ -106,7 +108,7 @@ def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
             runtime condition: it means a bundled provider is malformed.
     """
     infos = [_info(name, reviewed=True) for name in _bundled_package_names()]
-    drop_ins = [_drop_in_info(path) for path in _drop_in_package_paths(drop_in_dir)]
+    drop_ins = _discover_drop_ins(drop_in_dir)
     duplicate_ids = {info.id for info in infos} & {info.id for info in drop_ins}
     if duplicate_ids:
         raise RuntimeError(
@@ -175,6 +177,27 @@ def _drop_in_package_paths(drop_in_dir: Path | None) -> list[Path]:
         ),
         key=lambda path: path.name,
     )
+
+
+def _discover_drop_ins(drop_in_dir: Path | None) -> list[ProviderInfo]:
+    """Parse each candidate independently, quarantining only malformed metadata.
+
+    Directory validation remains outside this helper: a configured provider directory that is not a
+    directory is still an error, and only immediate package directories with ``__init__.py`` are
+    candidates. The duplicate-id check also remains in :func:`discover_providers`, after all valid
+    metadata has been collected, so a valid shadowing drop-in cannot be hidden by this quarantine.
+    """
+    infos: list[ProviderInfo] = []
+    for path in _drop_in_package_paths(drop_in_dir):
+        try:
+            infos.append(_drop_in_info(path))
+        except (RuntimeError, UnicodeError) as exc:
+            warnings.warn(
+                f"skipping drop-in provider {path.name!r}: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+    return infos
 
 
 def _drop_in_info(path: Path) -> ProviderInfo:
