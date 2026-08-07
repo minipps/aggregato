@@ -33,21 +33,26 @@ Design decisions worth stating once:
 from __future__ import annotations
 
 import hmac
+import re
 import secrets
+import time
+from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from hashlib import sha256
 from typing import Final, Literal
 
 from fastapi import FastAPI
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import delete, select, text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from starlette.requests import Request
 
+from aggregato.api.clock import now as request_now
 from aggregato.api.errors import ProblemError, error_type
 from aggregato.config import Config
 from aggregato.db.engine import transaction
 from aggregato.db.schema import sessions
+from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 
 __all__ = [
     "CSRF_COOKIE",
@@ -73,6 +78,16 @@ CSRF_HEADER: Final = "X-CSRF-Token"
 SESSION_TTL: Final = timedelta(days=14)
 """How long a cookie session lasts. One user, one token: there is no refresh flow ."""
 
+MAX_ACTIVE_SESSIONS: Final = 100
+"""Bound the number of live sessions a leaked token can mint before cleanup runs."""
+
+_SESSION_ISSUANCE_LOCK_KEY: Final = 482901735
+"""PostgreSQL transaction-lock key shared by every API process issuing sessions."""
+
+AUTH_FAILURE_WINDOW_SECONDS: Final = 60.0
+AUTH_FAILURE_LIMIT: Final = 20
+_auth_failures: dict[str, deque[float]] = {}
+
 _UNAUTHORIZED: Final = 401
 _FORBIDDEN: Final = 403
 
@@ -80,11 +95,10 @@ _FORBIDDEN: Final = 403
 # presented with one; only cookie authentication does .
 _UNSAFE_METHODS: Final = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-_SESSION_PATH: Final = "/auth/session"
-"""Suffix of the session-exchange path — the one write a read-only credential may perform."""
+_SESSION_PATHS: Final = frozenset({"/api/v1/auth/session", "/auth/session"})
+"""Exact session-exchange paths for the mounted API and direct route assemblies."""
 
-_IMAGE_PATH: Final = "/media/image/"
-"""Prefix of the cached-image path, which reads without a credential — see :func:`require_auth`."""
+_PUBLIC_IMAGE_ROUTE: Final = re.compile(r"^(?:/api/v1)?/media/image/[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +125,9 @@ def token_fingerprint(token: str) -> str:
     return sha256(token.encode()).hexdigest()
 
 
-def register_auth(app: FastAPI, *, config: Config, engine: AsyncEngine) -> None:
+def register_auth(
+    app: FastAPI, *, config: Config, engine: AsyncEngine, clock: Clock | None = None
+) -> None:
     """Attach the config and engine that :func:`require_auth` and the routes read.
 
     ``main.py`` must additionally construct the app as
@@ -121,9 +137,15 @@ def register_auth(app: FastAPI, *, config: Config, engine: AsyncEngine) -> None:
         app: The application to mutate.
         config: Resolved configuration; ``config.api.token`` is the only credential.
         engine: The async engine the ``sessions`` table is read and written through.
+        clock: Optional request timestamp source; direct ``FastAPI`` test assemblies default to the
+            system clock, while :func:`aggregato.main.create_app` supplies the app clock.
     """
     app.state.config = config
     app.state.engine = engine
+    if clock is not None:
+        app.state.clock = clock
+    elif not hasattr(app.state, "clock"):
+        app.state.clock = SYSTEM_CLOCK
 
 
 async def require_auth(request: Request) -> AuthContext:
@@ -144,12 +166,15 @@ async def require_auth(request: Request) -> AuthContext:
     """
     if _is_public_image(request):
         return AuthContext(via="bearer", readonly=True)
+    _check_auth_rate(request)
 
     presented = _bearer(request)
     if presented is not None:
         matched = _match_credential(request, presented)
         if matched is None:
+            _record_auth_failure(request)
             raise _unauthorized("The bearer token is not valid.")
+        _clear_auth_failures(request)
         _, readonly = matched
         if readonly and _is_write(request):
             raise _readonly_forbidden(request.method)
@@ -157,10 +182,16 @@ async def require_auth(request: Request) -> AuthContext:
 
     cookie = request.cookies.get(SESSION_COOKIE)
     if cookie is None:
+        _record_auth_failure(request)
         raise _unauthorized(
             "This request needs an Authorization: Bearer header or a session cookie."
         )
-    session_id, credential, readonly = await _valid_session(request, cookie)
+    try:
+        session_id, credential, readonly = await _valid_session(request, cookie)
+    except ProblemError:
+        _record_auth_failure(request)
+        raise
+    _clear_auth_failures(request)
     if readonly and _is_write(request):
         raise _readonly_forbidden(request.method)
     if request.method in _UNSAFE_METHODS:
@@ -179,7 +210,9 @@ async def require_bearer(request: Request) -> None:
     """
     presented = _bearer(request)
     if presented is None or _match_credential(request, presented) is None:
+        _record_auth_failure(request)
         raise _unauthorized("POST /auth/session requires the API token as a bearer credential.")
+    _clear_auth_failures(request)
 
 
 async def issue_session(request: Request) -> tuple[str, str]:
@@ -200,11 +233,25 @@ async def issue_session(request: Request) -> tuple[str, str]:
         raise _unauthorized("POST /auth/session requires the API token as a bearer credential.")
     token, _ = matched
     session_id = secrets.token_urlsafe(32)
-    now = datetime.now(UTC)
+    now = request_now(request)
     async with transaction(_engine(request)) as conn:
+        await _lock_session_issuance(conn)
         # Housekeeping on the one write path this table has, so expired rows cannot accumulate
         # forever without a separate sweeper job.
         await conn.execute(delete(sessions).where(sessions.c.expires_at <= now))
+        active = list(
+            await conn.execute(
+                select(sessions.c.id)
+                .where(sessions.c.expires_at > now)
+                .order_by(sessions.c.created_at.desc(), sessions.c.id.desc())
+                .with_for_update()
+            )
+        )
+        # Keep one slot for the new session. This is deliberately cleanup rather than rejection:
+        # repeated legitimate logins cannot turn into a denial-of-service against the operator.
+        if len(active) >= MAX_ACTIVE_SESSIONS:
+            evicted = [row.id for row in active[MAX_ACTIVE_SESSIONS - 1 :]]
+            await conn.execute(delete(sessions).where(sessions.c.id.in_(evicted)))
         await conn.execute(
             sessions.insert().values(
                 id=session_id,
@@ -214,6 +261,20 @@ async def issue_session(request: Request) -> tuple[str, str]:
             )
         )
     return f"{session_id}.{_sign(token, session_id)}", _csrf_token(token, session_id)
+
+
+async def _lock_session_issuance(conn: AsyncConnection) -> None:
+    """Serialize session-cap checks across API processes on PostgreSQL.
+
+    SQLite obtains its database writer lock from the expiry cleanup ``DELETE`` below. PostgreSQL
+    otherwise has no gap lock when the active-session set is empty or below the cap, so an
+    application-wide transaction advisory lock closes that race without a schema sentinel row.
+    """
+    if conn.dialect.name == "postgresql":
+        await conn.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _SESSION_ISSUANCE_LOCK_KEY},
+        )
 
 
 def _token(request: Request) -> str:
@@ -253,7 +314,7 @@ def _is_write(request: Request) -> bool:
     and without that exchange the SPA could only work by keeping the token in page source, which
      forbids.
     """
-    return request.method in _UNSAFE_METHODS and not request.url.path.endswith(_SESSION_PATH)
+    return request.method in _UNSAFE_METHODS and request.url.path not in _SESSION_PATHS
 
 
 def _is_public_image(request: Request) -> bool:
@@ -262,12 +323,54 @@ def _is_public_image(request: Request) -> bool:
     Reads only: a ``POST`` to this path has no route anyway, and treating one as authenticated would
     hand an unauthenticated caller whatever a future write here does.
     """
-    return request.method in {"GET", "HEAD"} and _IMAGE_PATH in request.url.path
+    return (
+        request.method in {"GET", "HEAD"}
+        and _PUBLIC_IMAGE_ROUTE.fullmatch(request.url.path) is not None
+    )
 
 
 def _engine(request: Request) -> AsyncEngine:
     engine: AsyncEngine = request.app.state.engine
     return engine
+
+
+def _auth_client_key(request: Request) -> str:
+    return request.client.host if request.client is not None else "unknown"
+
+
+def _check_auth_rate(request: Request) -> None:
+    now = time.monotonic()
+    key = _auth_client_key(request)
+    failures = _auth_failures.get(key)
+    if failures is None:
+        return
+    while failures and now - failures[0] >= AUTH_FAILURE_WINDOW_SECONDS:
+        failures.popleft()
+    if not failures:
+        _auth_failures.pop(key, None)
+    elif len(failures) >= AUTH_FAILURE_LIMIT:
+        raise ProblemError(
+            status=429,
+            title="Too many authentication attempts",
+            detail="wait before trying to authenticate again",
+            type=error_type("auth-rate-limited"),
+        )
+
+
+def _record_auth_failure(request: Request) -> None:
+    now = time.monotonic()
+    key = _auth_client_key(request)
+    failures = _auth_failures.setdefault(key, deque())
+    while failures and now - failures[0] >= AUTH_FAILURE_WINDOW_SECONDS:
+        failures.popleft()
+    failures.append(now)
+    if len(_auth_failures) > 1024:
+        oldest = min(_auth_failures, key=lambda item: _auth_failures[item][0])
+        _auth_failures.pop(oldest, None)
+
+
+def _clear_auth_failures(request: Request) -> None:
+    _auth_failures.pop(_auth_client_key(request), None)
 
 
 def _bearer(request: Request) -> str | None:
@@ -320,7 +423,7 @@ async def _valid_session(request: Request, cookie: str) -> tuple[str, str, bool]
         found = await conn.scalar(
             select(sessions.c.id).where(
                 sessions.c.id == session_id,
-                sessions.c.expires_at > datetime.now(UTC),
+                sessions.c.expires_at > request_now(request),
                 sessions.c.token_fingerprint == token_fingerprint(credential),
             )
         )

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 from starlette.requests import Request
 
+from aggregato.api.clock import now as request_now
 from aggregato.api.errors import ProblemError
 from aggregato.db.engine import transaction
 from aggregato.db.schema import (
@@ -26,7 +29,7 @@ from aggregato.db.schema import (
     work_credits,
     works,
 )
-from aggregato.domain.clock import SYSTEM_CLOCK
+from aggregato.db.search import SearchKind, rebuild_work_document, unindex_document
 from aggregato.ingest.merge import merge_creators, merge_works
 from aggregato.ingest.split import split_creator
 
@@ -69,7 +72,7 @@ async def merge_work(request: Request, id: uuid.UUID, body: MergeRequest) -> Mer
     try:
         async with transaction(request.app.state.engine) as conn:
             row = await merge_works(
-                conn, winner_id=id, loser_ids=body.loser_ids, now=SYSTEM_CLOCK.now()
+                conn, winner_id=id, loser_ids=body.loser_ids, now=request_now(request)
             )
             return _entry(row)
     except (ValueError, LookupError) as exc:
@@ -81,7 +84,7 @@ async def merge_creator(request: Request, id: uuid.UUID, body: MergeRequest) -> 
     try:
         async with transaction(request.app.state.engine) as conn:
             row = await merge_creators(
-                conn, winner_id=id, loser_ids=body.loser_ids, now=SYSTEM_CLOCK.now()
+                conn, winner_id=id, loser_ids=body.loser_ids, now=request_now(request)
             )
             return _entry(row)
     except (ValueError, LookupError) as exc:
@@ -97,7 +100,7 @@ async def split_creator_route(request: Request, id: uuid.UUID, body: SplitReques
                 creator_id=id,
                 credit_ids=body.credit_ids,
                 new_name=body.new_name,
-                now=SYSTEM_CLOCK.now(),
+                now=request_now(request),
             )
             return _entry(row)
     except (ValueError, LookupError) as exc:
@@ -114,14 +117,19 @@ async def undo(request: Request, id: int) -> dict[str, bool]:
         if row.undone_at is not None:
             raise ProblemError(409, "Conflict", "This operation has already been undone.")
         try:
+            await _assert_undo_safe(conn, row)
             await _restore(conn, row)
         except Exception as exc:
             raise ProblemError(
                 409, "Conflict", "This operation can no longer be safely undone."
             ) from exc
-        await conn.execute(
-            update(merge_log).where(merge_log.c.id == id).values(undone_at=SYSTEM_CLOCK.now())
+        result = await conn.execute(
+            update(merge_log)
+            .where(merge_log.c.id == id, merge_log.c.undone_at.is_(None))
+            .values(undone_at=request_now(request))
         )
+        if result.rowcount != 1:
+            raise ProblemError(409, "Conflict", "This operation has already been undone.")
     return {"undone": True}
 
 
@@ -160,6 +168,8 @@ async def _restore(conn: Any, log: Any) -> None:
             await _insert(conn, table, snapshot[key])
     else:
         ids = [log.winner_id, *(uuid.UUID(item) for item in log.loser_ids)]
+        for work_id in ids:
+            await unindex_document(conn, SearchKind.WORK_TITLE, str(work_id))
         await conn.execute(delete(entries).where(entries.c.work_id.in_(ids)))
         await conn.execute(delete(opinions).where(opinions.c.work_id.in_(ids)))
         await conn.execute(delete(work_credits).where(work_credits.c.work_id.in_(ids)))
@@ -185,6 +195,10 @@ async def _restore(conn: Any, log: Any) -> None:
             (work_credits, "work_credits"),
         ):
             await _insert(conn, table, snapshot[key])
+        for work in snapshot["works"]:
+            work_id = _uuid(work["id"])
+            assert work_id is not None
+            await rebuild_work_document(conn, work_id)
     for queue in snapshot.get("resolution_queue", []):
         await conn.execute(
             update(resolution_queue)
@@ -196,6 +210,202 @@ async def _restore(conn: Any, log: Any) -> None:
 async def _insert(conn: Any, table: Any, rows: list[dict[str, Any]]) -> None:
     if rows:
         await conn.execute(table.insert(), [_typed(row) for row in rows])
+
+
+async def _assert_undo_safe(conn: Any, log: Any) -> None:
+    """Reject undo when a later write would be erased by restoring the snapshot.
+
+    Merge rewrites foreign keys and removes duplicate rows as part of its own operation. The check
+    therefore allows those merge-owned columns, but rejects new rows, missing rows, or a newer
+    timestamp in every affected table. It is optimistic concurrency for an operation whose inverse
+    is otherwise necessarily destructive.
+    """
+    snapshot = log.snapshot
+    performed_at = _timestamp(log.performed_at)
+    if set(snapshot) == {"resolution_queue"}:
+        await _assert_snapshot_rows(
+            conn, resolution_queue, snapshot["resolution_queue"], performed_at
+        )
+        return
+    if log.operation == "split":
+        await _assert_snapshot_rows(conn, creators, snapshot["creators"], performed_at)
+        moved = [int(item) for item in log.moved_credit_ids or []]
+        rows = list(
+            await conn.execute(
+                select(work_credits).where(work_credits.c.creator_id == log.winner_id)
+            )
+        )
+        if {int(row.id) for row in rows} != set(moved):
+            raise ValueError("credits changed after the split")
+        await _assert_snapshot_rows(
+            conn,
+            work_credits,
+            snapshot["work_credits"],
+            performed_at,
+            current_rows=rows,
+            ignored_columns={"creator_id"},
+        )
+        return
+
+    subject_ids = [log.winner_id, *(uuid.UUID(item) for item in log.loser_ids)]
+    specs: tuple[tuple[Any, str, list[uuid.UUID], str, set[Any], set[str]], ...]
+    if log.subject == "creator":
+        specs = (
+            (creators, "id", subject_ids, "creators", set(), set()),
+            (
+                creator_aliases,
+                "creator_id",
+                subject_ids,
+                "creator_aliases",
+                _duplicate_ids(
+                    snapshot["creator_aliases"],
+                    "creator_id",
+                    ("normalized", "media_family"),
+                    subject_ids[0],
+                ),
+                {"creator_id"},
+            ),
+            (
+                creator_external_ids,
+                "creator_id",
+                subject_ids,
+                "creator_external_ids",
+                _duplicate_ids(
+                    snapshot["creator_external_ids"],
+                    "creator_id",
+                    ("namespace", "value"),
+                    subject_ids[0],
+                ),
+                {"creator_id"},
+            ),
+            (
+                work_credits,
+                "creator_id",
+                subject_ids,
+                "work_credits",
+                _duplicate_ids(
+                    snapshot["work_credits"],
+                    "creator_id",
+                    ("work_id", "role", "source"),
+                    subject_ids[0],
+                ),
+                {"creator_id"},
+            ),
+        )
+    else:
+        specs = (
+            (works, "id", subject_ids, "works", set(subject_ids[1:]), set()),
+            (works, "parent_work_id", subject_ids, "parent_works", set(), {"parent_work_id"}),
+            (
+                external_ids,
+                "work_id",
+                subject_ids,
+                "external_ids",
+                _duplicate_ids(
+                    snapshot["external_ids"], "work_id", ("namespace", "value"), subject_ids[0]
+                ),
+                {"work_id"},
+            ),
+            (provider_items, "work_id", subject_ids, "provider_items", set(), {"work_id"}),
+            (entries, "work_id", subject_ids, "entries", set(), {"work_id"}),
+            (opinions, "work_id", subject_ids, "opinions", set(), {"work_id"}),
+            (
+                work_credits,
+                "work_id",
+                subject_ids,
+                "work_credits",
+                _duplicate_ids(
+                    snapshot["work_credits"],
+                    "work_id",
+                    ("creator_id", "role", "source"),
+                    subject_ids[0],
+                ),
+                {"work_id"},
+            ),
+        )
+    for table, column_name, ids, key, allow_missing, ignored_columns in specs:
+        snapshot_rows = snapshot.get(key, [])
+        column = getattr(table.c, column_name)
+        current = list(await conn.execute(select(table).where(column.in_(ids))))
+        await _assert_snapshot_rows(
+            conn,
+            table,
+            snapshot_rows,
+            performed_at,
+            current_rows=current,
+            allow_missing=allow_missing,
+            ignored_columns=ignored_columns,
+        )
+
+
+async def _assert_snapshot_rows(
+    conn: Any,
+    table: Any,
+    snapshot_rows: list[dict[str, Any]],
+    performed_at: datetime,
+    *,
+    current_rows: list[Any] | None = None,
+    allow_missing: set[Any] | None = None,
+    ignored_columns: set[str] | None = None,
+) -> None:
+    """Check rows, allowing only the foreign-key rewrites performed by the merge itself."""
+    allow_missing_ids = {_identity(value) for value in (allow_missing or set())}
+    ignored = ignored_columns or set()
+    if current_rows is None:
+        ids = [_typed(row)["id"] for row in snapshot_rows]
+        current_rows = list(await conn.execute(select(table).where(table.c.id.in_(ids))))
+    current_by_id = {_identity(row.id): row for row in current_rows}
+    for expected in snapshot_rows:
+        key = _identity(expected["id"])
+        row = current_by_id.get(key)
+        if row is None:
+            if key not in allow_missing_ids:
+                raise ValueError(f"{table.name} changed after the operation")
+            continue
+        for name in expected:
+            if name == "id" or name in ignored:
+                continue
+            current_value = getattr(row, name)
+            if _normalized(current_value) != _normalized(expected[name]):
+                raise ValueError(f"{table.name} changed after the operation")
+        for name in ("created_at", "updated_at", "ingested_at", "first_seen_at", "last_seen_at"):
+            value = getattr(row, name, None)
+            if isinstance(value, datetime) and _timestamp(value) > performed_at:
+                raise ValueError(f"{table.name} changed after the operation")
+    expected_ids = {_identity(row["id"]) for row in snapshot_rows}
+    current_ids = {_identity(row.id) for row in current_rows}
+    if not current_ids.issubset(expected_ids):
+        raise ValueError(f"{table.name} changed after the operation")
+
+
+def _duplicate_ids(
+    rows: list[dict[str, Any]], owner_column: str, key_columns: tuple[str, ...], winner: Any
+) -> set[str]:
+    """IDs the merge intentionally removes because the winner already has the same key."""
+    winner_keys = {
+        tuple(_normalized(row[column]) for column in key_columns)
+        for row in rows
+        if _identity(row[owner_column]) == _identity(winner)
+    }
+    return {
+        _identity(row["id"])
+        for row in rows
+        if _identity(row[owner_column]) != _identity(winner)
+        and tuple(_normalized(row[column]) for column in key_columns) in winner_keys
+    }
+
+
+def _normalized(value: Any) -> str:
+    return json.dumps(jsonable_encoder(value), sort_keys=True, default=str)
+
+
+def _timestamp(value: datetime) -> datetime:
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return aware.astimezone(UTC)
+
+
+def _identity(value: Any) -> str:
+    return str(value)
 
 
 def _uuid(value: Any) -> uuid.UUID | None:

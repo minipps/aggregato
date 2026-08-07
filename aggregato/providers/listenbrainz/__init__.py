@@ -91,9 +91,12 @@ _ID_NAMESPACES: Mapping[str, str] = {
     "recording_msid": "msid_recording",
     "release_msid": "msid_release",
 }
-"""Payload key → namespace, for the identifiers ListenBrainz documents. Anything else keeps its own
-key as the namespace: an unrecognised identifier is worth storing under a guessable name, and is not
-worth dropping ."""
+"""Payload key → namespace, for the identifiers ListenBrainz documents.
+
+Anything else is retained under the registered ``listenbrainz`` namespace with its source key
+embedded in the value. That preserves forward-compatible identifiers without allowing a payload to
+invent a new core namespace .
+"""
 
 
 class ListenBrainzConfig(BaseModel):
@@ -495,8 +498,10 @@ def _work_identifiers(
         for key, value in source.items():
             if key in _ARTIST_ID_KEYS or not key.endswith(_ID_KEY_SUFFIXES):
                 continue
-            namespace = _ID_NAMESPACES.get(key, key)
+            namespace = _ID_NAMESPACES.get(key, "listenbrainz")
             for scalar in _scalars(value):
+                if namespace == "listenbrainz":
+                    scalar = f"{key}:{scalar}"
                 seen.setdefault((namespace, scalar), confidence)
     return sorted((namespace, value, seen[namespace, value]) for namespace, value in seen)
 

@@ -72,10 +72,11 @@ export AGGREGATO_TOKEN=$(openssl rand -hex 32)   # keep this — it is your logi
 docker compose -f docker/compose.yml up -d
 ```
 
-That runs the published image, `ghcr.io/minipps/aggregato:latest` (amd64 and arm64). Pin a release
-with `AGGREGATO_VERSION=0.2.0`, upgrade with `docker compose -f docker/compose.yml pull && docker
-compose -f docker/compose.yml up -d`, and if you would rather build from your checkout, that is what
-`docker compose -f docker/compose.yml build` is for.
+That runs the published `0.1.5` image (amd64 and arm64); pin it explicitly with
+`AGGREGATO_VERSION=0.1.5`, or set `AGGREGATO_VERSION` to a newer release when upgrading. Use
+`docker compose -f docker/compose.yml pull && docker compose
+-f docker/compose.yml up -d`, and if you would rather build from your checkout, use `docker compose
+-f docker/compose.yml build`.
 
 Open <http://localhost:8000> and sign in with that token. One image, one volume, two processes (the
 API and the scheduler). No database server, no message broker, no other services.
@@ -85,7 +86,8 @@ Then, on the **Providers** screen:
 1. Pick a platform, press **Configure provider**, fill the form in and **Save configuration**. The
    form is generated from what that platform actually needs, and every field says what it is for.
    Saved credentials are never shown again.
-2. Press **Check credentials**. It reads one page and reports back what it found.
+2. Press **Show latest run** to see the most recent completed provider run. This reports recorded
+   state; it does not make an immediate request to the platform.
 3. Press **Enable**, then **Sync now** for the first pass. After that the scheduler polls on its own
    at the platform's own interval, and you can leave it alone.
 
@@ -173,7 +175,7 @@ All four must be clean before anything merges. Warnings are errors.
 ```bash
 uv run ruff format --check . && uv run ruff check . && uv run mypy
 uv run lint-imports          # the decoupling contract, a merge gate rather than a convention
-uv run pytest                # no test touches the network or needs credentials
+uv run pytest -m "not bench" # merge-gate suite; run `uv run pytest -m bench tests/bench` separately
 cd frontend && npm run type-check && npm run test:unit
 ```
 

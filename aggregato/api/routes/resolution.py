@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 from starlette.requests import Request
 
+from aggregato.api.clock import now as request_now
 from aggregato.api.errors import ProblemError
 from aggregato.api.pagination import clamp_limit
 from aggregato.api.queries import fetch_page
@@ -18,7 +19,6 @@ from aggregato.api.routes.identity import MergeLogEntry, _entry
 from aggregato.api.schemas import PageResponse
 from aggregato.db.engine import transaction
 from aggregato.db.schema import merge_log, provider_items, resolution_queue
-from aggregato.domain.clock import SYSTEM_CLOCK
 from aggregato.domain.enums import ResolutionDecision, ResolutionSubject
 from aggregato.ingest.merge import merge_creators, merge_works
 
@@ -96,7 +96,7 @@ async def decide(request: Request, id: int, body: DecisionRequest) -> MergeLogEn
             raise ProblemError(404, "Not Found", f"No resolution item with id {id}.")
         if item.decided_at is not None:
             raise ProblemError(409, "Conflict", "This resolution item was already decided.")
-        now = SYSTEM_CLOCK.now()
+        now = request_now(request)
         # Merge-log snapshots live in a JSON column.  A queue row includes ``created_at`` (and may
         # contain UUID-valued payload data), so retain it through FastAPI's JSON-safe encoder just
         # as the merge service does for its own snapshots.

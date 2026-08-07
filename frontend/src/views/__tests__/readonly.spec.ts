@@ -20,6 +20,7 @@ vi.mock('@/api/client', () => ({
 }))
 
 import { readonlyAccess } from '@/api/session'
+import type { IngestFailure } from '@/api/types'
 
 import IngestFailures from '../IngestFailures.vue'
 import Resolution from '../Resolution.vue'
@@ -33,7 +34,17 @@ const item = {
   created_at: '2026-01-01T00:00:00Z',
 }
 
-const failure = { id: 3, provider_id: 'fixture', stage: 'normalize', error: 'boom', raw_payload: {} }
+const failure: IngestFailure = {
+  id: 3,
+  provider_id: 'fixture',
+  sync_run_id: 4,
+  native_id: 'native-record-3',
+  stage: 'normalize',
+  error: 'boom',
+  raw_payload: {},
+  created_at: '2026-01-01T00:00:00Z',
+  resolved_at: null,
+}
 
 async function settle(): Promise<void> {
   await Promise.resolve()

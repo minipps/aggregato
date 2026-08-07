@@ -1,4 +1,4 @@
-"""Configuration resolution: defaults ← YAML file ← ``${ENV}`` ← database overrides.
+"""Configuration resolution: defaults ← YAML file ← ``${ENV}`` ← explicit caller overlay.
 
 The precedence and every rule below come from research.md :
 
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 __all__ = [
     "Config",
@@ -51,6 +51,8 @@ ENV_SETTINGS: Mapping[str, str] = {
     "AGGREGATO_TOKEN": "api.token",
     "AGGREGATO_READONLY_TOKEN": "api.readonly_token",
     "AGGREGATO_CORS_ORIGINS": "api.cors_origins",
+    "AGGREGATO_IMPORT_QUOTA_BYTES": "api.import_quota_bytes",
+    "AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES": "api.import_total_quota_bytes",
     "AGGREGATO_HOST": "api.host",
     "AGGREGATO_PORT": "api.port",
     "AGGREGATO_DATA": "data_dir",
@@ -81,7 +83,7 @@ class ProviderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str
-    settings: dict[str, Any] = {}
+    settings: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     error: str | None = None
 
@@ -103,6 +105,12 @@ class ApiSettings(BaseModel):
     #: neither is ever cross-origin and neither ever preflights. Set it only for a browser client
     #: served from somewhere else.
     cors_origins: tuple[str, ...] = ()
+    #: Maximum retained import-file bytes per provider. The upload itself is included in the
+    #: admission check, so this is a storage quota rather than just a pre-existing-usage warning.
+    import_quota_bytes: int = Field(default=512 * 1024 * 1024, ge=0)
+    #: Maximum retained import-file bytes across all providers. The per-provider quota still applies
+    #: independently, so either limit may reject an upload.
+    import_total_quota_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=0)
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -145,11 +153,11 @@ class Config(BaseModel):
     #: Disable remote image retrieval while preserving stable local image URLs .
     image_cache_enabled: bool = True
     config_file: Path | None = None
-    providers: dict[str, ProviderConfig] = {}
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     file_pinned: frozenset[str] = frozenset()
     # Dotted path (in the shape of `public_dict`) → the `${VAR}` text it came from. Kept so the
     # resolved secret can be swapped back out for its reference on the way to the API .
-    env_refs: dict[str, str] = {}
+    env_refs: dict[str, str] = Field(default_factory=dict)
 
     def is_file_pinned(self, path: str) -> bool:
         """Report whether ``path`` (e.g. ``"api.port"``) was set in the YAML file.
@@ -178,7 +186,7 @@ def load_config(
     config_file: str | Path | None = None,
     db_overrides: Mapping[str, Any] | None = None,
 ) -> Config:
-    """Resolve configuration from all four layers.
+    """Resolve configuration from the startup layers plus an explicit caller overlay.
 
     Args:
         env: The environment to read. Defaults to ``os.environ``; passed explicitly by tests so
@@ -186,8 +194,10 @@ def load_config(
             copying ``.env.example`` leaves ``AGGREGATO_TOKEN=``.
         config_file: The YAML file to read. Defaults to ``$AGGREGATO_CONFIG``; absent means no
             file layer.
-        db_overrides: Dotted setting paths edited in the UI, addressing the raw setting tree
-            (``"api.port"``, ``"providers.listenbrainz.token"``). The highest-precedence layer.
+        db_overrides: Optional dotted setting paths supplied by the caller, addressing the raw
+            setting tree (``"api.port"``, ``"providers.listenbrainz.token"``). This function does
+            not read the database; the worker reads mutable provider settings separately from
+            ``providers.config`` immediately before spawning a child.
 
     Returns:
         A frozen :class:`Config`. Providers whose blocks were unusable are present but disabled

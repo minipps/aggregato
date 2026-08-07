@@ -67,6 +67,7 @@ async def run(
     state: dict[str, str],
     import_path: Path | None,
     provider_dir: Path | None = None,
+    host_state_dir: Path | None = None,
     replay_records: list[RawRecord] | None = None,
 ) -> int:
     """Fetch and normalize one run's worth of records.
@@ -88,10 +89,10 @@ async def run(
     # Feeding it to the request limiter made a provider with two requests per run sleep for an hour
     # after its first request.  Providers without an explicit request-rate declaration use the
     # host-owned acquisition floor.
-    client = PoliteClient(_politeness_policy(provider))
+    client = PoliteClient(_politeness_policy(provider), host_state_dir=host_state_dir)
     ctx = ProviderContext(
         http=client,  # type: ignore[arg-type]  # PoliteClient is the wrapper the contract promises
-        config=provider.config_model.model_validate(config),
+        config=provider.config_model.model_validate(_with_secrets(config, secrets)),
         secrets=secrets,
         log=log,
         state=state,
@@ -159,6 +160,22 @@ def _emit_normalized(provider: Any, record: RawRecord) -> None:
     emit(BatchMessage(raw=record, batch=batch))
 
 
+def _with_secrets(config: dict[str, Any], secrets: dict[str, str]) -> dict[str, Any]:
+    """Reconstitute secret fields inside the selected provider's validated config."""
+    merged = dict(config)
+    for path, value in secrets.items():
+        node = merged
+        parts = path.split(".")
+        for part in parts[:-1]:
+            child = node.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                node[part] = child
+            node = child
+        node[parts[-1]] = value
+    return merged
+
+
 def _tail(text: str, limit: int = 4000) -> str:
     """The end of a traceback, which is the part naming what actually failed."""
     return text if len(text) <= limit else "…" + text[-limit:]
@@ -196,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
             state=payload.get("state", {}),
             import_path=Path(import_path) if import_path else None,
             provider_dir=Path(payload["provider_dir"]) if payload.get("provider_dir") else None,
+            host_state_dir=Path(payload["host_state_dir"])
+            if payload.get("host_state_dir")
+            else None,
             replay_records=[
                 RawRecord.model_validate(record) for record in payload["replay_records"]
             ]

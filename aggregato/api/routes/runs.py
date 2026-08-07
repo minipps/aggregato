@@ -8,19 +8,17 @@ from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from starlette.requests import Request
 
+from aggregato.api.clock import now as request_now
+from aggregato.api.errors import ProblemError, error_type
 from aggregato.api.pagination import clamp_limit
 from aggregato.api.queries import fetch_page
 from aggregato.api.schemas import PageResponse
-from aggregato.config import Config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import ingest_failures, sync_runs
+from aggregato.db.schema import ingest_failures, provider_state, providers, replay_jobs, sync_runs
 from aggregato.domain.enums import ErrorClass, IngestStage, RunStatus
-from aggregato.ingest.failures import CapturedFailure, replay_failure
-from aggregato.ingest.writer import WriteContext, ensure_rating_scales, write_batches
-from aggregato.providers.registry import load_provider
 
 router = APIRouter(tags=["operations"])
 
@@ -47,6 +45,7 @@ class IngestFailure(BaseModel):
     id: int
     provider_id: str
     sync_run_id: int
+    native_id: str | None = None
     stage: IngestStage
     error: str
     raw_payload: dict[str, object]
@@ -55,7 +54,9 @@ class IngestFailure(BaseModel):
 
 
 class ReplayResult(BaseModel):
-    replayed: bool
+    replayed: bool = False
+    queued: bool = False
+    job_id: int | None = None
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -85,7 +86,7 @@ async def provider_runs(
             query,
             sort_col=sync_runs.c.started_at,
             id_col=sync_runs.c.id,
-            sort="created_at",
+            sort="started_at",
             order="desc",
             cursor=cursor,
             limit=clamp_limit(limit),
@@ -123,56 +124,92 @@ async def list_ingest_failures(
     return PageResponse(items=[_failure(row) for row in page.items], next_cursor=page.next_cursor)
 
 
-@router.post("/ingest-failures/{id}/replay", response_model=ReplayResult)
+@router.post("/ingest-failures/{id}/replay", status_code=202, response_model=ReplayResult)
 async def replay_ingest_failure(request: Request, id: int) -> ReplayResult:
-    """Reprocess one retained payload after its provider's normalizer has been fixed."""
-    now = datetime.now(UTC)
+    """Queue a replay; normalization and writing stay in the worker child/parent boundary."""
+    now = request_now(request)
     async with transaction(request.app.state.engine) as conn:
         row = (
             await conn.execute(
-                select(ingest_failures).where(
-                    ingest_failures.c.id == id, ingest_failures.c.resolved_at.is_(None)
+                select(ingest_failures.c.provider_id, ingest_failures.c.native_id).where(
+                    ingest_failures.c.id == id,
+                    ingest_failures.c.resolved_at.is_(None),
                 )
             )
         ).first()
         if row is None:
-            return ReplayResult(replayed=False)
-        failure = CapturedFailure(
-            id=row.id,
-            provider_id=row.provider_id,
-            sync_run_id=row.sync_run_id,
-            stage=IngestStage(row.stage),
-            error=row.error,
-            raw_payload=row.raw_payload,
-        )
-        config: Config = request.app.state.config
-        provider = load_provider(failure.provider_id, config.provider_dir)
-        scales = list(getattr(provider, "rating_scales", []))
-        await ensure_rating_scales(conn, scales)
-
-        async def write(raw: object, batch: object) -> None:
-            counts = await write_batches(
-                conn,
-                WriteContext(
-                    provider_id=failure.provider_id,
-                    sync_run_id=failure.sync_run_id,
-                    schema_version=int(getattr(provider, "schema_version", 1)),
-                    now=now,
-                    rating_scales={scale.id: scale for scale in scales},
+            return ReplayResult()
+        if row.native_id is None:
+            raise ProblemError(
+                status=409,
+                title="Failure has no replay identity",
+                detail=(
+                    "legacy failures without a captured provider identity cannot be replayed safely"
                 ),
-                [(raw, batch)],  # type: ignore[list-item]
+                type=error_type("replay-identity-missing"),
             )
-            if counts.failed:
-                raise ValueError("replayed payload still fails host validation")
 
-        replayed = await replay_failure(
-            conn,
-            failure=failure,
-            normalize=provider.normalize,
-            write=write,
-            now=now,
+        active = (
+            await conn.execute(
+                select(providers.c.enabled, providers.c.status).where(
+                    providers.c.id == row.provider_id
+                )
+            )
+        ).first()
+        if active is None or not active.enabled:
+            raise ProblemError(
+                status=409,
+                title="Provider is not enabled",
+                detail=f"enable {row.provider_id} before replaying a failure",
+                type=error_type("provider-not-enabled"),
+            )
+        if active.status == "syncing":
+            raise ProblemError(
+                status=409,
+                title="A sync is already running",
+                detail=f"{row.provider_id} is already syncing; replay will be retried later",
+                type=error_type("sync-in-flight"),
+            )
+
+        existing = (
+            await conn.execute(
+                select(replay_jobs.c.id)
+                .where(
+                    replay_jobs.c.failure_id == id,
+                    replay_jobs.c.finished_at.is_(None),
+                    replay_jobs.c.failed_at.is_(None),
+                )
+                .order_by(replay_jobs.c.id.desc())
+                .limit(1)
+            )
+        ).first()
+        if existing is not None:
+            return ReplayResult(queued=True, job_id=int(existing.id))
+
+        lineage = uuid.uuid4()
+        result = await conn.execute(
+            replay_jobs.insert().values(
+                failure_id=id,
+                provider_id=row.provider_id,
+                lineage_id=lineage,
+                created_at=now,
+            )
         )
-    return ReplayResult(replayed=replayed)
+        primary_key = result.inserted_primary_key
+        assert primary_key is not None
+        state_update = await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == row.provider_id)
+            .values(next_run_at=now)
+        )
+        if state_update.rowcount != 1:
+            raise ProblemError(
+                status=503,
+                title="Provider state is incomplete",
+                detail="the provider has no scheduling state; repair it before queueing replay",
+                type=error_type("provider-state-missing"),
+            )
+    return ReplayResult(queued=True, job_id=int(primary_key[0]))
 
 
 def _run(row: Any) -> SyncRun:
@@ -199,6 +236,7 @@ def _failure(row: Any) -> IngestFailure:
         id=row.id,
         provider_id=row.provider_id,
         sync_run_id=row.sync_run_id,
+        native_id=row.native_id,
         stage=IngestStage(row.stage),
         error=row.error,
         raw_payload=row.raw_payload,

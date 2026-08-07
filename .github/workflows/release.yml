@@ -1,6 +1,6 @@
 name: Release
 
-# Tag-driven: `git tag v0.2.0 && git push origin v0.2.0` is the whole release procedure.
+# Tag-driven: `git tag v<version> && git push origin v<version>` is the whole release procedure.
 on:
   push:
     tags: ["v*"]
@@ -8,6 +8,8 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   # The same gates a push to main runs, by reference rather than by copy. A tag that cannot pass CI
@@ -31,16 +33,31 @@ jobs:
         # public — one of the two being laxer is how a stale uv.lock reached v0.1.1.
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          python -c "
-          import json, pathlib, sys, tomllib
-          tag = '$tag'
-          project = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
-          frontend = json.loads(pathlib.Path('frontend/package.json').read_text())['version']
-          packages = tomllib.loads(pathlib.Path('uv.lock').read_text())['package']
-          locked = next(p['version'] for p in packages if p['name'] == 'aggregato')
+          python - "$tag" <<'PY'
+          import json
+          import pathlib
+          import sys
+          import tomllib
+
+          tag = sys.argv[1]
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
+          packages = tomllib.loads(pathlib.Path("uv.lock").read_text())["package"]
+          locked = next(p["version"] for p in packages if p["name"] == "aggregato")
           if {project, frontend, locked} != {tag}:
-              sys.exit(f'tag v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}')
-          "
+              sys.exit(
+                  f"tag v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}"
+              )
+          expected_examples = {
+              pathlib.Path("README.md"): f"AGGREGATO_VERSION={tag}",
+              pathlib.Path("docker/compose.yml"): f"AGGREGATO_VERSION={tag}",
+          }
+          missing = [
+              str(path) for path, marker in expected_examples.items() if marker not in path.read_text()
+          ]
+          if missing:
+              sys.exit(f"release examples do not name v{tag}: {', '.join(missing)}")
+          PY
 
       - name: Build the release archive
         # `git archive` honours the export-ignore rules in .gitattributes, so this carries what is
@@ -89,14 +106,15 @@ jobs:
         with:
           # Lowercased by the action, which ghcr requires and a repository name does not guarantee.
           images: ghcr.io/${{ github.repository }}
-          # v0.2.1 publishes 0.2.1, 0.2 and latest: pin exactly, follow a minor line, or track the
-          # newest. `latest` moves only on a tag, never on a push to main.
+          # A vX.Y.Z tag publishes X.Y.Z, X.Y and latest: pin exactly, follow a minor line, or track
+          # the newest. `latest` moves only on a tag, never on a push to main.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
@@ -108,3 +126,23 @@ jobs:
           # node_modules from scratch.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BuildKit attaches an SBOM and in-toto provenance attestation to the pushed image.
+          # The provenance step below binds that digest to this workflow identity.
+          sbom: true
+          provenance: mode=max
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify \
+            "oci://ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}" \
+            --repo "${{ github.repository }}" \
+            --signer-workflow "${{ github.repository }}/.github/workflows/release.yml"

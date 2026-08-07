@@ -60,16 +60,42 @@ history, which reads exactly like data loss. Confirm with
 
 ## Retention and storage growth
 
-The defaults retain raw payloads for 90 days, successful sync history for 30 days, and failed or
-partial runs for 180 days. Failures are intentionally retained longer because they are the evidence
-needed to repair a provider or replay a poison record. The cleanup worker runs at startup and then
-daily.
+The defaults retain resolved ingest-failure payloads for 90 days, successful sync history for 30
+days, and failed or partial runs for 180 days. Unresolved ingest failures are kept until they are
+replayed or otherwise resolved. Provider-item payloads are the normalization-replay source and are
+not currently removed by the cleanup worker, even when the similarly named retention setting is
+lowered. Failures are intentionally retained because they are the evidence needed to repair a
+provider or replay a poison record. The cleanup worker runs at startup and then daily.
 
 Storage usage in Settings separates database bytes, retained raw payload bytes, and image-cache
-bytes. Raw payloads are the offline replay source, so lowering that retention trades away the
-ability to rebuild old derived data without contacting a platform. Turning off image caching returns
-a local placeholder and cleanup removes cached image files. Export an archive before lowering any
-retention setting if the old data matters.
+bytes. The raw-payload number includes provider-item and ingest-failure JSON sizes, not filesystem
+overhead. Turning off image caching returns a local placeholder immediately; the cleanup worker then
+removes the cached image rows and files. Export an archive before changing retention or deleting the
+data volume if the old failure evidence matters.
+
+## API limits and asynchronous work
+
+Collection endpoints use keyset pagination. `limit` defaults to 50 and is clamped to 1–200; a
+non-null `next_cursor` means another page is available. There is no offset mode. Full-text search
+returns every matching id before the collection page is applied. A work-detail response embeds only the 200 newest
+live entries and 200 newest opinions for that work and does not paginate those embedded lists.
+
+`POST /providers/{id}/sync` and `POST /providers/{id}/import` return `202` after queueing work.
+The returned `lineage_id` groups the attempts; consult provider run history for `running`, `partial`,
+`failed`, or eventual `success` rather than treating the queue response as completion. The check
+endpoint reports the most recent recorded run and does not contact a platform immediately. A manual
+sync is the operation that requests new provider work.
+
+Imports accept `.csv`, `.rss`, and `.xml` filenames up to 50 MiB. The upload is written under the
+private `/data/imports/<provider>` directory before the worker validates it. Completed and failed
+orphan files are removed by the daily cleanup job; queued or leased jobs keep their referenced file.
+Provider-specific parse failures
+remain in the ingest-failure queue with their retained payload for diagnosis or replay.
+
+Recoverable transport and server failures use the retry ladder. Authentication, blocking, and
+structure-change failures do not retry automatically and move the provider to `degraded`; fix the
+configuration or provider issue, then trigger a manual sync. The provider status and last error are
+also visible through `/health` and the Providers screen.
 
 ## Provider configuration in Docker
 

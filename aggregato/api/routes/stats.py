@@ -53,10 +53,9 @@ class TopItem(BaseModel):
 
 
 class TopResults(BaseModel):
-    """Ranked archive activity for a work or creator grouping."""
+    """All-time ranked archive activity for a work or creator grouping."""
 
     group: TopGroup
-    period: Period
     items: list[TopItem]
 
 
@@ -142,7 +141,6 @@ async def top(
     request: Request,
     group: TopGroup,
     role: Role | None = None,
-    period: Period = "all",
     media_type: MediaType | None = None,
     include_subunits: bool = False,
 ) -> TopResults:
@@ -203,4 +201,4 @@ async def top(
                 TopItem(id=str(row.id), label=str(row.label), count=int(row._mapping["count"]))
                 for row in rows
             ]
-    return TopResults(group=group, period=period, items=items)
+    return TopResults(group=group, items=items)

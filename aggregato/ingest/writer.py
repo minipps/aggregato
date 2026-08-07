@@ -22,6 +22,7 @@ inferred-delete path is guarded three ways over (see :func:`infer_deletes`,  com
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import (
@@ -39,12 +41,13 @@ from aggregato.db.schema import (
     work_credits,
     works,
 )
-from aggregato.db.search import SearchKind, index_document
+from aggregato.db.search import SearchKind, index_document, rebuild_work_document
 from aggregato.db.upsert import upsert_stmt
 from aggregato.domain.enums import Confidence, IngestStage
 from aggregato.domain.families import family_of
+from aggregato.domain.identifiers import canonicalize_identifier
 from aggregato.domain.models import NormalizedBatch, RawRecord
-from aggregato.domain.ratings import RatingOutOfScale, RatingScale, normalize_rating
+from aggregato.domain.ratings import RatingScale, normalize_rating
 from aggregato.domain.subject_ref import SubjectRef, validate_subject_ref
 from aggregato.images.cache import register_source_on_connection
 from aggregato.ingest.failures import capture_failure
@@ -140,23 +143,55 @@ async def write_batches(
     creator_memo: CreatorResolutionMemo = {}
     for raw, batch in records:
         counts.seen += 1
+        # Resolution creates rows as it goes and caches the result for the rest of the batch. Keep
+        # both effects record-local until the savepoint commits: a later rating/index failure must
+        # not leave either a rolled-back creator id in the memo or a partial relational graph.
+        record_memo = dict(creator_memo)
+        record_counts = (
+            counts.entries_written,
+            counts.entries_retracted,
+            counts.opinions_written,
+        )
+        savepoint = await conn.begin_nested()
+        failure_stage = IngestStage.VALIDATE
+        failure_error: BaseException | None = None
         try:
-            await _write_one(conn, ctx, raw, batch, counts, creator_memo)
-        except (ValidationRejection, RatingOutOfScale, ValueError) as exc:
-            # One poisoned record must never cost the operator the rest of the run .
-            counts.failed += 1
-            failure_id = await capture_failure(
-                conn,
-                provider_id=ctx.provider_id,
-                sync_run_id=ctx.sync_run_id,
-                stage=IngestStage.VALIDATE,
-                error=exc,
-                raw_payload=raw.payload,
-                now=ctx.now,
-            )
-            counts.failure_ids.append(failure_id)
+            await _write_one(conn, ctx, raw, batch, counts, record_memo)
+        except (ValidationRejection, ValueError) as exc:
+            failure_error = exc
+            await savepoint.rollback()
+        except SQLAlchemyError as exc:
+            # A database/index failure belongs to this record. Rolling back the nested transaction
+            # keeps the caller's batch transaction usable for later records and for the failure row.
+            failure_error = exc
+            failure_stage = IngestStage.WRITE
+            await savepoint.rollback()
         else:
+            await savepoint.commit()
+            creator_memo.update(record_memo)
             counts.written += 1
+            continue
+
+        # One poisoned record must never cost the operator the rest of the run. The savepoint is
+        # already rolled back, so this insert survives while all record side effects disappear.
+        assert failure_error is not None
+        (
+            counts.entries_written,
+            counts.entries_retracted,
+            counts.opinions_written,
+        ) = record_counts
+        counts.failed += 1
+        failure_id = await capture_failure(
+            conn,
+            provider_id=ctx.provider_id,
+            sync_run_id=ctx.sync_run_id,
+            stage=failure_stage,
+            error=failure_error,
+            raw_payload=raw.payload,
+            now=ctx.now,
+            native_id=raw.native_id,
+        )
+        counts.failure_ids.append(failure_id)
     return counts
 
 
@@ -169,6 +204,7 @@ async def _write_one(
     creator_memo: CreatorResolutionMemo,
 ) -> None:
     """Write one normalized batch. Raises rather than half-writing."""
+    batch = _canonicalize_batch_identifiers(batch)
     _validate(ctx, batch)
 
     # A manual queue decision changes the provider item's durable work link.  Honor it before
@@ -188,6 +224,26 @@ async def _write_one(
         else await resolve_work(conn, batch, now=ctx.now)
     )
     work_id = resolution.work_id
+    if existing_work_id is not None:
+        # A provider correcting its own existing item may update the canonical title. A new
+        # provider's assertion must remain a provider-item title, otherwise a second source would
+        # silently overwrite the archive's established canonical name.
+        work_values: dict[str, object] = {
+            "title": batch.work.title,
+            "sort_title": sort_title_for(batch.work.title),
+            "updated_at": ctx.now,
+        }
+        if batch.work.original_title is not None:
+            work_values["original_title"] = batch.work.original_title
+        if batch.work.release_year is not None:
+            work_values["release_year"] = batch.work.release_year
+        if batch.work.sequence_number is not None:
+            work_values["sequence_number"] = batch.work.sequence_number
+        if batch.work.image_url is not None:
+            work_values["image_url"] = batch.work.image_url
+        if batch.work.metadata:
+            work_values["metadata"] = batch.work.metadata
+        await conn.execute(update(works).where(works.c.id == work_id).values(work_values))
     item_id = await _upsert_provider_item(conn, ctx, raw, batch, work_id)
     if batch.work.image_url:
         # Backfill artwork onto a work this run did not create: a matched, manually linked, or
@@ -263,12 +319,7 @@ async def _write_one(
         counts.opinions_written += 1
 
     # In the same transaction as the rows above (research.md ).
-    await index_document(
-        conn,
-        SearchKind.WORK_TITLE,
-        str(work_id),
-        _title_document(batch),
-    )
+    await rebuild_work_document(conn, work_id)
     for position, opinion in enumerate(batch.opinions):
         if opinion.review_text:
             await index_document(
@@ -305,6 +356,37 @@ def _validate(ctx: WriteContext, batch: NormalizedBatch) -> None:
             )
 
 
+def _canonicalize_batch_identifiers(batch: NormalizedBatch) -> NormalizedBatch:
+    """Canonicalize identifiers before resolution so lookup and storage share one key."""
+    external_ids = [
+        identifier.model_copy(
+            update=dict(
+                zip(
+                    ("namespace", "value"),
+                    canonicalize_identifier(identifier.namespace, identifier.value),
+                    strict=True,
+                )
+            )
+        )
+        for identifier in batch.external_ids
+    ]
+    creator_external_ids = [
+        identifier.model_copy(
+            update=dict(
+                zip(
+                    ("namespace", "value"),
+                    canonicalize_identifier(identifier.namespace, identifier.value),
+                    strict=True,
+                )
+            )
+        )
+        for identifier in batch.creator_external_ids
+    ]
+    return batch.model_copy(
+        update={"external_ids": external_ids, "creator_external_ids": creator_external_ids}
+    )
+
+
 def _normalized_rating(ctx: WriteContext, opinion: Any) -> int | None:
     """Derive the 0–100 value.
 
@@ -313,17 +395,6 @@ def _normalized_rating(ctx: WriteContext, opinion: Any) -> int | None:
     if opinion.rating_raw is None:
         return None
     return normalize_rating(opinion.rating_raw, ctx.rating_scales[opinion.rating_scale_id])
-
-
-def _title_document(batch: NormalizedBatch) -> str:
-    """Every title form in one document.
-
-    So that searching an original-language title finds a work logged under its translation.
-    """
-    forms = [batch.work.title]
-    if batch.work.original_title and batch.work.original_title != batch.work.title:
-        forms.append(batch.work.original_title)
-    return " ".join(forms)
 
 
 def sort_title_for(title: str) -> str:
@@ -406,7 +477,7 @@ async def _upsert_external_id(
                     "created_at": ctx.now,
                 }
             ],
-            constraint="uq_external_ids_namespace_value_work",
+            index_elements=["namespace", "value"],
             # Nothing to update: an identifier is a fact, and re-asserting it should not rewrite who
             # said it first.
             update_columns=None,
@@ -472,6 +543,7 @@ async def _upsert_entry(
         "subject_ref": subject,
         "progress_value": entry.progress_value,
         "progress_unit": entry.progress_unit,
+        "subject_ref_key": _subject_ref_key(subject) if entry.native_id is None else None,
         "metadata": entry.metadata,
         "ingested_at": ctx.now,
         "deleted_at": None,
@@ -504,33 +576,32 @@ async def _upsert_entry(
         )
         return True
 
-    existing = await conn.execute(
-        select(entries.c.id).where(
-            and_(
-                entries.c.provider_item_id == item_id,
-                entries.c.kind == str(entry.kind),
-                entries.c.logged_at == entry.logged_at,
-                _subject_ref_matches(subject),
-            )
+    await conn.execute(
+        upsert_stmt(
+            conn,
+            entries,
+            [values],
+            index_elements=["provider_item_id", "kind", "logged_at", "subject_ref_key"],
+            index_where=and_(entries.c.native_id.is_(None), entries.c.subject_ref_key.is_not(None)),
+            update_columns=[
+                "work_id",
+                "provider_id",
+                "subject_ref",
+                "progress_value",
+                "progress_unit",
+                "metadata",
+                "logged_precision",
+                "deleted_at",
+                "ingested_at",
+            ],
         )
     )
-    if existing.first() is not None:
-        return False
-    await conn.execute(entries.insert().values(values))
     return True
 
 
-def _subject_ref_matches(subject: dict[str, int] | None) -> Any:
-    """Compare ``subject_ref`` for the no-native-id fallback.
-
-    JSON equality is not portable across dialects, so this compares against the stored JSON value
-    directly for the null case and by equality otherwise. ``SubjectRef.as_dict()`` omits unset keys,
-    which is what makes the non-null comparison stable: ``{"track": 7}`` has exactly one
-    representation rather than one per combination of explicit nulls.
-    """
-    if subject is None:
-        return entries.c.subject_ref.is_(None)
-    return entries.c.subject_ref == subject
+def _subject_ref_key(subject: dict[str, int] | None) -> str:
+    """Return one deterministic, portable representation for an optional subject reference."""
+    return json.dumps(subject, sort_keys=True, separators=(",", ":")) if subject else "{}"
 
 
 async def _upsert_opinion(
@@ -596,27 +667,28 @@ async def ensure_rating_scales(conn: AsyncConnection, scales: Sequence[RatingSca
     """
     from aggregato.db.schema import rating_scales
 
-    if not scales:
-        return
-    await conn.execute(
-        upsert_stmt(
-            conn,
-            rating_scales,
-            [
-                {
-                    "id": scale.id,
-                    "min_value": scale.min_value,
-                    "max_value": scale.max_value,
-                    "step": scale.step,
-                    "kind": str(scale.kind),
-                    "labels": scale.labels,
-                }
-                for scale in scales
-            ],
-            index_elements=["id"],
-            update_columns=["min_value", "max_value", "step", "kind", "labels"],
-        )
-    )
+    for scale in scales:
+        values = {
+            "id": scale.id,
+            "min_value": scale.min_value,
+            "max_value": scale.max_value,
+            "step": scale.step,
+            "kind": str(scale.kind),
+            "labels": scale.labels,
+        }
+        row = (
+            await conn.execute(select(rating_scales).where(rating_scales.c.id == scale.id))
+        ).first()
+        if row is None:
+            await conn.execute(rating_scales.insert().values(values))
+            continue
+        if any(
+            getattr(row, name) != values[name]
+            for name in ("min_value", "max_value", "step", "kind", "labels")
+        ):
+            raise ValueError(
+                f"rating scale {scale.id!r} is immutable and its stored definition conflicts"
+            )
 
 
 __all__ = [

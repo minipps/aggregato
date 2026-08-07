@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from starlette.requests import Request
 
+from aggregato.api.clock import now as request_now
 from aggregato.api.errors import ProblemError, error_type
 from aggregato.db.engine import transaction
 from aggregato.db.retention import get_settings, update_settings
@@ -52,7 +53,7 @@ async def read_settings(request: Request) -> SettingsView:
 async def patch_settings(request: Request, patch: SettingsPatch) -> SettingsView:
     values = patch.model_dump(exclude_none=True)
     try:
-        updated = await update_settings(request.app.state.engine, values)
+        updated = await update_settings(request.app.state.engine, values, now=request_now(request))
     except ValueError as exc:
         raise ProblemError(
             status=422,

@@ -45,15 +45,18 @@ comes free because the schedule *is* a queryable table.
 ##  — Provider isolation: one child process per sync run
 
 **Decision**: `multiprocessing` with the `spawn` start method. Per run, the scheduler spawns a child
-running `sync/child.py`, which imports only that one provider, runs `fetch` and `normalize`, and
+running `sync/child.py`, which loads only the selected provider, runs `fetch` and `normalize`, and
 writes **JSON lines** to a pipe: `{"type": "batch", …}`, `{"type": "checkpoint", "cursor": …}`,
 `{"type": "error", "class": …}`. The parent validates each line against the normalized Pydantic
 models and performs every database write itself.
 
 **Rationale**: Three separate spec requirements collapse into this one mechanism — hang and crash
-containment , no database handle or foreign secrets in provider code , and a
-killable per-run wall-clock timeout (§6.7). A child process gives all three by construction rather
-than by review. JSON lines rather than pickle because the payload crosses a boundary from
+containment, no database engine in provider code, and a killable per-run wall-clock timeout (§6.7).
+The child process and selected-provider context provide the normal sync boundary; this is not an OS
+sandbox. The runner passes a small explicit runtime environment and the selected provider's
+configuration/secrets over the child protocol. Unreviewed drop-ins still retain filesystem and
+network permissions, so operators must review their source and deployment location. JSON lines
+rather than pickle because the payload crosses a boundary from
 plugin-controlled code, and because it is the same shape the recorded fixtures use — one wire format
 for production and tests .
 
@@ -153,8 +156,8 @@ have to be invalidated by merges and splits).
 
 **Decision**: One `httpx.AsyncClient` per run, constructed by the host and handed to the provider in
 `ProviderContext`. The host wraps it with: a token-bucket limiter whose rate is
-`max(provider_declared, host_floor_for_acquisition_mode)`; a per-host `asyncio.Semaphore(1)` for
-`scrapes` providers; retry on 5xx/429/transport with jitter; `Retry-After` compliance; ETag /
+`max(provider_declared, host_floor_for_acquisition_mode)`; a per-host `asyncio.Semaphore(1)` within
+each run's client for `scrapes` providers; retry on 5xx/429/transport with jitter; `Retry-After` compliance; ETag /
 `If-Modified-Since` pass-through; and a fixed User-Agent naming the project, version, and contact URL.
 
 **Rationale**:  requires these to be un-overridable by plugin code — so the limiter must live
@@ -190,8 +193,9 @@ flat scalars, enums, and secrets.
 
 **Deviation, stated plainly**: the spec's Assumption says server-rendered specifically so a
 self-hoster needs no Node toolchain. Building the image or running from source now requires Node.
-Operators using `docker compose up` are unaffected. Recorded in plan.md Complexity Tracking; the spec
-Assumption should be amended rather than quietly contradicted.
+Operators using `docker compose up` are unaffected. Recorded in
+[architecture.md](architecture.md)'s complexity tracking; the spec Assumption should be amended
+rather than quietly contradicted.
 
 **Alternatives considered**: a JSON-Schema form library (heavier than the flat-schema renderer it
 would replace); Pinia (no shared state to manage); Nuxt/SSR (reintroduces the Node requirement it was
@@ -225,8 +229,9 @@ rotation can actually invalidate them.
    recorded fixtures, over a temporary SQLite file.
 4. **Unit tests** — resolution branches, retry classification, `subject_ref` validation, rating
    normalization (both kinds), family mapping, cursor codec, config precedence.
-5. **Benchmarks** (`tests/bench/`) — the plan.md budget table, run against a generated 1M-entry
-   fixture database. Lands in M2.
+5. **Benchmarks** (`tests/bench/`) — the budgets in
+   [architecture.md](architecture.md), checked against a generated 1M-entry fixture database and
+   the versioned [baseline](../tests/bench/baseline.json).
 
 **Rationale**: Determinism is a project requirement, so a blocked-socket fixture and an
 injected clock are infrastructure, not test hygiene. Network access in a test is a failure, not a
@@ -244,10 +249,13 @@ standard operator response to a `structure_changed` provider, per the source des
 
 ##  — Configuration precedence
 
-**Decision**: Defaults ← YAML file ← `${ENV_VAR}` interpolation ← database overrides (UI-editable).
-Secrets resolve from the environment at read time and are never written back to disk or returned by
-the API. The API reports, per setting, whether it is file-pinned. Invalid provider config disables
-that provider with a recorded error and never blocks startup.
+**Decision**: Startup resolves defaults ← YAML file ← `${ENV_VAR}` interpolation. The generic
+`load_config` function also accepts an explicit caller-supplied overlay for tests and host tools; it
+does not open the database itself. Scheduled provider runs read mutable provider settings from the
+database immediately before the child is spawned. Secrets resolve from the environment at read time
+and are never written back to disk or returned by the API. The API reports, per setting, whether it
+is file-pinned. Invalid provider config disables that provider with a recorded error and never
+blocks startup.
 
 **Rationale**: §8 and . "File-pinned" must be a field in the API response, or the UI cannot
 explain why an edit does not stick.

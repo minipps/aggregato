@@ -28,12 +28,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.engine import create_engine
 from aggregato.db.schema import (
+    creator_aliases,
+    creators,
     entries,
     external_ids,
     metadata,
     opinions,
     provider_items,
+    rating_scales,
     sync_runs,
+    work_credits,
     works,
 )
 from aggregato.db.search import (
@@ -43,14 +47,17 @@ from aggregato.db.search import (
 )
 from aggregato.domain.enums import (
     Confidence,
+    CreatorKind,
     EntryKind,
     LoggedPrecision,
     MediaType,
     ReviewFormat,
+    Role,
     ScaleKind,
 )
 from aggregato.domain.models import (
     NormalizedBatch,
+    NormalizedCredit,
     NormalizedEntry,
     NormalizedExternalId,
     NormalizedOpinion,
@@ -239,6 +246,21 @@ async def test_a_changed_rating_updates_rather_than_duplicating(conn: AsyncConne
     assert Decimal(str(row.rating_raw)) == Decimal("4.5")
     # (4.5 - 0.5) / (5 - 0.5) * 100 = 88.89 -> 89
     assert row.rating_normalized == 89
+
+
+async def test_a_rating_scale_definition_cannot_change_in_place(conn: AsyncConnection) -> None:
+    """A reused scale id with new bounds would make every stored normalized value ambiguous."""
+    conflicting = STARS_5.model_copy(update={"max_value": Decimal("10")})
+
+    with pytest.raises(ValueError, match="immutable"):
+        await ensure_rating_scales(conn, [conflicting])
+
+    row = (
+        await conn.execute(
+            select(rating_scales.c.max_value).where(rating_scales.c.id == STARS_5.id)
+        )
+    ).scalar_one()
+    assert Decimal(str(row)) == Decimal("5")
 
 
 # --- Events with NO native id: the fallback ----------------------------------------------------
@@ -494,6 +516,52 @@ async def test_one_bad_record_does_not_stop_the_others(conn: AsyncConnection) ->
     assert counts.written == 2
     assert counts.failed == 1
     assert await _count(conn, entries) == 2
+
+
+async def test_a_late_record_failure_rolls_back_every_record_side_effect(
+    conn: AsyncConnection,
+) -> None:
+    """A rating failure after resolution must leave no partial archive graph behind."""
+    bad = batch(rating=Decimal("4.25")).model_copy(
+        update={
+            "credits": [
+                NormalizedCredit(
+                    creator_name="Rolled Back Creator",
+                    creator_kind=CreatorKind.PERSON,
+                    role=Role.DIRECTOR,
+                    role_raw="Director",
+                    position=0,
+                )
+            ]
+        }
+    )
+
+    counts = await write_batches(
+        conn,
+        ctx(),
+        [(RawRecord(native_id="bad", payload={"native": "kept"}), bad)],
+    )
+
+    assert counts.failed == 1
+    assert counts.written == 0
+    for table in (
+        provider_items,
+        works,
+        external_ids,
+        creators,
+        creator_aliases,
+        work_credits,
+        entries,
+        opinions,
+    ):
+        assert await _count(conn, table) == 0, table.name
+
+    # The failure itself is deliberately outside the record savepoint.
+    from aggregato.ingest.failures import unresolved_failures
+
+    assert [failure.raw_payload for failure in await unresolved_failures(conn)] == [
+        {"native": "kept"}
+    ]
 
 
 async def test_a_captured_failure_keeps_its_payload(conn: AsyncConnection) -> None:

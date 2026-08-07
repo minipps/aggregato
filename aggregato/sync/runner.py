@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -31,6 +33,7 @@ from typing import Any
 from aggregato.domain.enums import ErrorClass, FetchMode, RunStatus
 from aggregato.domain.models import Cursor, NormalizedBatch, RawRecord
 from aggregato.sync.protocol import (
+    MAX_LINE_BYTES,
     BatchMessage,
     CheckpointMessage,
     ErrorMessage,
@@ -51,6 +54,14 @@ MAX_ARG_STRLEN = 128 * 1024
 #: Grace between SIGTERM and SIGKILL. A child mid-write gets a moment to finish its line; a child
 #: that is genuinely wedged does not get to ignore us.
 TERMINATE_GRACE_SECONDS = 5.0
+#: A descendant can keep a pipe open after the direct child exits. Never let stream cleanup defeat
+#: the wall-clock boundary.
+STDERR_CLEANUP_TIMEOUT_SECONDS = 1.0
+MAX_PAYLOAD_BYTES = 128 * 1024 * 1024
+MAX_REPLAY_RECORDS = 100_000
+MAX_STDOUT_BYTES = 64 * 1024 * 1024
+MAX_PROTOCOL_MESSAGES = 100_000
+MAX_STDERR_BYTES = 1 * 1024 * 1024
 
 
 @dataclass
@@ -86,6 +97,8 @@ class RunRequest:
     state: dict[str, str] = field(default_factory=dict)
     import_path: Path | None = None
     provider_dir: Path | None = None
+    #: Shared host pacing state stored outside the child so separately spawned runs coordinate.
+    host_state_dir: Path | None = None
     #: Stored raw records to normalize again after a provider schema-version bump.  This is kept
     #: separate from ``fetch`` so replay is credential-free and makes no network request .
     replay_records: list[RawRecord] = field(default_factory=list)
@@ -93,6 +106,11 @@ class RunRequest:
 
     def payload(self) -> str:
         """The single JSON argument the child parses."""
+        if len(self.replay_records) > MAX_REPLAY_RECORDS:
+            raise ProtocolViolation(
+                f"replay contains {len(self.replay_records)} records, over the "
+                f"{MAX_REPLAY_RECORDS} record limit"
+            )
         payload: dict[str, Any] = {
             "mode": str(self.mode),
             "cursor": self.cursor.state if self.cursor else None,
@@ -101,12 +119,18 @@ class RunRequest:
             "state": self.state,
             "import_path": str(self.import_path) if self.import_path else None,
             "provider_dir": str(self.provider_dir) if self.provider_dir else None,
+            "host_state_dir": str(self.host_state_dir) if self.host_state_dir else None,
         }
         if self.replay_records:
             payload["replay_records"] = [
                 record.model_dump(mode="json") for record in self.replay_records
             ]
-        return json.dumps(payload)
+        encoded = json.dumps(payload)
+        if len(encoded.encode()) > MAX_PAYLOAD_BYTES:
+            raise ProtocolViolation(
+                f"child request is over the {MAX_PAYLOAD_BYTES} byte payload limit"
+            )
+        return encoded
 
 
 async def execute_run(request: RunRequest, *, now: datetime | None = None) -> RunOutcome:
@@ -123,23 +147,33 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
         scheduler loop .
     """
     del now  # documented above; kept out of the body so no clock is read here
+    spawn_options: dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "env": _child_environment(),
+        "limit": MAX_LINE_BYTES + 1,
+    }
+    if os.name == "posix":
+        # A provider may fork. Starting a session makes the child the process-group leader, so the
+        # supervisor can terminate the whole run rather than only the process it spawned.
+        spawn_options["start_new_session"] = True
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
         "aggregato.sync.child",
         "--provider",
         request.provider_id,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        **spawn_options,
     )
 
     outcome = RunOutcome(status=RunStatus.RUNNING)
+    consume_task = asyncio.create_task(_consume(process, outcome))
+    stderr_task = asyncio.create_task(_read_stderr(process))
     try:
         async with asyncio.timeout(request.wall_clock_seconds):
             await _send_payload(process, request.payload())
-            await _consume(process, outcome)
-            await process.wait()
+            await asyncio.gather(consume_task, process.wait())
     except TimeoutError:
         # The child produced no end and no exit. Kill it, then classify — a hang and a crash must
         # look different to the operator (§6.7).
@@ -157,8 +191,16 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
         outcome.error_class = ErrorClass.INTERNAL
         outcome.error_message = str(exc)
         return outcome
+    finally:
+        await _terminate(process)
+        if not consume_task.done():
+            consume_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await consume_task
+        if not stderr_task.done():
+            await _finish_stderr_task(stderr_task)
 
-    stderr = await _read_stderr(process)
+    stderr = stderr_task.result() if stderr_task.done() and not stderr_task.cancelled() else ""
     if stderr:
         outcome.log_excerpt = _tail(stderr)
 
@@ -210,6 +252,8 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
     boundary between plugin-controlled output and host data .
     """
     assert process.stdout is not None
+    total_bytes = 0
+    messages = 0
     while True:
         try:
             line = await process.stdout.readline()
@@ -219,6 +263,12 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
             raise ProtocolViolation(f"child sent an over-long line: {exc}") from exc
         if not line:
             return
+        total_bytes += len(line)
+        messages += 1
+        if total_bytes > MAX_STDOUT_BYTES:
+            raise ProtocolViolation(f"child stdout exceeded the {MAX_STDOUT_BYTES} byte limit")
+        if messages > MAX_PROTOCOL_MESSAGES:
+            raise ProtocolViolation(f"child sent over the {MAX_PROTOCOL_MESSAGES} message limit")
         message = decode(line)
         match message:
             case BatchMessage():
@@ -237,22 +287,85 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
-    """Stop a child that will not stop itself: SIGTERM, brief grace, then SIGKILL."""
-    if process.returncode is not None:
+    """Stop a child and its descendants: SIGTERM, brief grace, then SIGKILL."""
+    if os.name != "posix":
+        if process.returncode is None:
+            process.terminate()
+            try:
+                async with asyncio.timeout(TERMINATE_GRACE_SECONDS):
+                    await process.wait()
+            except TimeoutError:
+                process.kill()
+                await process.wait()
         return
-    process.terminate()
-    try:
-        async with asyncio.timeout(TERMINATE_GRACE_SECONDS):
-            await process.wait()
-    except TimeoutError:
-        process.kill()
+
+    if process.returncode is not None and not _process_group_exists(process.pid):
+        return
+
+    deadline = asyncio.get_running_loop().time() + TERMINATE_GRACE_SECONDS
+    _signal_process_group(process.pid, signal.SIGTERM)
+    if process.returncode is None:
+        try:
+            async with asyncio.timeout(TERMINATE_GRACE_SECONDS):
+                await process.wait()
+        except TimeoutError:
+            pass
+
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining > 0 and _process_group_exists(process.pid):
+        await asyncio.sleep(remaining)
+    if _process_group_exists(process.pid):
+        _signal_process_group(process.pid, signal.SIGKILL)
+    if process.returncode is None:
         await process.wait()
+
+
+def _process_group_exists(pid: int) -> bool:
+    """Return whether a POSIX process group still has members."""
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _signal_process_group(pid: int, sig: signal.Signals) -> None:
+    """Signal a child process group, tolerating a group that exited between checks."""
+    with suppress(ProcessLookupError):
+        os.killpg(pid, sig)
+
+
+async def _finish_stderr_task(task: asyncio.Task[str]) -> None:
+    """Collect stderr briefly, then cancel a reader whose pipe never reaches EOF."""
+    try:
+        async with asyncio.timeout(STDERR_CLEANUP_TIMEOUT_SECONDS):
+            await asyncio.shield(task)
+    except TimeoutError:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 async def _read_stderr(process: asyncio.subprocess.Process) -> str:
     if process.stderr is None:  # pragma: no cover - always piped by execute_run
         return ""
-    return (await process.stderr.read()).decode(errors="replace")
+    tail = bytearray()
+    while chunk := await process.stderr.read(64 * 1024):
+        tail.extend(chunk)
+        if len(tail) > MAX_STDERR_BYTES:
+            del tail[: len(tail) - MAX_STDERR_BYTES]
+    return bytes(tail).decode(errors="replace")
+
+
+def _child_environment() -> dict[str, str]:
+    """Return the small runtime environment a provider child is allowed to inherit."""
+    return {
+        "PATH": os.defpath,
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1",
+    }
 
 
 def _tail(text: str, limit: int = 4000) -> str:

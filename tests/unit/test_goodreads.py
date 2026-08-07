@@ -35,8 +35,8 @@ def test_goodreads_extracts_book_and_isbn_identifiers() -> None:
     batch = GoodreadsProvider().normalize(_records()[0])
     assert {(item.namespace, item.value) for item in batch.external_ids} == {
         ("goodreads", "101"),
-        ("isbn", "0123456789"),
-        ("isbn13", "9780123456789"),
+        ("isbn", "0306406152"),
+        ("isbn13", "9780306406157"),
     }
     assert batch.entries[0].logged_precision == "day"
     assert batch.opinions[0].rating_raw == 4
@@ -55,7 +55,7 @@ def test_changed_goodreads_headers_are_rejected() -> None:
 
 RSS = b"""<?xml version="1.0"?><rss><channel><item>
 <guid>https://www.goodreads.com/review/show/77?utm_source=rss</guid><title>Example Book</title>
-<book_id>101</book_id><author_name>Example Author</author_name><isbn>9780123456789</isbn>
+<book_id>101</book_id><author_name>Example Author</author_name><isbn>9780306406157</isbn>
 <user_rating>4</user_rating><user_read_at>Tue, 02 Jan 2024 00:00:00 +0000</user_read_at>
 <user_date_added>Mon, 01 Jan 2024 00:00:00 +0000</user_date_added>
 <user_shelves>read, fiction</user_shelves><user_review>Great book</user_review>
@@ -69,7 +69,7 @@ def test_goodreads_rss_maps_items_and_identifiers() -> None:
     assert batch.entries[0].logged_at.isoformat() == "2024-01-02T00:00:00+00:00"
     assert {(item.namespace, item.value) for item in batch.external_ids} == {
         ("goodreads", "101"),
-        ("isbn", "9780123456789"),
+        ("isbn", "9780306406157"),
         ("goodreads_review", "77"),
     }
     assert batch.opinions[0].review_text == "Great book"

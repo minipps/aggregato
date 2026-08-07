@@ -90,7 +90,7 @@ docs/
 aggregato/
 ├── main.py                     # FastAPI app factory; API process entrypoint
 ├── worker.py                   # scheduler process entrypoint (separate process from the API)
-├── config.py                   # YAML + ${ENV} + DB overrides, precedence, file-pinned markers
+├── config.py                   # YAML + ${ENV} precedence, explicit overrides, file-pinned markers
 ├── logging.py                  # stdlib logging + JSON formatter, run-scoped context
 ├── domain/
 │   ├── enums.py                # MediaType, MediaFamily, Role, EntryKind, Capability, Acquisition,
@@ -118,7 +118,7 @@ aggregato/
 │   └── errors.py               # ErrorClass mapping and the never-retry set
 ├── providers/
 │   ├── base.py                 # Provider Protocol, ProviderContext, RatingScale
-│   ├── registry.py             # discovery: bundled tree, then drop-in dir (labelled unreviewed)
+│   ├── registry.py             # static-manifest discovery; selected drop-ins are labelled unreviewed
 │   ├── http.py                 # rate limiting, politeness floors, UA, Retry-After, ETag
 │   ├── fixture/                # M1 trivial provider — no network
 │   ├── listenbrainz/           # M2

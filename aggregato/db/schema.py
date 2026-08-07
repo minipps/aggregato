@@ -27,7 +27,9 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
     text,
+    true,
 )
 
 from aggregato.db.types import AUTO_FK, AUTO_PK, DECIMAL, JSON_COL, TIMESTAMP, UUID_PK
@@ -121,6 +123,9 @@ external_ids = Table(
     check_constraint("confidence", Confidence),
     # The resolution lookup  — the cheapest and most reliable way two providers agree.
     Index("ix_external_ids_namespace_value", "namespace", "value"),
+    # One platform identifier names one work. A conflict is an identity error, not a reason to
+    # let the same asserted key silently point at two rows.
+    Index("uq_external_ids_namespace_value_global", "namespace", "value", unique=True),
     Index("ix_external_ids_work_id", "work_id"),
 )
 
@@ -168,6 +173,9 @@ entries = Table(
     # How far through — deliberately distinct from subject_ref, which says *which* sub-unit.
     Column("progress_value", DECIMAL),
     Column("progress_unit", String(32)),
+    # Canonical JSON for the physical no-native-id uniqueness key. The JSON column itself is not a
+    # portable conflict target across SQLite and PostgreSQL.
+    Column("subject_ref_key", Text),
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("ingested_at", TIMESTAMP, nullable=False),
     # Soft delete. Tombstoned rows are never hard-deleted .
@@ -189,6 +197,16 @@ entries = Table(
         unique=True,
         sqlite_where=text("native_id IS NOT NULL"),
         postgresql_where=text("native_id IS NOT NULL"),
+    ),
+    Index(
+        "uq_entries_no_native_event",
+        "provider_item_id",
+        "kind",
+        "logged_at",
+        "subject_ref_key",
+        unique=True,
+        sqlite_where=text("native_id IS NULL AND subject_ref_key IS NOT NULL"),
+        postgresql_where=text("native_id IS NULL AND subject_ref_key IS NOT NULL"),
     ),
     # The default keyset order (research.md ). id breaks ties so the order is total, and no row
     # is skipped or repeated when timestamps collide — which they will, in bulk-imported history.
@@ -414,12 +432,12 @@ providers = Table(
     "providers",
     metadata,
     Column("id", String(64), primary_key=True),
-    Column("enabled", Boolean, nullable=False, server_default=text("0")),
+    Column("enabled", Boolean, nullable=False, server_default=false()),
     Column("status", String(16), nullable=False),
     Column("acquisition", String(16), nullable=False),
     Column("schema_version", Integer, nullable=False),
     # False for drop-in development providers, which the UI labels `unreviewed` .
-    Column("reviewed", Boolean, nullable=False, server_default=text("1")),
+    Column("reviewed", Boolean, nullable=False, server_default=true()),
     # Database overrides only. File values are not copied here, so "file-pinned" stays answerable
     # (research.md ).
     Column("config", JSON_COL, nullable=False, server_default=text("'{}'")),
@@ -449,10 +467,14 @@ provider_state = Table(
     # request that has to outlive the request that made it — the API cannot spawn the run itself
     # (research.md ), and without this the mode was silently downgraded on the way to the child.
     Column("requested_mode", String(16)),
+    # The API response points at this durable lineage; dispatch consumes it atomically with mode.
+    Column("requested_lineage_id", UUID_PK),
     # The sanity baseline (research.md ): the previous run's item count for the same window.
     # This is the guard that makes a broken scraper look like a broken scraper rather than like an
     # emptied history.
     Column("last_window_item_count", Integer),
+    # Diagnostic only. A rejected observation must never become the next baseline.
+    Column("last_failed_window_item_count", Integer),
     # The provider's own opaque key/value store .
     Column("kv", JSON_COL, nullable=False, server_default=text("'{}'")),
     # The only thing the scheduler selects on.
@@ -471,9 +493,15 @@ import_jobs = Table(
     ),
     Column("path", Text, nullable=False),
     Column("created_at", TIMESTAMP, nullable=False),
+    Column("lineage_id", UUID_PK),
     Column("started_at", TIMESTAMP),
     Column("finished_at", TIMESTAMP),
     Column("error", Text),
+    Column("lease_owner", String(64)),
+    Column("lease_expires_at", TIMESTAMP),
+    Column("failed_at", TIMESTAMP),
+    Column("error_class", String(32)),
+    Column("attempts", Integer, nullable=False, server_default=text("0")),
     Index("ix_import_jobs_provider_pending", "provider_id", "started_at", "id"),
 )
 
@@ -511,6 +539,9 @@ ingest_failures = Table(
     Column("id", AUTO_PK, primary_key=True, autoincrement=True),
     Column("provider_id", String(64), nullable=False),
     Column("sync_run_id", AUTO_FK, ForeignKey("sync_runs.id", ondelete="CASCADE"), nullable=False),
+    # Captured separately from the raw payload so replay never guesses identity from provider
+    # fields such as ``id`` (which may be nested, renamed, or absent).
+    Column("native_id", Text),
     # Stored so a fixed plugin can replay it . Without the payload, "one bad record" is an
     # unreproducible bug report.
     Column("raw_payload", JSON_COL, nullable=False),
@@ -521,6 +552,30 @@ ingest_failures = Table(
     check_constraint("stage", IngestStage),
     Index("ix_ingest_failures_provider_id_created_at", "provider_id", text("created_at DESC")),
     Index("ix_ingest_failures_resolved_at", "resolved_at"),
+)
+
+replay_jobs = Table(
+    "replay_jobs",
+    metadata,
+    Column("id", AUTO_PK, primary_key=True, autoincrement=True),
+    Column(
+        "failure_id",
+        AUTO_FK,
+        ForeignKey("ingest_failures.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "provider_id", String(64), ForeignKey("providers.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("lineage_id", UUID_PK, nullable=False),
+    Column("created_at", TIMESTAMP, nullable=False),
+    Column("claimed_at", TIMESTAMP),
+    Column("lease_expires_at", TIMESTAMP),
+    Column("finished_at", TIMESTAMP),
+    Column("failed_at", TIMESTAMP),
+    Column("error", Text),
+    Column("lease_owner", String(64)),
+    Index("ix_replay_jobs_provider_pending", "provider_id", "finished_at", "failed_at", "id"),
 )
 
 sessions = Table(

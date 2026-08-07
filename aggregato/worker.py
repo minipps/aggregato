@@ -1,6 +1,7 @@
 """The scheduler process entrypoint: ``python -m aggregato.worker``.
 
-A separate process from the API, deliberately (plan.md Complexity Tracking). An asyncio task inside
+A separate process from the API, deliberately (architecture.md Complexity Tracking). An asyncio
+task inside
 the API would cover a hang via timeout but not a hard crash or a C-extension deadlock, and it would
 put ingest CPU in the request path against . Two processes make 's containment a
 property rather than a hope.
@@ -21,11 +22,16 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+try:
+    import uvloop
+except ImportError:  # pragma: no cover - uvicorn[standard] supplies this on supported Linux
+    uvloop = None  # type: ignore[assignment]
+
 from aggregato.config import Config, ConfigError, load_config
 from aggregato.db.engine import create_engine
 from aggregato.db.migrate import upgrade_to_head
 from aggregato.db.retention import cleanup
-from aggregato.domain.clock import SYSTEM_CLOCK
+from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.logging import configure_logging
 from aggregato.sync.dispatch import build_dispatch
 from aggregato.sync.scheduler import Scheduler, max_concurrent_runs, recover_interrupted_runs
@@ -33,7 +39,7 @@ from aggregato.sync.scheduler import Scheduler, max_concurrent_runs, recover_int
 log = logging.getLogger(__name__)
 
 
-async def serve(config: Config) -> None:
+async def serve(config: Config, *, clock: Clock = SYSTEM_CLOCK) -> None:
     """Run the scheduler until stopped.
 
     Args:
@@ -46,22 +52,23 @@ async def serve(config: Config) -> None:
     # because it booted first is neither restartable nor diagnosable. upgrade_to_head is idempotent;
     # in a thread because Alembic's env.py runs its own asyncio.run.
     #
-    # ponytail: two processes could migrate concurrently on a cold start. Alembic's version table
-    # plus SQLite's busy_timeout serializes them in practice; a real advisory lock is the upgrade
-    # path if a Postgres deployment ever shows a race.
+    # upgrade_to_head takes a cross-process SQLite file lock (and env.py takes a Postgres advisory
+    # lock), so API and worker cold starts cannot race the migration chain.
     await asyncio.to_thread(upgrade_to_head, config.database_url)
 
     engine = create_engine(config.database_url)
-    recovered = await recover_interrupted_runs(engine, now=SYSTEM_CLOCK.now())
+    recovered = await recover_interrupted_runs(engine, now=clock.now())
     if recovered:
         log.warning("recovered interrupted syncs for %s", ", ".join(recovered))
     scheduler = Scheduler(
         engine,
-        dispatch=build_dispatch(engine, config),
+        clock=clock,
+        dispatch=build_dispatch(engine, config, clock=clock),
         max_concurrent=max_concurrent_runs(config.database_url),
+        provider_dir=config.provider_dir,
     )
     retention_task = asyncio.create_task(
-        _retention_loop(engine, config.data_dir), name="retention-cleanup"
+        _retention_loop(engine, config.data_dir, clock=clock), name="retention-cleanup"
     )
 
     loop = asyncio.get_running_loop()
@@ -81,11 +88,13 @@ async def serve(config: Config) -> None:
         log.info("scheduler stopped")
 
 
-async def _retention_loop(engine: AsyncEngine, data_dir: Path) -> None:
+async def _retention_loop(
+    engine: AsyncEngine, data_dir: Path, *, clock: Clock = SYSTEM_CLOCK
+) -> None:
     """Run retention cleanup at boot and daily; it remains independent of provider runs."""
     while True:
         try:
-            await cleanup(engine, data_dir)
+            await cleanup(engine, data_dir, now=clock.now())
         except Exception:
             log.exception("retention cleanup failed")
         await asyncio.sleep(24 * 60 * 60)
@@ -100,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     """
     del argv  # no flags; everything comes from the environment and the config file
     configure_logging()
+    if uvloop is not None:
+        uvloop.install()
     try:
         config = load_config()
     except ConfigError as exc:

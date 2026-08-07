@@ -12,7 +12,11 @@ anyway) and no test waits on a real clock.
 from __future__ import annotations
 
 import asyncio
+import os
 import random
+import signal
+from contextlib import suppress
+from pathlib import Path
 
 import httpx
 import pytest
@@ -25,6 +29,7 @@ from aggregato.providers.http import (
     USER_AGENT,
     PoliteClient,
     PolitenessPolicy,
+    ProcessHostState,
 )
 
 # Deterministic jitter: testing guidance makes randomness injectable rather than ambient.
@@ -109,6 +114,72 @@ async def test_a_scraper_cannot_exceed_one_concurrent_request_per_host() -> None
         await asyncio.gather(*(client.get("https://example.test/p") for _ in range(10)))
 
     assert peak == 1, f"a scraper ran {peak} concurrent requests against one host"
+
+
+def test_process_shared_reservations_queue_across_coordinators(tmp_path: Path) -> None:
+    """Separate coordinator instances reserve one monotonic host timeline."""
+    first = ProcessHostState(tmp_path, clock=lambda: 100.0)
+    second = ProcessHostState(tmp_path, clock=lambda: 100.0)
+
+    assert first.reserve("example.test", 2.0, now=100.0) == 0.0
+    assert second.reserve("example.test", 2.0, now=100.0) == 2.0
+    assert first.reserve("example.test", 5.0, now=100.0) == 4.0
+    assert second.reserve("example.test", 2.0, now=100.0) == 9.0
+    assert first.reserve("other.test", 2.0, now=100.0) == 0.0
+
+
+def test_process_shared_reservation_discards_stale_state(tmp_path: Path) -> None:
+    """A reservation in the past never delays the next request."""
+    coordinator = ProcessHostState(tmp_path)
+    state_path = coordinator._state_path("example.test")
+    state_path.parent.mkdir(exist_ok=True)
+    state_path.write_text("98\n", encoding="ascii")
+
+    assert coordinator.reserve("example.test", 2.0, now=100.0) == 0.0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group file-lock test requires POSIX")
+def test_process_shared_scrape_lock_is_held_across_processes(tmp_path: Path) -> None:
+    """A separate process cannot enter a scraper host until the owner releases it."""
+    ready_read, ready_write = os.pipe()
+    release_read, release_write = os.pipe()
+    child_pid = os.fork()
+    if child_pid == 0:
+        os.close(ready_read)
+        os.close(release_write)
+        try:
+            held = ProcessHostState(tmp_path).acquire_scrape_lock("example.test")
+            os.write(ready_write, b"1")
+            os.read(release_read, 1)
+            held.release()
+        except BaseException:
+            os.write(ready_write, b"0")
+            os._exit(1)
+        os._exit(0)
+
+    os.close(ready_write)
+    os.close(release_read)
+    waited = False
+    try:
+        assert os.read(ready_read, 1) == b"1"
+        second = ProcessHostState(tmp_path)
+        with pytest.raises(BlockingIOError):
+            second.acquire_scrape_lock("example.test", blocking=False)
+        os.write(release_write, b"1")
+        _, status = os.waitpid(child_pid, 0)
+        waited = True
+        assert os.WIFEXITED(status)
+    finally:
+        for descriptor in (ready_read, release_write):
+            with suppress(OSError):
+                os.close(descriptor)
+        if not waited:
+            with suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+
+    released = ProcessHostState(tmp_path).acquire_scrape_lock("example.test", blocking=False)
+    released.release()
 
 
 async def test_separate_hosts_do_not_block_each_other() -> None:
@@ -226,7 +297,7 @@ async def test_a_rate_limit_without_retry_after_still_reports_the_class() -> Non
     assert caught.value.retry_after is None
 
 
-async def test_a_malformed_retry_after_falls_back_rather_than_sleeping_forever() -> None:
+async def test_an_http_date_retry_after_is_parsed_without_sleeping_forever() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
 
@@ -237,7 +308,8 @@ async def test_a_malformed_retry_after_falls_back_rather_than_sleeping_forever()
             with pytest.raises(RateLimited) as caught:
                 await client.get("https://example.test/")
 
-    assert caught.value.retry_after is None
+    assert caught.value.retry_after is not None
+    assert caught.value.retry_after > 0
 
 
 async def test_retries_are_bounded() -> None:
@@ -320,6 +392,63 @@ async def test_conditional_request_headers_pass_through_untouched() -> None:
     assert response.status_code == 304
     assert captured["if-none-match"] == '"abc123"'
     assert captured["if-modified-since"] == "Wed, 21 Oct 2026 07:28:00 GMT"
+
+
+async def test_cross_origin_redirect_drops_credential_headers() -> None:
+    """A redirect must not send provider credentials to a different origin."""
+    captured: list[httpx.Headers] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.headers)
+        if len(captured) == 1:
+            return httpx.Response(302, headers={"Location": "https://other.test/landing"})
+        return httpx.Response(200)
+
+    policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
+    async with client_for(policy, handler) as client:
+        object.__setattr__(client._limiter, "_min_interval", 0.0)
+        response = await client.get(
+            "https://example.test/start",
+            headers={
+                "Authorization": "Bearer secret",
+                "Proxy-Authorization": "Basic secret",
+                "Cookie": "session=secret",
+                "If-None-Match": '"abc123"',
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured[0]["authorization"] == "Bearer secret"
+    assert captured[0]["proxy-authorization"] == "Basic secret"
+    assert captured[0]["cookie"] == "session=secret"
+    assert "authorization" not in captured[1]
+    assert "proxy-authorization" not in captured[1]
+    assert "cookie" not in captured[1]
+    assert captured[1]["if-none-match"] == '"abc123"'
+    assert captured[1]["user-agent"] == USER_AGENT
+
+
+async def test_same_origin_redirect_keeps_credential_headers() -> None:
+    """Credentials remain available when the redirect stays on the original origin."""
+    captured: list[httpx.Headers] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.headers)
+        if len(captured) == 1:
+            return httpx.Response(302, headers={"Location": "/landing"})
+        return httpx.Response(200)
+
+    policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
+    async with client_for(policy, handler) as client:
+        object.__setattr__(client._limiter, "_min_interval", 0.0)
+        response = await client.get(
+            "https://example.test/start",
+            headers={"Authorization": "Bearer secret", "Cookie": "session=secret"},
+        )
+
+    assert response.status_code == 200
+    assert captured[1]["authorization"] == "Bearer secret"
+    assert captured[1]["cookie"] == "session=secret"
 
 
 # --- Pacing actually paces --------------------------------------------------------------------

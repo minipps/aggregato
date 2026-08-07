@@ -11,6 +11,7 @@ on:
 jobs:
   python:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -27,8 +28,87 @@ jobs:
         run: uv run mypy
       - name: Decoupling contract
         run: uv run lint-imports
+      - name: Documentation links
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          from urllib.parse import urlsplit
+
+          root = Path.cwd()
+          link_re = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)")
+          sources = [root / "README.md", *sorted((root / "docs").rglob("*.md"))]
+          missing = []
+          for source in sources:
+              for raw in link_re.findall(source.read_text(encoding="utf-8")):
+                  target = raw.strip("<>")
+                  parsed = urlsplit(target)
+                  if parsed.scheme or target.startswith("#"):
+                      continue
+                  path = re.sub(r":\d+$", "", parsed.path)
+                  if not (source.parent / path).resolve().exists():
+                      missing.append(f"{source}:{raw}")
+          if missing:
+              raise SystemExit("broken relative documentation links:\n" + "\n".join(missing))
+          print(f"checked {len(sources)} Markdown files")
+          PY
+      - name: Non-benchmark collection guard
+        run: |
+          collected="$(uv run pytest --collect-only -q -m 'not bench')"
+          printf '%s\n' "$collected"
+          if printf '%s\n' "$collected" | rg -q 'tests/bench/'; then
+            echo "tests/bench was collected by the non-benchmark expression" >&2
+            exit 1
+          fi
       - name: Tests
-        run: uv run pytest -m "not bench"
+        run: timeout --foreground --signal=TERM --kill-after=30s 15m uv run pytest -m "not bench" -vv --durations=25
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-extras --dev
+      - name: Benchmark collection
+        run: uv run pytest --collect-only -q -m bench tests/bench
+      - name: Benchmark budgets
+        run: timeout --foreground --signal=TERM --kill-after=30s 15m uv run pytest -m bench tests/bench -q --durations=25
+
+  postgres:
+    # PostgreSQL is a supported backend, but the ordinary pytest suite deliberately blocks all
+    # sockets. Keep this explicit service smoke check separate so offline tests stay hermetic while
+    # the dialect-specific migration/claim/retry/writer/search path remains a merge gate.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+        env:
+          POSTGRES_USER: aggregato
+          POSTGRES_PASSWORD: aggregato
+          POSTGRES_DB: aggregato
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aggregato -d aggregato"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-extras --dev
+      - name: PostgreSQL portability and concurrency smoke
+        env:
+          AGGREGATO_POSTGRES_URL: postgresql+asyncpg://aggregato:aggregato@127.0.0.1:5432/aggregato
+        run: timeout --foreground --signal=TERM --kill-after=30s 10m uv run python scripts/postgres_smoke.py
 
   frontend:
     runs-on: ubuntu-latest

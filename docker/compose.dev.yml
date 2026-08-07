@@ -37,7 +37,7 @@ services:
           action: rebuild
 
   frontend:
-    image: node:22.23.2-slim
+    image: node:22.23.2-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
     working_dir: /app
     command: sh -c "npm install --global npm@12.0.2 --silent && npm --loglevel=error ci && npm --loglevel=error run dev -- --host 0.0.0.0"
     # The only setting the dev server has of its own; everything else the application reads is on the

@@ -26,3 +26,20 @@ class SyncConnectionAdapter:
     async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
         """Execute synchronously behind the production awaitable interface."""
         return self._connection.execute(statement, *args, **kwargs)
+
+    async def begin_nested(self) -> _SyncNestedTransaction:
+        """Expose savepoints so writer tests exercise record-local rollback semantics."""
+        return _SyncNestedTransaction(self._connection.begin_nested())
+
+
+class _SyncNestedTransaction:
+    """Awaitable wrapper for SQLAlchemy Core's synchronous nested transaction."""
+
+    def __init__(self, transaction: Any) -> None:
+        self._transaction = transaction
+
+    async def commit(self) -> None:
+        self._transaction.commit()
+
+    async def rollback(self) -> None:
+        self._transaction.rollback()

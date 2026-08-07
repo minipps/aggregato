@@ -7,12 +7,20 @@ is the injectable time source the scheduler and retry ladder take so no test sle
 
 from __future__ import annotations
 
+import asyncio
 import socket
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+
+try:
+    import uvloop
+except ImportError:  # pragma: no cover - the supported Linux install includes uvloop
+    uvloop = None  # type: ignore[assignment]
+else:
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 from aggregato.domain.clock import Clock
 

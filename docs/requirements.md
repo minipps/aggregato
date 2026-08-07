@@ -11,10 +11,11 @@ user's media logs from multiple third-party logging platforms, normalizes them i
 local database, and exposes them through one unified HTTP API and web UI, with per-platform
 support provided by opt-in provider plugins.
 
-**Source design document**: the v1.0 design supplied with this command carries the technical
-decisions (data model, plugin contract, API surface, acquisition policy). Those belong in
-`plan.md`; this file states the capability, the user-visible behaviour, and the constraints any
-implementation must honour.
+**Source design documents**: the v1.0 design's technical decisions (architecture, data model,
+plugin contract, API surface, and acquisition policy) are maintained in
+[architecture.md](architecture.md), [data-model.md](data-model.md), and the
+[contract documents](contracts/). This file states the capability, the user-visible behaviour, and
+the constraints any implementation must honour.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -493,7 +494,8 @@ are not derivable from the requirements alone.
 - **Web interface is a built single-page application** (amended 2026-07-29; the original assumption
   was server-rendered specifically to avoid a front-end build toolchain). Operators are unaffected —
   the assets are built during image creation, so `docker compose up` needs no Node — but **building
-  from source now requires Node**. Recorded in `plan.md` Complexity Tracking. Either way the UI is
-  designed for typography and density rather than assuming third-party artwork exists.
+  from source now requires Node**. Recorded in [architecture.md](architecture.md)'s complexity
+  tracking. Either way the UI is designed for typography and density rather than assuming
+  third-party artwork exists.
 - **Two features have reserved surface area and need no further design now**: platform-pushed updates
   instead of polling, and the local write path.

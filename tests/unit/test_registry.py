@@ -9,6 +9,7 @@ covered for free; the file-I/O half is trapped explicitly below.
 from __future__ import annotations
 
 import builtins
+import json
 import sys
 from collections.abc import Iterator
 from datetime import timedelta
@@ -102,6 +103,70 @@ def test_drop_in_version_mismatch_warns_without_hiding_the_provider(tmp_path: Pa
     with pytest.warns(UserWarning, match="provider API 999"):
         infos = discover_providers(tmp_path)
     assert next(info for info in infos if info.id == "old_provider").reviewed is False
+
+
+def _write_manifest_drop_in(package: Path) -> None:
+    package.mkdir(parents=True)
+    # Discovery must not execute this package. A valid manifest is enough to list it.
+    (package / "__init__.py").write_text(
+        "raise AssertionError('drop-in imported during discovery')\n", encoding="utf-8"
+    )
+    (package / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": package.name,
+                "media_types": [],
+                "capabilities": [],
+                "acquisition": "export",
+                "schema_version": 1,
+                "default_poll_interval_seconds": 3600,
+                "config_schema": {"type": "object", "properties": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_malformed_and_unrelated_drop_ins_do_not_block_valid_discovery(tmp_path: Path) -> None:
+    malformed_manifest = tmp_path / "malformed_manifest"
+    malformed_manifest.mkdir()
+    (malformed_manifest / "__init__.py").write_text(
+        "raise AssertionError('drop-in imported during discovery')\n", encoding="utf-8"
+    )
+    (malformed_manifest / "manifest.json").write_text("{", encoding="utf-8")
+
+    malformed_legacy = tmp_path / "malformed_legacy"
+    malformed_legacy.mkdir()
+    (malformed_legacy / "__init__.py").write_text(
+        "provider_api_version = 'not an integer'\n", encoding="utf-8"
+    )
+
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    (unrelated / "manifest.json").write_text("{", encoding="utf-8")
+    nested = tmp_path / "nested" / "nested_provider"
+    nested.mkdir(parents=True)
+    (nested / "__init__.py").write_text("raise AssertionError\n", encoding="utf-8")
+    (nested / "manifest.json").write_text("{", encoding="utf-8")
+    _write_manifest_drop_in(tmp_path / "valid_provider")
+
+    with pytest.warns(UserWarning) as recorded:
+        infos = discover_providers(tmp_path)
+
+    ids = {info.id for info in infos}
+    assert {"fixture", "valid_provider"} <= ids
+    assert not {"malformed_manifest", "malformed_legacy", "unrelated", "nested"} & ids
+    assert "aggregato.dropins.valid_provider" not in sys.modules
+    messages = [str(warning.message) for warning in recorded]
+    assert any("malformed_manifest" in message for message in messages)
+    assert any("malformed_legacy" in message for message in messages)
+
+
+def test_valid_drop_in_cannot_shadow_a_bundled_provider(tmp_path: Path) -> None:
+    _write_manifest_drop_in(tmp_path / "fixture")
+
+    with pytest.raises(RuntimeError, match=r"conflict.*fixture"):
+        discover_providers(tmp_path)
 
 
 def test_importing_a_provider_module_has_no_side_effects() -> None:

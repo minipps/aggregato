@@ -233,8 +233,8 @@ export interface Provider {
   current_settings?: Record<string, unknown>
 }
 
-export interface CheckResult {
-  ok: boolean
+export interface LastRun {
+  status?: RunStatus
   error_class?: ErrorClass
   detail?: string
 }
@@ -287,7 +287,6 @@ export interface TopStat {
 
 export interface TopStats {
   group: 'work' | 'creator'
-  period: StatsPeriod
   items: TopStat[]
 }
 
@@ -324,6 +323,7 @@ export interface IngestFailure {
   id: number
   provider_id: string
   sync_run_id: number
+  native_id: string | null
   stage: 'fetch' | 'validate' | 'normalize' | 'write'
   error: string
   raw_payload: Record<string, unknown>

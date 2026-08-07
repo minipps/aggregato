@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
 
 from aggregato.domain.enums import ErrorClass, RunStatus
 from aggregato.domain.models import Cursor
+from aggregato.sync import runner as runner_module
 from aggregato.sync.protocol import (
     BatchMessage,
     CheckpointMessage,
@@ -92,11 +96,16 @@ async def _spawn(script: str, tmp_path: Path) -> asyncio.subprocess.Process:
     """Run a throwaway script as a child, wired like a real provider child."""
     path = tmp_path / "fake_child.py"
     path.write_text(script)
+    spawn_options: dict[str, object] = {
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
+    if os.name == "posix":
+        spawn_options["start_new_session"] = True
     return await asyncio.create_subprocess_exec(
         sys.executable,
         str(path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        **spawn_options,
     )
 
 
@@ -132,6 +141,68 @@ async def _run_child(script: str, tmp_path: Path, wall_clock: float = 5.0) -> Ru
 
 
 HEADER = "import sys, json, time\n"
+
+
+async def test_termination_reaches_a_forked_descendant(tmp_path: Path) -> None:
+    """A provider fork cannot outlive the process group the supervisor owns."""
+    if os.name != "posix":
+        pytest.skip("process groups use POSIX sessions")
+
+    marker = tmp_path / "descendant-terminated"
+    script = (
+        "import os, signal, time\n"
+        f"marker = {str(marker)!r}\n"
+        "def on_term(signum, frame):\n"
+        "    with open(marker, 'w', encoding='utf-8') as output:\n"
+        "        output.write('terminated')\n"
+        "    os._exit(0)\n"
+        "pid = os.fork()\n"
+        "if pid == 0:\n"
+        "    signal.signal(signal.SIGTERM, on_term)\n"
+        "    print(os.getpid(), flush=True)\n"
+        "    time.sleep(300)\n"
+        "else:\n"
+        "    time.sleep(300)\n"
+    )
+    process = await _spawn(script, tmp_path)
+    descendant_pid: int | None = None
+    try:
+        assert process.stdout is not None
+        descendant_pid = int((await process.stdout.readline()).decode())
+        await _terminate(process)
+        assert marker.read_text(encoding="utf-8") == "terminated"
+    finally:
+        if descendant_pid is not None and not marker.exists():
+            with suppress(ProcessLookupError):
+                os.kill(descendant_pid, signal.SIGKILL)
+        if process.returncode is None:
+            await _terminate(process)
+
+
+async def test_stderr_cleanup_has_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader whose pipe never reaches EOF cannot hold the supervisor open forever."""
+
+    async def blocked_stderr(_process: asyncio.subprocess.Process) -> str:
+        await asyncio.get_running_loop().create_future()
+        return ""
+
+    monkeypatch.setattr(runner_module, "_read_stderr", blocked_stderr)
+    monkeypatch.setattr(runner_module, "STDERR_CLEANUP_TIMEOUT_SECONDS", 0.01)
+
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="fixture",
+            config={"path": str(FIXTURE_RECORDS)},
+            wall_clock_seconds=5,
+        )
+    )
+
+    assert outcome.status is RunStatus.SUCCESS, outcome.error_message
+
 
 # Resolved at import time: ASYNC240 rightly objects to blocking filesystem calls inside a
 # coroutine, and these paths are constants anyway.
@@ -359,18 +430,65 @@ async def test_the_real_child_reports_a_structure_change_as_such(tmp_path: Path)
     assert outcome.records == []
 
 
-async def test_the_child_receives_only_its_own_secrets(tmp_path: Path) -> None:
-    """, made structural: the child is a process, so there is nothing else to reach."""
+async def test_the_actual_child_does_not_inherit_ambient_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The supervisor's explicit environment is enforced by a real child, not just serialization."""
+    provider_dir = tmp_path / "providers"
+    package = provider_dir / "environment_probe"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        """from __future__ import annotations
+
+import os
+
+from aggregato.providers.fixture import FixtureProvider
+
+
+class EnvironmentProbeProvider(FixtureProvider):
+    id = "environment_probe"
+
+    async def fetch(self, ctx, cursor, mode):
+        del ctx, cursor, mode
+        if os.environ.get("AGGREGATO_TEST_AMBIENT_SECRET") is not None:
+            raise RuntimeError("ambient environment leaked into child")
+        if False:
+            yield None
+
+
+provider = EnvironmentProbeProvider()
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AGGREGATO_TEST_AMBIENT_SECRET", "must-not-reach-child")
+
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="environment_probe",
+            provider_dir=provider_dir,
+            config={"path": str(FIXTURE_RECORDS)},
+        )
+    )
+
+    assert outcome.status is RunStatus.SUCCESS, outcome.error_message
+
+
+def test_the_child_receives_only_its_own_explicit_secrets(tmp_path: Path) -> None:
+    """The protocol carries selected credentials, never the worker's database or API config."""
     from aggregato.sync.runner import RunRequest
 
     request = RunRequest(
         provider_id="fixture",
         config={"path": "unused-by-this-test"},
         secrets={"FIXTURE_TOKEN": "mine"},
+        host_state_dir=tmp_path / "http-host-state",
     )
     payload = json.loads(request.payload())
     assert payload["secrets"] == {"FIXTURE_TOKEN": "mine"}
-    # No engine, no URL, no other provider's config anywhere in what crosses the boundary.
+    assert payload["host_state_dir"] == str(tmp_path / "http-host-state")
     serialized = request.payload()
     for forbidden in ("sqlite", "postgresql", "database_url", "api.token"):
         assert forbidden not in serialized

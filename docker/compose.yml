@@ -3,9 +3,9 @@
 services:
   aggregato:
     # The published image, so `docker compose pull` works (docs/operations.md) — pin a release with
-    # AGGREGATO_VERSION=0.2.0. The build section stays: with no image pulled, `up` builds from this
+    # AGGREGATO_VERSION=0.1.5. The build section stays: with no image pulled, `up` builds from this
     # checkout, which is what a development run and a source install both want.
-    image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-latest}
+    image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-0.1.5}
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -16,17 +16,23 @@ services:
     # this image sets: those it needs, plus optional ones forwarded from your .env, which are empty
     # when you leave them out and an empty value counts as unset. The rest are commented examples,
     # and .env.example is the same contract for a non-Docker run. Settings resolve:
-    # defaults <- AGGREGATO_CONFIG file <- these <- UI edits.
+    # defaults <- AGGREGATO_CONFIG file <- environment. Provider settings saved in the UI are stored
+    # in the database and read by the worker when it starts a provider run.
     environment:
       # The only fatal configuration error . Generate: openssl rand -hex 32
       AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
       AGGREGATO_DATA: /data
+      # Import storage quotas include the upload currently being admitted.
+      AGGREGATO_IMPORT_QUOTA_BYTES: ${AGGREGATO_IMPORT_QUOTA_BYTES:-536870912}
+      AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES: ${AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES:-2147483648}
       # A second token that can only read: every write is refused with 403, so it can be handed to
       # someone who should browse the archive but not change it. Must differ from AGGREGATO_TOKEN.
       AGGREGATO_READONLY_TOKEN: ${AGGREGATO_READONLY_TOKEN:-}
       # Browser origins allowed to call the API cross-origin, comma-separated. Empty — the default —
       # mounts no CORS middleware, which is what a same-origin deployment wants.
       AGGREGATO_CORS_ORIGINS: ${AGGREGATO_CORS_ORIGINS:-}
+      # Only these proxy addresses may supply forwarded scheme/host headers to uvicorn.
+      AGGREGATO_FORWARDED_ALLOW_IPS: ${AGGREGATO_FORWARDED_ALLOW_IPS:-127.0.0.1}
       # What uvicorn binds inside the container. 0.0.0.0 is right here — the published port above is
       # what decides who can reach it — so change this only if you know why.
       # AGGREGATO_HOST: 0.0.0.0
@@ -38,7 +44,8 @@ services:
       # AGGREGATO_CONFIG: /data/config.yaml
       # The built web UI the API serves. The image sets this; an empty value means API only.
       # AGGREGATO_STATIC_DIR: /app/static
-      # Optional directory of your own provider packages, discovered as unreviewed drop-ins .
+      # Optional directory of your own provider packages, discovered from static metadata as
+      # unreviewed drop-ins. Selecting one loads its package; this is not an OS sandbox.
       # AGGREGATO_PROVIDER_DIR: /data/providers
       # Provider credentials are not settings of their own: the YAML config references them as
       # ${VAR}, resolved at read time and never written back. Pass whichever ones your config names.

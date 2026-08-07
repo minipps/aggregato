@@ -10,6 +10,7 @@ import importlib.util
 import json
 import sqlite3
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,39 @@ def test_upgrade_creates_every_table_in_metadata_plus_the_search_index(tmp_path:
     assert not missing, f"revision does not create {sorted(missing)}"
     assert "search_index" in tables, "the dialect-specific search index was not created "
     assert "alembic_version" in tables
+
+
+def test_upgrade_creates_a_missing_database_parent(tmp_path: Path) -> None:
+    db = tmp_path / "nested" / "data" / "aggregato.db"
+
+    upgrade_to_head(_url(db))
+
+    assert db.is_file()
+
+
+def test_backup_name_collision_does_not_overwrite_the_previous_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "aggregato.db"
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("CREATE TABLE sentinel (v TEXT)")
+        conn.execute("INSERT INTO sentinel VALUES ('before')")
+        conn.commit()
+
+    fixed_now = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
+
+    class FixedClock:
+        def now(self) -> datetime:
+            return fixed_now
+
+    monkeypatch.setattr(migrate, "SYSTEM_CLOCK", FixedClock())
+    first = backup_sqlite(_url(db))
+    second = backup_sqlite(_url(db))
+
+    assert first is not None and second is not None
+    assert first != second
+    assert first.is_file() and second.is_file()
+    assert set(tmp_path.glob("aggregato.db.*.bak")) == {first, second}
 
 
 def test_revision_matches_schema_py(tmp_path: Path) -> None:
@@ -338,3 +372,35 @@ def test_0008_repairs_duplicate_creator_identifiers_before_constraining_them(
                 " VALUES (?, 'anilist', '7', 'anilist', 'asserted')",
                 (winner,),
             )
+
+
+def test_0009_preserves_existing_failures_when_adding_native_identity(
+    tmp_path: Path,
+) -> None:
+    """The envelope column is additive; old captured payloads must survive the rebuild."""
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0008")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO sync_runs "
+            "(id, provider_id, lineage_id, attempt, mode, status, started_at) "
+            "VALUES (1, 'test', ?, 1, 'incremental', 'running', '2026-01-01')",
+            ("1" * 32,),
+        )
+        conn.execute(
+            "INSERT INTO ingest_failures "
+            "(provider_id, sync_run_id, raw_payload, error, stage, created_at) "
+            "VALUES ('test', 1, ?, 'bad', 'normalize', '2026-01-01')",
+            (json.dumps({"id": "payload-only"}),),
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        row = conn.execute(
+            "SELECT native_id, raw_payload FROM ingest_failures WHERE id = 1"
+        ).fetchone()
+    assert row[0] is None
+    assert json.loads(row[1]) == {"id": "payload-only"}

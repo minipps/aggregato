@@ -10,7 +10,6 @@
 import { router } from '@/router'
 
 import type {
-  CheckResult,
   Creator,
   CreatorDetail,
   Entry,
@@ -23,6 +22,7 @@ import type {
   Session,
   SyncRun,
   IngestFailure,
+  LastRun,
   MergeLogEntry,
   ResolutionItem,
   WorkDetail,
@@ -297,8 +297,8 @@ export async function importProviderFile(
   return (await response.json()) as { lineage_id?: string }
 }
 
-export function checkProvider(id: string): Promise<CheckResult> {
-  return request<CheckResult>('POST', `/providers/${encodeURIComponent(id)}/check`)
+export function latestProviderRun(id: string): Promise<LastRun> {
+  return request<LastRun>('GET', `/providers/${encodeURIComponent(id)}/last-run`)
 }
 
 export function health(): Promise<Health> {
@@ -317,11 +317,10 @@ export function statsSummary(
 
 export function topStats(
   group: 'work' | 'creator',
-  period: StatsPeriod = 'all',
   includeSubunits = false,
 ): Promise<TopStats> {
   return request<TopStats>('GET', '/stats/top', {
-    query: { group, period, include_subunits: includeSubunits },
+    query: { group, include_subunits: includeSubunits },
   })
 }
 
@@ -333,8 +332,8 @@ export function ingestFailures(): Pager<IngestFailure> {
   return pager<IngestFailure>('/ingest-failures')
 }
 
-export function replayFailure(id: number): Promise<{ replayed: boolean }> {
-  return request<{ replayed: boolean }>('POST', `/ingest-failures/${id}/replay`)
+export function replayFailure(id: number): Promise<{ replayed: boolean; queued?: boolean; job_id?: number }> {
+  return request<{ replayed: boolean; queued?: boolean; job_id?: number }>('POST', `/ingest-failures/${id}/replay`)
 }
 
 export function resolutionQueue(query: { subject?: 'work' | 'creator' } = {}): Pager<ResolutionItem> {

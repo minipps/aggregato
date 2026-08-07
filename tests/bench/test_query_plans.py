@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import create_engine, select, text
 
 from aggregato.api.queries import opinion_facts
 from aggregato.db.schema import entries, metadata
+
+pytestmark = pytest.mark.bench
 
 
 def _plan_for(connection: object, statement: object) -> str:

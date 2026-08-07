@@ -20,7 +20,7 @@ invite a plugin to try.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -37,6 +37,7 @@ from .enums import (
 from .subject_ref import SubjectRef
 
 _STRICT = ConfigDict(extra="forbid")
+FAILURE_ENVELOPE_VERSION = "aggregato.failure.v1"
 
 
 class Cursor(BaseModel):
@@ -76,6 +77,16 @@ class RawRecord(BaseModel):
 
     native_id: str
     payload: dict[str, Any]
+
+
+class FailureEnvelope(BaseModel):
+    """The captured provider identity kept beside a rejected record's raw payload."""
+
+    model_config = _STRICT
+
+    envelope: Literal["aggregato.failure.v1"] = "aggregato.failure.v1"
+    native_id: str | None
+    raw_payload: dict[str, Any]
 
 
 class NormalizedWork(BaseModel):
