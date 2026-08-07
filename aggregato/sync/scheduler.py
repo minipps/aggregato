@@ -26,16 +26,18 @@ import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from uuid import UUID
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import ColumnElement, and_, exists, or_, select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.db.engine import transaction
 from aggregato.db.schema import provider_state, providers, sync_runs
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
-from aggregato.domain.enums import ErrorClass, ProviderStatus, RunStatus
+from aggregato.domain.enums import Capability, ErrorClass, ProviderStatus, RunStatus
 from aggregato.logging import bind_run
+from aggregato.providers.registry import discover_providers
 
 #: How often the loop looks for due work. Seconds rather than minutes because a "sync now" button
 #: writes ``next_run_at = now`` and the operator is watching; minutes rather than milliseconds
@@ -84,6 +86,37 @@ class DueProvider:
     requested_mode: str | None = None
     """What an operator asked for via ``POST /providers/{id}/sync``, if anything. ``None`` is the
     ordinary scheduled run, which is always incremental."""
+    requested_lineage_id: UUID | None = None
+    """The durable lineage assigned to an operator request, if one is pending."""
+
+
+def _pollable_provider_ids() -> frozenset[str]:
+    """Return installed providers that declare the host-owned polling capability.
+
+    Scheduler admission cannot import provider code to ask whether it can poll.  The registry's
+    static manifests are the safe source of that decision; providers absent from the allowlist are
+    deliberately not schedulable.
+    """
+    return frozenset(
+        info.id for info in discover_providers() if Capability.POLL.value in info.capabilities
+    )
+
+
+def _state_is_due(now: datetime) -> ColumnElement[bool]:
+    """Build the provider-state predicate shared by due listing and the atomic claim."""
+    return or_(provider_state.c.next_run_at.is_(None), provider_state.c.next_run_at <= now)
+
+
+def _claim_due_state(now: datetime) -> ColumnElement[bool]:
+    """Return an ``EXISTS`` predicate that rechecks the schedule during admission."""
+    return exists(
+        select(1)
+        .select_from(provider_state)
+        .where(
+            provider_state.c.provider_id == providers.c.id,
+            _state_is_due(now),
+        )
+    )
 
 
 async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvider]:
@@ -99,6 +132,7 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
     Returns:
         Due providers, soonest first.
     """
+    pollable_ids = _pollable_provider_ids()
     query = (
         select(
             provider_state.c.provider_id,
@@ -107,18 +141,18 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
             provider_state.c.consecutive_failures,
             provider_state.c.cursor,
             provider_state.c.requested_mode,
+            provider_state.c.requested_lineage_id,
         )
         .join(providers, providers.c.id == provider_state.c.provider_id)
         .where(
             and_(
+                providers.c.id.in_(pollable_ids),
                 providers.c.enabled.is_(True),
-                providers.c.status != str(ProviderStatus.DISABLED),
-                # A run already in flight must not be dispatched twice. The status is the lock.
-                providers.c.status != str(ProviderStatus.SYNCING),
-                provider_state.c.next_run_at.is_(None) | (provider_state.c.next_run_at <= now),
+                providers.c.status.in_((str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))),
+                _state_is_due(now),
             )
         )
-        .order_by(provider_state.c.next_run_at.asc().nulls_first())
+        .order_by(provider_state.c.next_run_at.asc().nulls_first(), provider_state.c.provider_id)
     )
     async with transaction(engine) as conn:
         result = await conn.execute(query)
@@ -130,6 +164,7 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
                 consecutive_failures=row.consecutive_failures,
                 cursor=row.cursor,
                 requested_mode=row.requested_mode,
+                requested_lineage_id=row.requested_lineage_id,
             )
             for row in result
         ]
@@ -138,17 +173,24 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
 async def claim(engine: AsyncEngine, provider_id: str, *, now: datetime) -> bool:
     """Mark a provider ``syncing``, and report whether this caller got it.
 
-    The ``status != 'syncing'`` predicate in the ``UPDATE`` is the claim: two schedulers, or one
-    scheduler with an overlapping poll, cannot both win. Doing it in SQL rather than with an
-    in-memory set is what makes it survive a restart mid-run.
+    The conditional ``UPDATE`` is the claim: two schedulers, or one scheduler with an overlapping
+    poll, cannot both win. Every admission condition is in that same statement, so a stale due-list
+    row cannot bypass a disable, a configuration failure, a capability change, or a newly-future
+    schedule.
     """
+    pollable_ids = _pollable_provider_ids()
     async with transaction(engine) as conn:
         result = await conn.execute(
             update(providers)
             .where(
                 and_(
                     providers.c.id == provider_id,
-                    providers.c.status != str(ProviderStatus.SYNCING),
+                    providers.c.id.in_(pollable_ids),
+                    providers.c.enabled.is_(True),
+                    providers.c.status.in_(
+                        (str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))
+                    ),
+                    _claim_due_state(now),
                 )
             )
             .values(status=str(ProviderStatus.SYNCING), updated_at=now)
@@ -190,7 +232,11 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
         )
         await conn.execute(
             update(providers)
-            .where(providers.c.id.in_(provider_ids))
+            .where(
+                providers.c.id.in_(provider_ids),
+                providers.c.enabled.is_(True),
+                providers.c.status == str(ProviderStatus.SYNCING),
+            )
             .values(status=str(ProviderStatus.IDLE), updated_at=now)
         )
         await conn.execute(
@@ -213,6 +259,16 @@ async def release(
     last_success_at: datetime | None = None,
     last_error: dict[str, str] | None = None,
     effective_interval_seconds: int | None = None,
+    run_id: int | None = None,
+    run_status: RunStatus | None = None,
+    items_seen: int | None = None,
+    items_written: int | None = None,
+    items_failed: int | None = None,
+    error_class: ErrorClass | None = None,
+    error_message: str | None = None,
+    log_excerpt: str | None = None,
+    cursor_after: dict[str, object] | None = None,
+    requested_lineage_id: UUID | None = None,
 ) -> None:
     """Record a run's outcome and reschedule.
 
@@ -220,11 +276,39 @@ async def release(
     decide retry policy; it persists what the ladder said ( through ).
     """
     async with transaction(engine) as conn:
+        if run_id is not None and run_status is not None:
+            run_result = await conn.execute(
+                update(sync_runs)
+                .where(
+                    sync_runs.c.id == run_id,
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                )
+                .values(
+                    status=str(run_status),
+                    finished_at=now,
+                    items_seen=items_seen or 0,
+                    items_written=items_written or 0,
+                    items_failed=items_failed or 0,
+                    error_class=str(error_class) if error_class else None,
+                    error_message=error_message,
+                    log_excerpt=log_excerpt,
+                    cursor_after=cursor_after,
+                )
+            )
+            if run_result.rowcount != 1:
+                raise RuntimeError(f"run {run_id} was not open when release finalized it")
+
         provider_values: dict[str, object] = {"status": str(status), "updated_at": now}
         if last_error is not None or status is ProviderStatus.IDLE:
             provider_values["last_error"] = last_error
         await conn.execute(
-            update(providers).where(providers.c.id == provider_id).values(provider_values)
+            update(providers)
+            .where(
+                providers.c.id == provider_id,
+                providers.c.enabled.is_(True),
+                providers.c.status == str(ProviderStatus.SYNCING),
+            )
+            .values(provider_values)
         )
         values: dict[str, object] = {
             "next_run_at": next_run_at,
@@ -235,8 +319,15 @@ async def release(
             values["last_success_at"] = last_success_at
         if effective_interval_seconds is not None:
             values["effective_interval_seconds"] = effective_interval_seconds
-        await conn.execute(
+        values["requested_lineage_id"] = requested_lineage_id
+        if cursor_after is not None:
+            values["cursor"] = cursor_after
+        state_result = await conn.execute(
             update(provider_state).where(provider_state.c.provider_id == provider_id).values(values)
+        )
+        assert state_result.rowcount == 1, (
+            f"release expected one provider_state row for {provider_id!r}, "
+            f"updated {state_result.rowcount}"
         )
 
 
