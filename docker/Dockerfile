@@ -5,7 +5,7 @@
 # the resulting image.
 
 # --- Stage 1: build the SPA -------------------------------------------------------------------
-FROM node:22.23.2-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS frontend
+FROM node:26.5.1-slim@sha256:deae974a69e140f44f434ab29cb519fb5f8fe250fd364b8ca446bd0761acdc6a AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
