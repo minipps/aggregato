@@ -26,6 +26,7 @@ import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, exists, or_, select, update
@@ -59,6 +60,7 @@ SQLITE_MAX_CONCURRENT_RUNS = 1
 BOOT_JITTER_SECONDS = 120
 
 log = logging.getLogger(__name__)
+_UNSET = object()
 
 
 def max_concurrent_runs(database_url: str) -> int:
@@ -90,16 +92,17 @@ class DueProvider:
     """The durable lineage assigned to an operator request, if one is pending."""
 
 
-def _pollable_provider_ids() -> frozenset[str]:
+def _pollable_provider_ids(provider_dir: Path | None = None) -> frozenset[str]:
     """Return installed providers that declare the host-owned polling capability.
 
     Scheduler admission cannot import provider code to ask whether it can poll.  The registry's
     static manifests are the safe source of that decision; providers absent from the allowlist are
     deliberately not schedulable.
     """
-    return frozenset(
-        info.id for info in discover_providers() if Capability.POLL.value in info.capabilities
+    discovered = (
+        discover_providers(provider_dir) if provider_dir is not None else discover_providers()
     )
+    return frozenset(info.id for info in discovered if Capability.POLL.value in info.capabilities)
 
 
 def _state_is_due(now: datetime) -> ColumnElement[bool]:
@@ -119,7 +122,9 @@ def _claim_due_state(now: datetime) -> ColumnElement[bool]:
     )
 
 
-async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvider]:
+async def due_providers(
+    engine: AsyncEngine, *, now: datetime, provider_dir: Path | None = None
+) -> list[DueProvider]:
     """The providers whose ``next_run_at`` has arrived.
 
     This is the whole of the schedule (research.md ). ``next_run_at IS NULL`` counts as due, which
@@ -132,7 +137,7 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
     Returns:
         Due providers, soonest first.
     """
-    pollable_ids = _pollable_provider_ids()
+    pollable_ids = _pollable_provider_ids(provider_dir)
     query = (
         select(
             provider_state.c.provider_id,
@@ -170,7 +175,13 @@ async def due_providers(engine: AsyncEngine, *, now: datetime) -> list[DueProvid
         ]
 
 
-async def claim(engine: AsyncEngine, provider_id: str, *, now: datetime) -> bool:
+async def claim(
+    engine: AsyncEngine,
+    provider_id: str,
+    *,
+    now: datetime,
+    provider_dir: Path | None = None,
+) -> bool:
     """Mark a provider ``syncing``, and report whether this caller got it.
 
     The conditional ``UPDATE`` is the claim: two schedulers, or one scheduler with an overlapping
@@ -178,7 +189,7 @@ async def claim(engine: AsyncEngine, provider_id: str, *, now: datetime) -> bool
     row cannot bypass a disable, a configuration failure, a capability change, or a newly-future
     schedule.
     """
-    pollable_ids = _pollable_provider_ids()
+    pollable_ids = _pollable_provider_ids(provider_dir)
     async with transaction(engine) as conn:
         result = await conn.execute(
             update(providers)
@@ -209,9 +220,12 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
     """
     async with transaction(engine) as conn:
         result = await conn.execute(
-            select(providers.c.id).where(providers.c.status == str(ProviderStatus.SYNCING))
+            select(providers.c.id, providers.c.enabled).where(
+                providers.c.status == str(ProviderStatus.SYNCING)
+            )
         )
-        provider_ids = [str(row.id) for row in result]
+        provider_rows = list(result)
+        provider_ids = [str(row.id) for row in provider_rows]
         if not provider_ids:
             return []
 
@@ -234,10 +248,19 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
             update(providers)
             .where(
                 providers.c.id.in_(provider_ids),
-                providers.c.enabled.is_(True),
                 providers.c.status == str(ProviderStatus.SYNCING),
+                providers.c.enabled.is_(True),
             )
             .values(status=str(ProviderStatus.IDLE), updated_at=now)
+        )
+        await conn.execute(
+            update(providers)
+            .where(
+                providers.c.id.in_(provider_ids),
+                providers.c.status == str(ProviderStatus.SYNCING),
+                providers.c.enabled.is_(False),
+            )
+            .values(status=str(ProviderStatus.DISABLED), updated_at=now)
         )
         await conn.execute(
             update(provider_state)
@@ -268,7 +291,7 @@ async def release(
     error_message: str | None = None,
     log_excerpt: str | None = None,
     cursor_after: dict[str, object] | None = None,
-    requested_lineage_id: UUID | None = None,
+    requested_lineage_id: UUID | object | None = _UNSET,
 ) -> None:
     """Record a run's outcome and reschedule.
 
@@ -319,7 +342,8 @@ async def release(
             values["last_success_at"] = last_success_at
         if effective_interval_seconds is not None:
             values["effective_interval_seconds"] = effective_interval_seconds
-        values["requested_lineage_id"] = requested_lineage_id
+        if requested_lineage_id is not _UNSET:
+            values["requested_lineage_id"] = requested_lineage_id
         if cursor_after is not None:
             values["cursor"] = cursor_after
         state_result = await conn.execute(
@@ -347,6 +371,7 @@ class Scheduler:
         rng: random.Random | None = None,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT_RUNS,
         poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
+        provider_dir: Path | None = None,
     ) -> None:
         """
         Args:
@@ -358,12 +383,14 @@ class Scheduler:
             rng: Jitter source.
             max_concurrent: In-flight run cap.
             poll_interval_seconds: How long to sleep between polls.
+            provider_dir: Optional reviewed/unreviewed drop-in provider directory.
         """
         self._engine = engine
         self._dispatch = dispatch
         self._clock = clock
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._max_concurrent = max_concurrent
+        self._provider_dir = provider_dir
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._poll_interval = poll_interval_seconds
         self._running: dict[str, asyncio.Task[None]] = {}
@@ -384,7 +411,9 @@ class Scheduler:
         if available_slots <= 0:
             return started
 
-        for due in await due_providers(self._engine, now=self._clock.now()):
+        for due in await due_providers(
+            self._engine, now=self._clock.now(), provider_dir=self._provider_dir
+        ):
             if due.provider_id in self._running:
                 continue
             # Claiming is itself a database write. Do not claim work that must wait for the
@@ -392,7 +421,12 @@ class Scheduler:
             # transaction even though the run tasks themselves are serialized.
             if available_slots == 0:
                 break
-            if not await claim(self._engine, due.provider_id, now=self._clock.now()):
+            if not await claim(
+                self._engine,
+                due.provider_id,
+                now=self._clock.now(),
+                provider_dir=self._provider_dir,
+            ):
                 # Someone else got it. Not an error; the next poll will find it if it is still due.
                 continue
             task = asyncio.create_task(self._guarded(due), name=f"sync:{due.provider_id}")

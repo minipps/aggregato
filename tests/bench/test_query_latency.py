@@ -6,10 +6,13 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, select
 
 from aggregato.db.schema import entries
 from tests.bench.seed import seed_entries
+
+pytestmark = pytest.mark.bench
 
 SAMPLE_ENTRIES = 20_000
 

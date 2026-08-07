@@ -610,8 +610,10 @@ async def test_the_scheduler_does_not_claim_beyond_available_slots(
     engine: AsyncEngine,
 ) -> None:
     """A queued provider stays idle until SQLite has a slot for its run."""
-    await enable_provider(engine, "first")
-    await enable_provider(engine, "second")
+    # Scheduler admission uses the static manifests, so exercise two real poll-capable providers
+    # even though dispatch is faked here to hold the SQLite slot open.
+    await enable_provider(engine, "fixture")
+    await enable_provider(engine, "letterboxd")
     dispatch_started = asyncio.Event()
     release_dispatch = asyncio.Event()
     dispatched: list[str] = []
@@ -637,7 +639,7 @@ async def test_the_scheduler_does_not_claim_beyond_available_slots(
             rows = (await conn.execute(select(providers.c.id, providers.c.status))).all()
             statuses = {str(row.id): str(row.status) for row in rows}
         claimed_provider = dispatched[0]
-        waiting_provider = "second" if claimed_provider == "first" else "first"
+        waiting_provider = "letterboxd" if claimed_provider == "fixture" else "fixture"
         assert statuses[claimed_provider] == str(ProviderStatus.SYNCING)
         assert statuses[waiting_provider] == str(ProviderStatus.IDLE)
     finally:

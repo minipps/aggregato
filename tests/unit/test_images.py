@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 from contextlib import asynccontextmanager
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -401,9 +402,15 @@ async def test_public_route_sets_security_headers_on_cached_files(
         return {"image_cache_enabled": True}
 
     async def found(
-        _engine: object, _data_dir: Path, _digest: str, *, enabled: bool
+        _engine: object,
+        _data_dir: Path,
+        _digest: str,
+        *,
+        enabled: bool,
+        now: datetime | None,
     ) -> tuple[Path, str]:
         assert enabled
+        assert now is not None
         return path, "image/png"
 
     monkeypatch.setattr("aggregato.api.routes.images.get_settings", settings)

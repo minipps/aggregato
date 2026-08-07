@@ -5,9 +5,9 @@ the test fixture blocks socket access, so a passing result cannot have contacted
 
 | Quickstart section | Command / evidence | Result |
 |---|---|---|
-| Silent install, deletion, sub-unit, interrupted-sync guards | Named validation tests in `quickstart.md` | 31 passed across all user-story journeys |
-|  | `tests/integration/test_us1_single_provider.py` | passed: enable → sync → browse → resync, with no duplicate archive rows |
-| – and  | Named integration tests in `quickstart.md` | passed |
+| Silent install, deletion, sub-unit, interrupted-sync guards | [Validation guide](validation.md) and its named tests | 31 passed across all user-story journeys |
+| One-provider journey | `tests/integration/test_single_provider.py` | passed: enable → sync → browse → resync, with no duplicate archive rows |
+| Cross-provider, failure, merge/split, import, and export journeys | [Validation guide](validation.md) | passed |
 |  conformance | `uv run pytest tests/conformance/ -q` | 41 passed, 5 skipped (optional FTS-dependent cases) |
 | Dependency boundary | `uv run lint-imports` | 3 contracts kept, 0 broken |
 | Performance budget assertions | `uv run pytest tests/bench/ -q` | 6 passed |

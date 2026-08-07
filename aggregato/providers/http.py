@@ -1,6 +1,7 @@
 """The host's HTTP client (research.md , ).
 
-This module lives in the providers tree because plan.md puts it here, but it is **host code**: it is
+This module lives in the providers tree because architecture.md puts it here, but it is **host
+code**: it is
 the one thing in this package allowed to import ``httpx``, and the import-linter contract in
 pyproject.toml names that single exemption. Every actual provider package still cannot reach
 ``httpx``, which is the rule that matters — a provider able to construct its own client would be a
@@ -23,13 +24,18 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from types import TracebackType
+from typing import cast
+from weakref import WeakKeyDictionary
 
 import httpx
 
 from aggregato import __version__
+from aggregato.domain.clock import SYSTEM_CLOCK
 from aggregato.domain.enums import Acquisition
 from aggregato.providers.errors import BlockedError, RateLimited, TransportError
 
@@ -59,6 +65,8 @@ MAX_ATTEMPTS = 4
 #: Cap on a single sleep. A platform sending `Retry-After: 86400` is telling us to come back
 #: tomorrow, which is the scheduler's job, not something to block a worker on.
 MAX_SLEEP_SECONDS = 60.0
+MAX_REDIRECTS = 5
+_ALLOWED_REQUEST_KWARGS = frozenset({"params", "headers", "json", "content", "data"})
 
 
 class RateLimiter:
@@ -86,6 +94,21 @@ class RateLimiter:
                 await asyncio.sleep(wait)
                 now = asyncio.get_running_loop().time()
             self._next_allowed_monotonic = now + self._min_interval
+
+    def ensure_minimum(self, interval_seconds: float) -> None:
+        """Raise a shared host limiter when another run declares a slower policy."""
+        self._min_interval = max(self._min_interval, interval_seconds)
+
+
+@dataclass
+class _HostState:
+    limiter: RateLimiter
+    semaphore: asyncio.Semaphore
+
+
+_HOST_STATES: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple[str, int], _HostState]] = (
+    WeakKeyDictionary()
+)
 
 
 @dataclass(frozen=True)
@@ -125,17 +148,20 @@ class PoliteClient:
         *,
         client: httpx.AsyncClient | None = None,
         rng: random.Random | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._policy = policy
         self._limiter = RateLimiter(policy.effective_interval_seconds)
         # One semaphore per host, created on first sight. A single global semaphore would make a
         # slow platform throttle an unrelated one.
         self._host_locks: dict[str, asyncio.Semaphore] = {}
+        self._host_limiters: dict[str, RateLimiter] = {}
         # Injected so retry jitter is reproducible in tests (testing guidance).
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
+        self._now = now or SYSTEM_CLOCK.now
         self._client = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT},
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=httpx.Timeout(30.0, connect=10.0),
         )
 
@@ -154,12 +180,25 @@ class PoliteClient:
         await self._client.aclose()
 
     def _host_lock(self, url: httpx.URL) -> asyncio.Semaphore:
+        return self._host_state(url).semaphore
+
+    def _host_state(self, url: httpx.URL) -> _HostState:
         host = url.host or ""
-        lock = self._host_locks.get(host)
-        if lock is None:
-            lock = asyncio.Semaphore(self._policy.max_concurrent_per_host)
-            self._host_locks[host] = lock
-        return lock
+        key = (host, self._policy.max_concurrent_per_host)
+        loop = asyncio.get_running_loop()
+        states = _HOST_STATES.setdefault(loop, {})
+        state = states.get(key)
+        if state is None:
+            state = _HostState(
+                limiter=self._limiter,
+                semaphore=asyncio.Semaphore(self._policy.max_concurrent_per_host),
+            )
+            states[key] = state
+        else:
+            state.limiter.ensure_minimum(self._policy.effective_interval_seconds)
+        self._host_locks[host] = state.semaphore
+        self._host_limiters[host] = state.limiter
+        return state
 
     async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
         """Perform one request under the host's pacing and retry rules.
@@ -182,45 +221,84 @@ class PoliteClient:
                 session .
             httpx.TransportError: The transport failed on every attempt.
         """
-        target = httpx.URL(url)
+        unexpected = set(kwargs) - _ALLOWED_REQUEST_KWARGS
+        if unexpected:
+            names = ", ".join(sorted(unexpected))
+            raise TypeError(f"unsupported host HTTP option(s): {names}")
+        raw_headers = kwargs.get("headers")
+        if raw_headers is not None and not isinstance(raw_headers, Mapping):
+            raise TypeError("headers must be a mapping")
+        headers = httpx.Headers(cast(Mapping[str, str] | None, raw_headers))
+        # A plugin may add conditional or authorization headers, but it cannot impersonate a
+        # different client or remove the contact identity the host owns.
+        headers["User-Agent"] = USER_AGENT
+        request_kwargs = {key: value for key, value in kwargs.items() if key != "headers"}
+        request_kwargs["headers"] = headers
+        target = _validated_url(url)
+        redirects = 0
         last_transport_error: httpx.TransportError | None = None
 
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            async with self._host_lock(target):
-                await self._limiter.acquire()
-                try:
-                    response = await self._client.request(method, target, **kwargs)  # type: ignore[arg-type]
-                except httpx.TransportError as exc:
-                    last_transport_error = exc
+        while True:
+            response: httpx.Response | None = None
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                state = self._host_state(target)
+                async with state.semaphore:
+                    await state.limiter.acquire()
+                    try:
+                        response = await self._client.request(
+                            method,
+                            target,
+                            **request_kwargs,  # type: ignore[arg-type]
+                        )
+                    except httpx.TransportError as exc:
+                        last_transport_error = exc
+                    else:
+                        last_transport_error = None
+                if response is None:
                     if attempt == MAX_ATTEMPTS:
                         raise TransportError(
                             f"{target.host} could not be reached after "
-                            f"{MAX_ATTEMPTS} attempts: {exc}"
-                        ) from exc
+                            f"{MAX_ATTEMPTS} attempts: {last_transport_error}"
+                        ) from last_transport_error
                     await self._sleep_before_retry(attempt, None)
                     continue
 
-            # 403/451 are not rate limits and not transient. Treating them as retryable is how a
-            # soft block becomes a hard one.
-            if response.status_code in (403, 451):
-                raise BlockedError(
-                    f"{target.host} refused access with {response.status_code}; "
-                    "not retrying, because retrying deepens a block"
-                )
-
-            if response.status_code not in RETRYABLE_STATUS:
-                return response
-
-            retry_after = _parse_retry_after(response)
-            if attempt == MAX_ATTEMPTS:
-                if response.status_code == 429:
-                    raise RateLimited(
-                        f"{target.host} still rate-limiting after {attempt} attempts",
-                        retry_after=retry_after,
+                # 403/451 are not rate limits and not transient. Treating them as retryable is how
+                # a soft block becomes a hard one.
+                if response.status_code in (403, 451):
+                    raise BlockedError(
+                        f"{target.host} refused access with {response.status_code}; "
+                        "not retrying, because retrying deepens a block"
                     )
-                return response
 
-            await self._sleep_before_retry(attempt, retry_after)
+                if response.status_code not in RETRYABLE_STATUS:
+                    break
+
+                retry_after = _parse_retry_after(response, now=self._now)
+                if attempt == MAX_ATTEMPTS:
+                    if response.status_code == 429:
+                        raise RateLimited(
+                            f"{target.host} still rate-limiting after {attempt} attempts",
+                            retry_after=retry_after,
+                        )
+                    break
+                await self._sleep_before_retry(attempt, retry_after)
+
+            assert response is not None
+            location = response.headers.get("Location")
+            if response.status_code not in {301, 302, 303, 307, 308} or not location:
+                return response
+            redirects += 1
+            if redirects > MAX_REDIRECTS:
+                raise TransportError(f"{url} exceeded the {MAX_REDIRECTS}-redirect limit")
+            target = _validated_url(str(target.join(location)))
+            if response.status_code in {301, 302, 303} and method.upper() not in {"GET", "HEAD"}:
+                method = "GET"
+                request_kwargs = {
+                    key: value
+                    for key, value in request_kwargs.items()
+                    if key not in {"json", "content", "data"}
+                }
 
         # Unreachable: the loop either returns or raises on its final attempt. Kept explicit so a
         # future edit to the loop bounds fails loudly instead of returning None.
@@ -246,17 +324,32 @@ class PoliteClient:
         await asyncio.sleep(min(delay, MAX_SLEEP_SECONDS))
 
 
-def _parse_retry_after(response: httpx.Response) -> float | None:
-    """``Retry-After`` in delta-seconds form, or ``None`` if absent or unparseable.
-
-    Only the integer-seconds form is read. The HTTP-date form is legal but rare, and mis-parsing a
-    date into a huge sleep is worse than falling back to the backoff we already have.
-    """
+def _parse_retry_after(
+    response: httpx.Response, *, now: Callable[[], datetime] | None = None
+) -> float | None:
+    """Parse ``Retry-After`` as delta-seconds or an HTTP-date."""
     raw = response.headers.get("Retry-After")
     if raw is None:
         return None
     try:
         seconds = float(raw.strip())
     except ValueError:
-        return None
-    return seconds if seconds >= 0 else None
+        try:
+            retry_at = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        current = (now or SYSTEM_CLOCK.now)()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        seconds = (retry_at.astimezone(UTC) - current.astimezone(UTC)).total_seconds()
+    return max(0.0, seconds)
+
+
+def _validated_url(value: str) -> httpx.URL:
+    """Allow only ordinary HTTP(S) URLs, including every manually followed redirect."""
+    target = httpx.URL(value)
+    if target.scheme not in {"http", "https"} or not target.host:
+        raise TransportError("host HTTP requests require an absolute http(s) URL")
+    return target

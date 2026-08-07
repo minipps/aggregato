@@ -226,7 +226,7 @@ async def test_a_rate_limit_without_retry_after_still_reports_the_class() -> Non
     assert caught.value.retry_after is None
 
 
-async def test_a_malformed_retry_after_falls_back_rather_than_sleeping_forever() -> None:
+async def test_an_http_date_retry_after_is_parsed_without_sleeping_forever() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
 
@@ -237,7 +237,8 @@ async def test_a_malformed_retry_after_falls_back_rather_than_sleeping_forever()
             with pytest.raises(RateLimited) as caught:
                 await client.get("https://example.test/")
 
-    assert caught.value.retry_after is None
+    assert caught.value.retry_after is not None
+    assert caught.value.retry_after > 0
 
 
 async def test_retries_are_bounded() -> None:

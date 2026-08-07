@@ -11,8 +11,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from aggregato.domain.ratings import RatingScale
 from aggregato.domain.enums import ScaleKind
+from aggregato.domain.ratings import RatingScale
 
 
 def _object_schema(
@@ -22,6 +22,7 @@ def _object_schema(
         "type": "object",
         "additionalProperties": False,
         "properties": properties,
+        "x-aggregato-public": True,
     }
     if required:
         schema["required"] = required
@@ -37,7 +38,13 @@ def _string(
     format: str | None = None,
     min_length: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    value: dict[str, Any] = {"type": "string", "description": description}
+    value: dict[str, Any] = {
+        "type": "string",
+        "description": description,
+        # The host can safely render only fields explicitly annotated by the manifest author.
+        # Drop-in providers without this annotation get no settings reflected in the API.
+        "x-aggregato-public": not secret,
+    }
     if default is not None:
         value["default"] = default
     if format is not None:
@@ -84,6 +91,7 @@ def _manifest(
     config_schema: dict[str, Any],
     rating_scales: tuple[RatingScale, ...] = (),
     import_inference: str | None = None,
+    api_visible: bool = True,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -94,7 +102,7 @@ def _manifest(
         "default_poll_interval_seconds": interval_seconds,
         "config_schema": config_schema,
         "rating_scales": rating_scales,
-        "api_visible": True,
+        "api_visible": api_visible,
         "provider_api_version": 1,
         "import_inference": import_inference,
     }
@@ -109,7 +117,11 @@ _anilist_token, _ = _string(
     secret=True,
     format="password",
 )
-_anilist_token = {"anyOf": [_anilist_token, {"type": "null"}], "default": None}
+_anilist_token = {
+    "anyOf": [_anilist_token, {"type": "null"}],
+    "default": None,
+    "writeOnly": True,
+}
 _anilist_username, _ = _string(
     description="AniList username whose media lists are synchronized.", required=True, min_length=1
 )
@@ -223,9 +235,10 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
             "has_credits",
         ),
         acquisition="export",
-        schema_version=1,
+        schema_version=2,
         interval_seconds=3600,
         config_schema=_object_schema({"path": _fixture_path}, required=["path"]),
+        api_visible=False,
         rating_scales=(
             _scale("fixture-stars-5", kind="linear", minimum="0.5", maximum="5", step="0.5"),
         ),
@@ -286,7 +299,7 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
         media_types=("track",),
         capabilities=("poll", "backfill", "has_credits"),
         acquisition="api",
-        schema_version=1,
+        schema_version=2,
         interval_seconds=900,
         config_schema=_object_schema(
             {

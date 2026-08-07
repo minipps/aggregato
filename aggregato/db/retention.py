@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from contextlib import suppress
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final, TypedDict, cast
 
@@ -10,7 +11,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from aggregato.db.engine import transaction
-from aggregato.db.schema import image_cache, ingest_failures, settings, sync_runs
+from aggregato.db.schema import image_cache, import_jobs, ingest_failures, settings, sync_runs
+from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 
 RAW_PAYLOAD_RETENTION_DAYS: Final = 90
 SUCCESS_RUN_RETENTION_DAYS: Final = 30
@@ -52,12 +54,18 @@ async def get_settings_on_connection(conn: AsyncConnection) -> RetentionSettings
     )
 
 
-async def update_settings(engine: AsyncEngine, values: dict[str, int | bool]) -> RetentionSettings:
+async def update_settings(
+    engine: AsyncEngine,
+    values: dict[str, int | bool],
+    *,
+    now: datetime | None = None,
+    clock: Clock = SYSTEM_CLOCK,
+) -> RetentionSettings:
     unknown = set(values) - set(_DEFAULTS)
     if unknown:
         raise ValueError(f"unknown settings: {sorted(unknown)}")
     _validate(values)
-    now = datetime.now(UTC)
+    now = now or clock.now()
     async with transaction(engine) as conn:
         for key, value in values.items():
             existing = await conn.scalar(select(settings.c.key).where(settings.c.key == key))
@@ -80,16 +88,31 @@ def _validate(values: dict[str, int | bool]) -> None:
             raise ValueError("image_cache_enabled must be true or false")
 
 
-async def cleanup(engine: AsyncEngine, data_dir: Path, *, now: datetime | None = None) -> None:
+async def cleanup(
+    engine: AsyncEngine,
+    data_dir: Path,
+    *,
+    now: datetime | None = None,
+    clock: Clock = SYSTEM_CLOCK,
+) -> None:
     """Remove expired operational records and disabled-cache files.
 
     Failed runs are retained six times longer than successful ones by default: they are the useful
     evidence when a provider misbehaves.  Provider payloads are never silently purged unless the
     operator explicitly lowers their retention setting.
     """
-    now = now or datetime.now(UTC)
+    now = now or clock.now()
     values = await get_settings(engine)
+    active_import_paths: set[Path] = set()
     async with transaction(engine) as conn:
+        active_import_paths = {
+            Path(str(row.path))
+            for row in await conn.execute(
+                select(import_jobs.c.path).where(
+                    import_jobs.c.finished_at.is_(None), import_jobs.c.failed_at.is_(None)
+                )
+            )
+        }
         await conn.execute(
             delete(sync_runs).where(
                 sync_runs.c.status == "success",
@@ -121,3 +144,29 @@ async def cleanup(engine: AsyncEngine, data_dir: Path, *, now: datetime | None =
                     path.unlink()
                 elif path.is_dir():
                     path.rmdir()
+    _cleanup_import_files(data_dir / "imports", active_import_paths, now=now)
+
+
+def _cleanup_import_files(import_root: Path, active_paths: set[Path], *, now: datetime) -> None:
+    """Remove orphaned completed uploads while preserving every queued/leased job."""
+    if not import_root.is_dir():
+        return
+    stale_uploading_before = now.timestamp() - 24 * 60 * 60
+    for path in sorted(import_root.rglob("*"), reverse=True):
+        if path.is_file():
+            resolved = path.resolve()
+            if resolved in active_paths:
+                continue
+            if path.name.endswith(".uploading"):
+                try:
+                    if path.stat().st_mtime >= stale_uploading_before:
+                        continue
+                except OSError:
+                    continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+        elif path.is_dir():
+            with suppress(OSError):
+                path.rmdir()

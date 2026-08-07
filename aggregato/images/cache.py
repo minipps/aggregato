@@ -9,7 +9,7 @@ import socket
 import tempfile
 import threading
 from collections.abc import Iterator, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Final
@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from aggregato.db.engine import transaction
 from aggregato.db.schema import image_cache
+from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 
 MAX_IMAGE_BYTES: Final = 10 * 1024 * 1024
 """Maximum number of response bytes retained for one image."""
@@ -66,7 +67,13 @@ async def register_source_on_connection(conn: AsyncConnection, source_url: str) 
 
 
 async def cached_image(
-    engine: AsyncEngine, data_dir: Path, digest: str, *, enabled: bool = True
+    engine: AsyncEngine,
+    data_dir: Path,
+    digest: str,
+    *,
+    enabled: bool = True,
+    now: datetime | None = None,
+    clock: Clock = SYSTEM_CLOCK,
 ) -> tuple[Path, str] | None:
     """Return a verified cached image, fetching it once when necessary.
 
@@ -101,17 +108,19 @@ async def cached_image(
                 row.source_url, data_dir
             )
         except (httpx.HTTPError, OSError, TimeoutError, UnsafeImageURL, ValueError):
+            failed_at = now or clock.now()
             async with transaction(engine) as conn:
                 await conn.execute(
                     image_cache.update()
                     .where(image_cache.c.url_hash == digest)
                     .values(
-                        failed_at=datetime.now(UTC),
+                        failed_at=failed_at,
                         failure_count=image_cache.c.failure_count + 1,
                     )
                 )
             return None
 
+        fetched_at = now or clock.now()
         async with transaction(engine) as conn:
             await conn.execute(
                 image_cache.update()
@@ -120,7 +129,7 @@ async def cached_image(
                     bytes_sha256=bytes_hash,
                     content_type=content_type,
                     size_bytes=size_bytes,
-                    fetched_at=datetime.now(UTC),
+                    fetched_at=fetched_at,
                     failed_at=None,
                 )
             )

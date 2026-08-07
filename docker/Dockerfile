@@ -1,5 +1,7 @@
 # Multi-stage so the operator never installs Node and the runtime image carries no toolchain
-# (research.md  — the mitigation for the SPA deviation recorded in plan.md Complexity Tracking).
+# (docs/research.md — the mitigation for the SPA deviation recorded in architecture.md).
+# Base images and the uv tool image use exact version tags. Dependabot proposes reviewed refreshes;
+# release CI attaches an SBOM and provenance attestation to the resulting image.
 
 # --- Stage 1: build the SPA -------------------------------------------------------------------
 FROM node:22.23.2-slim AS frontend
@@ -11,7 +13,7 @@ RUN npm --loglevel=error run build
 
 # --- Stage 2: resolve Python dependencies into a venv ----------------------------------------
 FROM python:3.13-slim AS deps
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./

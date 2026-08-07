@@ -1,5 +1,5 @@
 #!/bin/sh
-# Two processes from one image (plan.md Complexity Tracking): the API serves regardless of what the
+# Two processes from one image (docs/architecture.md): the API serves regardless of what the
 # scheduler is doing, which is what 's containment requires. The scheduler is restarted on its
 # own if it dies; a dead scheduler must never take browsing down with it.
 set -eu

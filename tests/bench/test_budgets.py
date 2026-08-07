@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.bench
+
 
 def test_phase_four_baseline_declares_required_budgets() -> None:
     baseline = json.loads((Path(__file__).parent / "baseline.json").read_text())

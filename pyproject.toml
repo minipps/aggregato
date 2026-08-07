@@ -91,6 +91,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
+faulthandler_timeout = 60
 markers = ["bench: performance budget checks (performance guidance)"]
 
 # --- : the decoupling contract is a merge gate, not a convention (decoupling guidance). ---
@@ -110,8 +111,8 @@ type = "forbidden"
 source_modules = ["aggregato.providers"]
 forbidden_modules = ["aggregato.db", "aggregato.ingest", "httpx"]
 # One exemption, and only one: `providers/http.py` IS the host-owned client wrapper that enforces
-# the politeness floors (research.md ), so it necessarily imports httpx. It lives in this tree
-# because plan.md puts it here, not because it is provider code. Every actual provider package
+# the politeness floors (see docs/research.md), so it necessarily imports httpx. It lives in this tree
+# as the host-owned wrapper, not because it is provider code. Every actual provider package
 # still cannot reach httpx, which is the rule that matters — a provider that could construct its
 # own client could raise its own rate limit .
 #

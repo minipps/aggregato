@@ -4,6 +4,45 @@ This plan is ordered by blast radius and by the number of guarantees each change
 start with documentation cleanup while the provider capability boundary and deletion safety remain
 broken.
 
+## Scoped documentation/CI pass — 2026-08-07
+
+- [x] M-01 — synchronize release examples and add the release-version check.
+- [x] M-02 — repair the validation-guide links and add the CI relative-link check.
+- [x] M-03 — replace stale `plan.md` references with maintained design documents.
+- [x] M-04 — document the current provider/drop-in lifecycle and trust boundary; the registry
+  source docstring now matches the manifest-only discovery implementation.
+- [x] M-06 — mark benchmark modules and run them in a separate budgeted CI job.
+- [x] M-07 — pin exact image versions, add Dependabot refreshes, and publish SBOM/provenance
+  attestations in release CI.
+- [x] M-09 — add collection guards, suite timeouts, faulthandler diagnostics, and a dedicated
+  PostgreSQL migration/claim/retry/writer/search smoke gate.
+- [x] M-10 — correct source comments and documentation so the stated isolation, configuration, and
+  politeness mechanisms match the implementation.
+- [x] M-11 — document API/operator limits and asynchronous behavior, and expose the latest-run
+  loading/error state through the frontend.
+
+## Closure ledger — 2026-08-07
+
+Every finding in the review is now covered by an implementation change and a regression or contract
+check. The detailed finding text above remains the rationale; this is the execution checklist.
+
+- [x] S-01–S-08 — static provider manifests, selected-child loading, minimal child environment,
+  worker-owned replay/import work, bounded image and child streams, import lifecycle controls,
+  authentication controls, and shared redirect-aware HTTP politeness.
+- [x] R-01–R-10 — non-runnable misconfiguration, conditional scheduler admission, disabled-state
+  preservation, host-failure finalization, atomic release/cursor state, durable request lineage,
+  leased imports/replays, poll capability filtering, migration locks, and injected clocks.
+- [x] D-01–D-11 — full-run baselines, savepoint writes, replay identity/version selection, physical
+  no-id keys, canonical external IDs and conflicts, safe merge/undo, maintained search projection,
+  immutable rating scales, explicit detail/search limits, and period-aware statistics.
+- [x] A-01–A-11 — the API now exposes `last-run` rather than claiming to check credentials, typed
+  sync requests, explicit configuration-layer semantics, strict schema redaction, provider-state
+  invariants, race-safe imports, keyset/cap contracts, raw-payload privacy documentation, safe
+  defaults, PostgreSQL CI coverage, and request clocks.
+- [x] M-01–M-11 — version/link checks, maintained design references, provider trust documentation,
+  benchmark isolation, container supply-chain attestations, bounded CI diagnostics, accurate source
+  comments, and operational/frontend limit states.
+
 ## P0 — Release blockers
 
 | Action | Findings | Done when |

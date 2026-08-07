@@ -3,9 +3,9 @@
 services:
   aggregato:
     # The published image, so `docker compose pull` works (docs/operations.md) — pin a release with
-    # AGGREGATO_VERSION=0.2.0. The build section stays: with no image pulled, `up` builds from this
+    # AGGREGATO_VERSION=0.1.5. The build section stays: with no image pulled, `up` builds from this
     # checkout, which is what a development run and a source install both want.
-    image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-latest}
+    image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-0.1.5}
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -16,7 +16,8 @@ services:
     # this image sets: those it needs, plus optional ones forwarded from your .env, which are empty
     # when you leave them out and an empty value counts as unset. The rest are commented examples,
     # and .env.example is the same contract for a non-Docker run. Settings resolve:
-    # defaults <- AGGREGATO_CONFIG file <- these <- UI edits.
+    # defaults <- AGGREGATO_CONFIG file <- environment. Provider settings saved in the UI are stored
+    # in the database and read by the worker when it starts a provider run.
     environment:
       # The only fatal configuration error . Generate: openssl rand -hex 32
       AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
@@ -38,7 +39,8 @@ services:
       # AGGREGATO_CONFIG: /data/config.yaml
       # The built web UI the API serves. The image sets this; an empty value means API only.
       # AGGREGATO_STATIC_DIR: /app/static
-      # Optional directory of your own provider packages, discovered as unreviewed drop-ins .
+      # Optional directory of your own provider packages, discovered from static metadata as
+      # unreviewed drop-ins. Selecting one loads its package; this is not an OS sandbox.
       # AGGREGATO_PROVIDER_DIR: /data/providers
       # Provider credentials are not settings of their own: the YAML config references them as
       # ${VAR}, resolved at read time and never written back. Pass whichever ones your config names.

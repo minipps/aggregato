@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import create_engine
 
 from aggregato.db.schema import creator_aliases, creators, metadata
@@ -15,6 +16,8 @@ from aggregato.domain.models import NormalizedBatch, NormalizedCredit, Normalize
 from aggregato.ingest.resolve_creator import resolve_creators
 from aggregato.ingest.titles import normalize_title
 from tests.unit._sync_connection import SyncConnectionAdapter
+
+pytestmark = pytest.mark.bench
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 LOOKUPS = 20_000

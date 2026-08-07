@@ -23,9 +23,12 @@ The convention, which third parties will follow, so it is deliberately boring:
    the provider in the tree, in the database, in the API and in ``tests/fixtures/<id>/``.
 4. Constructing the provider object is free of side effects: no I/O, no network, no clock.
 
-Bundled providers are ``reviewed=True`` because they ship with the core and went through review
-. Drop-in providers, discovered from an operator directory, are ``reviewed=False`` and the
-UI labels them — that directory scan is a later task  and deliberately absent here.
+Bundled providers are ``reviewed=True`` because they ship with the core and went through review.
+Drop-in providers are read from the explicitly configured operator directory using a static
+``manifest.json`` when present (legacy packages get conservative metadata), marked
+``reviewed=False``, and imported only inside the selected child process. A drop-in is trusted code
+with the child process's filesystem/network/resource limits; discovery is metadata parsing, not a
+sandbox.
 """
 
 from __future__ import annotations

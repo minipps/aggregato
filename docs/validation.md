@@ -64,7 +64,7 @@ uv run pytest tests/integration/test_fresh_install_is_silent.py -v
 ###  — One platform's history, local and browsable
 
 ```bash
-uv run pytest tests/integration/test_us1_single_provider.py -v
+uv run pytest tests/integration/test_single_provider.py -v
 ```
 
 Drives the bundled `fixture` provider end to end: enable → scheduler picks it up → child process
@@ -79,7 +79,7 @@ check ten entries against the platform's own UI, including one logged with a mon
 ###  — Two platforms, one log
 
 ```bash
-uv run pytest tests/integration/test_us2_cross_provider_identity.py -v
+uv run pytest tests/integration/test_cross_provider_identity.py -v
 ```
 
 Two fixture providers with deliberately overlapping data: one pair sharing an identifier (must unify
@@ -94,7 +94,7 @@ subsequent resync of both providers.
 ###  — Sync the operator can trust
 
 ```bash
-uv run pytest tests/integration/test_us3_failure_matrix.py -v
+uv run pytest tests/integration/test_failure_matrix.py -v
 ```
 
 One parametrized case per `error_class`. Assert per case: the resulting `sync_runs` row, whether a
@@ -117,7 +117,7 @@ an action .
 ###  — Fixing identity by hand
 
 ```bash
-uv run pytest tests/integration/test_us4_merge_split.py -v
+uv run pytest tests/integration/test_merge_split.py -v
 ```
 
 Expected: merging two works combines entries, opinions, and identifiers with nothing lost; splitting a
@@ -153,7 +153,7 @@ and refuses to run without fixtures.
 ###  — Owning the archive
 
 ```bash
-uv run pytest tests/integration/test_us7_export_restore.py -v
+uv run pytest tests/integration/test_export_restore.py -v
 ```
 
 Expected: `GET /export` produces one archive with no secrets in it; restoring into an empty instance
@@ -165,20 +165,20 @@ raw payload retention and image cache, each independently switchable.
 ## Performance budgets (performance guidance)
 
 ```bash
-uv run pytest tests/bench/ -q                      # portable benchmark-budget assertions
+uv run pytest -m bench tests/bench/ -q              # portable benchmark-budget assertions
 uv run python -m tests.bench.seed --entries 1000000   # generates the fixture database
 ```
 
 | Check | Budget | Fails if |
 |---|---|---|
-| `test_first_page_latency` | p95 < 1000 ms at 1M entries | filter indexes or the search implementation regress |
-| `test_deep_page_latency` | within 20% of first page | keyset pagination was replaced by offset |
-| `test_ingest_throughput` | ≥ 50,000 entries/hour on 4-core / 2 GB | per-row round trips crept into the writer |
-| `test_creator_resolution_batch` | ≥ 20,000 lookups/min, flat as creators grow | a per-credit query crept back in (research.md ) |
-| `test_ingest_scaling` | 1M-row rate within 10% of 10k-row rate | an index is missing or a scan appeared |
+| `test_first_and_deep_keyset_pages_fit_baseline` | first page < 200 ms and deep page < 300 ms on the seeded 20k sample | pagination indexes or keyset predicates regress |
+| `test_creator_resolution_meets_budget_and_stays_flat` | ≥ 20,000 lookups/min at 200 and 2,000 creators; large stays at least half the small rate | a per-credit query or table-size regression appears |
+| `test_live_entry_keyset_sorts_use_composite_indexes` | both timestamp sorts use their composite active-entry index | a query plan falls back to a table scan |
+| `test_live_score_facts_use_provider_item_composite_index` | score aggregation uses the provider-item/rating index | score filtering loses its indexed path |
 
-Record the baseline in `tests/bench/baseline.json`. A change worsening any metric by more than 10%
-needs a justification in the architecture documentation, per the engineering guidance.
+The operator harness can seed a 1M-entry database for larger measurements. Record any resulting
+baseline in `tests/bench/baseline.json`; a change worsening a recorded metric by more than 10% needs
+a justification in the architecture documentation, per the engineering guidance.
 
 ---
 
