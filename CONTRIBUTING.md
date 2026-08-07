@@ -91,8 +91,9 @@ delete inference is how an archive gets erased .
 
 ## Cutting a release
 
-`scripts/release.sh 0.1.1` — bumps `pyproject.toml` and `frontend/package.json` (plus the lockfile),
-commits, and pushes the tag. Pushing the tag *is* the release
+`scripts/release.sh 0.1.1` — bumps `pyproject.toml` and `frontend/package.json` (plus the lockfile
+and the README/Docker Compose release examples), commits, and pushes the tag. Pushing the tag *is*
+the release
 ([release.yml](.github/workflows/release.yml)): it runs the same CI gates as a push to main, then
 publishes a source archive, a GitHub release, and multi-arch images tagged `x.y.z`, `x.y`, `latest`.
 
