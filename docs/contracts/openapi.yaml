@@ -18,9 +18,18 @@ info:
       * Ratings return raw value, scale, and normalized value. Normalized values are
         comparable within a scale, not across platforms.
       * Pagination is keyset-only via opaque `cursor`. There is no offset parameter.
+      * Collection pages use `limit` 1–200, defaulting to 50; out-of-range values are clamped.
+        Full-text searches return every matching id before the collection page is applied.
+      * Work details embed at most the 200 newest entries and 200 newest opinions; use collection
+        endpoints for keyset-paged data.
       * Sub-unit records (`subject_ref` non-null) are EXCLUDED from work-level aggregates
         unless `include_subunits=true`.
       * Soft-deleted rows are excluded unless `include_deleted=true`.
+      * Sync and import requests return 202 after queueing work. The `lineage_id` groups the
+        resulting attempts; inspect provider runs for eventual status.
+      * Retained provider payloads and ingest-failure payloads can contain private platform data.
+        They are returned only through authenticated endpoints and follow the local retention and
+        export rules described by the operator guide.
       * Errors are RFC 9457 `application/problem+json`.
 servers:
   - url: /api/v1
@@ -74,7 +83,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/mediaType"
         - $ref: "#/components/parameters/mediaFamily"
-        - { name: q, in: query, schema: { type: string } }
+        - name: q
+          in: query
+          description: Full-text title search; every matching work id is considered before paging.
+          schema: { type: string }
         - { name: year, in: query, schema: { type: integer } }
         - $ref: "#/components/parameters/provider"
         - { name: creator, in: query, schema: { type: string, format: uuid } }
@@ -101,7 +113,7 @@ paths:
         - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
       responses:
         "200":
-          description: Work with identifiers, credits, entries, opinions, parent and sibling seasons
+          description: Work with identifiers, credits, parent and sibling seasons, plus up to the 200 newest entries and opinions
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkDetail" }
@@ -131,7 +143,10 @@ paths:
         - { name: has_review, in: query, schema: { type: boolean } }
         - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
         - { name: include_deleted, in: query, schema: { type: boolean, default: false } }
-        - { name: q, in: query, schema: { type: string }, description: Full text over titles and review text }
+        - name: q
+          in: query
+          description: Full-text search over titles and review text; every matching id is considered before paging.
+          schema: { type: string }
         - { name: sort, in: query, schema: { type: string, enum: [logged_at, ingested_at, score], default: logged_at } }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
         - $ref: "#/components/parameters/limit"
@@ -264,7 +279,7 @@ paths:
         - $ref: "#/components/parameters/cursor"
       responses:
         "200":
-          description: Sync run history, newest first, grouped by retry lineage
+          description: Sync run history, newest first, grouped by retry lineage. Pages are keyset-paginated and capped by the shared limit parameter.
           content:
             application/json:
               schema:
@@ -277,6 +292,7 @@ paths:
     post:
       tags: [providers]
       summary: Trigger a sync now
+      description: Queues an incremental or full run and returns immediately. The scheduler performs the work asynchronously; use the returned `lineage_id` with the provider run history to follow attempts and retry outcomes.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       requestBody:
         content:
@@ -287,28 +303,38 @@ paths:
                 mode: { type: string, enum: [incremental, full], default: incremental }
       responses:
         "202":
-          description: Run queued
-          content:
-            application/json:
-              schema: { type: object, properties: { lineage_id: { type: string, format: uuid } } }
-        "409":
-          $ref: "#/components/responses/Problem"
-
-  /providers/{id}/check:
-    post:
-      tags: [providers]
-      summary: Verify credentials without ingesting
-      parameters: [{ $ref: "#/components/parameters/providerId" }]
-      responses:
-        "200":
-          description: Check result
+          description: Run queued; no provider request has necessarily started yet.
           content:
             application/json:
               schema:
                 type: object
-                required: [ok]
+                required: [lineage_id]
+                properties: { lineage_id: { type: string, format: uuid } }
+        "409":
+          $ref: "#/components/responses/Problem"
+
+  /providers/{id}/last-run:
+    get:
+      tags: [providers]
+      summary: Report the latest provider run result
+      description: >-
+        This read-only endpoint returns the most recent recorded run outcome. It does not trigger a
+        credential check or contact the provider. A provider that has never run returns a null
+        `status` with a "not yet known" detail.
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      responses:
+        "200":
+          description: Latest recorded run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
                 properties:
-                  ok: { type: boolean }
+                  status:
+                    oneOf:
+                      - $ref: "#/components/schemas/RunStatus"
+                      - { type: "null" }
                   error_class: { $ref: "#/components/schemas/ErrorClass" }
                   detail: { type: string }
 
@@ -337,6 +363,7 @@ paths:
     post:
       tags: [providers]
       summary: Upload a user-supplied export file (import mode)
+      description: Accepts `.csv`, `.rss`, or `.xml` files up to 50 MiB. The API stores the bytes privately and queues an import; provider-specific structural validation and ingestion happen asynchronously in the worker child.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       requestBody:
         required: true
@@ -349,7 +376,13 @@ paths:
                 file: { type: string, format: binary }
       responses:
         "202":
-          description: Import run queued
+          description: Import run queued; the response's lineage id identifies the asynchronous run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lineage_id]
+                properties: { lineage_id: { type: string, format: uuid } }
         "415":
           $ref: "#/components/responses/Problem"
         "422":
@@ -483,7 +516,7 @@ paths:
         - $ref: "#/components/parameters/cursor"
       responses:
         "200":
-          description: Records that failed conversion, with enough context to file a plugin bug
+          description: Records that failed conversion, with retained provider payloads for diagnosis and replay. Payloads may contain private platform data and are subject to local retention.
           content:
             application/json:
               schema:
@@ -499,7 +532,7 @@ paths:
         - { name: id, in: path, required: true, schema: { type: integer } }
       responses:
         "200":
-          description: The retained payload was reprocessed after a provider fix
+          description: The retained payload was reprocessed synchronously after a provider fix; a successful replay marks the failure resolved.
           content:
             application/json:
               schema:
@@ -512,7 +545,7 @@ paths:
     get:
       tags: [log]
       parameters:
-        - { name: period, in: query, schema: { type: string, enum: [all, year, month, week] } }
+        - { name: period, in: query, schema: { type: string, enum: [all, year, month, week, day] } }
         - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
       responses:
         "200":
@@ -527,7 +560,6 @@ paths:
       parameters:
         - { name: group, in: query, required: true, schema: { type: string, enum: [work, creator] } }
         - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
-        - { name: period, in: query, schema: { type: string } }
         - $ref: "#/components/parameters/mediaType"
         - { name: include_subunits, in: query, schema: { type: boolean, default: false } }
       responses:
@@ -618,7 +650,11 @@ components:
   parameters:
     id: { name: id, in: path, required: true, schema: { type: string } }
     providerId: { name: id, in: path, required: true, schema: { type: string } }
-    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    limit:
+      name: limit
+      in: query
+      description: Requested page size. The server clamps it to 1–200 and defaults to 50.
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
     cursor:
       name: cursor
       in: query
@@ -689,6 +725,7 @@ components:
     Acquisition: { type: string, enum: [api, feed, export, scrape] }
     StorageUsage:
       type: object
+      description: Approximate local storage accounting. `raw_payload_bytes` is the encoded payload total; `database_bytes` includes SQLite sidecar files when present.
       required: [raw_payload_bytes, image_cache_bytes, database_bytes]
       properties:
         raw_payload_bytes: { type: integer, minimum: 0 }
@@ -696,6 +733,7 @@ components:
         database_bytes: { type: integer, minimum: 0 }
     ArchiveSettings:
       type: object
+      description: Retention controls read by the daily cleanup worker. Defaults are 90 days for resolved failure payloads, 30 days for successful run rows, and 180 days for failed or partial run rows. Provider-item replay payloads remain available for normalization replay.
       required: [raw_payload_retention_days, success_run_retention_days, failure_run_retention_days, image_cache_enabled, storage]
       properties:
         raw_payload_retention_days: { type: integer, minimum: 0 }
@@ -764,8 +802,14 @@ components:
           properties:
             external_ids: { type: array, items: { $ref: "#/components/schemas/ExternalId" } }
             credits: { type: array, items: { $ref: "#/components/schemas/Credit" } }
-            entries: { type: array, items: { $ref: "#/components/schemas/Entry" } }
-            opinions: { type: array, items: { $ref: "#/components/schemas/Opinion" } }
+            entries:
+              type: array
+              description: Up to the 200 newest live entries for this work; this embedded list is not paginated.
+              items: { $ref: "#/components/schemas/Entry" }
+            opinions:
+              type: array
+              description: Up to the 200 newest live opinions for this work; this embedded list is not paginated.
+              items: { $ref: "#/components/schemas/Opinion" }
             parent: { $ref: "#/components/schemas/Work" }
             siblings:
               type: array
@@ -945,7 +989,9 @@ components:
         sync_run_id: { type: integer, format: int64 }
         stage: { type: string, enum: [fetch, validate, normalize, write] }
         error: { type: string }
-        raw_payload: { type: object }
+        raw_payload:
+          type: object
+          description: Retained provider data for diagnosis/replay; may include private notes, identifiers, or source URLs. Authenticated operators should treat it as sensitive.
         created_at: { type: string, format: date-time }
         resolved_at: { type: string, format: date-time, nullable: true }
 

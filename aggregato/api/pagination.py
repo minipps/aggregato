@@ -35,7 +35,7 @@ from sqlalchemy import ColumnElement, and_, literal, or_, tuple_
 SortKey = Literal["logged_at", "ingested_at", "score"]
 """The ``sort`` values the ``/entries`` contract permits."""
 
-CursorKey = SortKey | Literal["created_at", "updated_at"]
+CursorKey = SortKey | Literal["created_at", "updated_at", "started_at"]
 """Every column a cursor can be issued for.
 
 Wider than :data:`SortKey` because ``/works`` and ``/opinions`` have no ``sort`` parameter but

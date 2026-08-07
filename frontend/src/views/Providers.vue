@@ -15,8 +15,8 @@
 import { computed, ref } from 'vue'
 
 import {
-  checkProvider,
   importProviderFile,
+  latestProviderRun,
   providerConfigSchema,
   providers,
   setProviderEnabled,
@@ -115,11 +115,11 @@ function fullResync(id: string): Promise<void> {
   })
 }
 
-function check(id: string): Promise<void> {
-  return act(id, 'Checking credentials', async () => {
-    const result = await checkProvider(id)
-    if (result.ok) return 'Credentials accepted.'
-    return `Credentials rejected (${result.error_class ?? 'unknown'}): ${result.detail ?? 'no detail given'}`
+function showLatestRun(id: string): Promise<void> {
+  return act(id, 'Loading latest run', async () => {
+    const result = await latestProviderRun(id)
+    if (result.status === 'success') return 'Latest run completed successfully.'
+    return `Latest run ${result.status ?? 'not yet known'} (${result.error_class ?? 'no error class'}): ${result.detail ?? 'no detail given'}`
   })
 }
 
@@ -303,11 +303,14 @@ function saveConfiguration(id: string): Promise<void> {
           >
             Full resync
           </button>
-          <button type="button" :disabled="busy === provider.id" @click="check(provider.id)">
-            Check credentials
-          </button>
           <button type="button" :disabled="busy === provider.id" @click="showConfigSchema(provider.id)">
             {{ configSchemas[provider.id] ? 'Hide configuration' : 'Configure provider' }}
+          </button>
+        </p>
+
+        <p class="actions">
+          <button type="button" :disabled="busy === provider.id" @click="showLatestRun(provider.id)">
+            Show latest run
           </button>
         </p>
 

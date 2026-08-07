@@ -344,20 +344,20 @@ async def test_syncing_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -
     assert response.status_code == 404
 
 
-# --- Check -------------------------------------------------------------------------------------
+# --- Latest recorded run -----------------------------------------------------------------------
 
 
-async def test_check_on_a_provider_that_never_ran_says_so(client: httpx.AsyncClient) -> None:
+async def test_latest_run_on_a_provider_that_never_ran_says_so(client: httpx.AsyncClient) -> None:
     """Not-yet-known is different from broken, and the response must not conflate them."""
-    response = await client.post("/api/v1/providers/fixture/check")
+    response = await client.get("/api/v1/providers/fixture/last-run")
     assert response.status_code == 200
     body = response.json()
-    assert body["ok"] is False
+    assert body["status"] is None
     assert body["error_class"] is None
     assert "not run yet" in body["detail"]
 
 
-async def test_check_reports_the_last_run_error_class(client: httpx.AsyncClient) -> None:
+async def test_latest_run_reports_the_last_run_error_class(client: httpx.AsyncClient) -> None:
     from datetime import UTC, datetime
     from uuid import uuid4
 
@@ -378,14 +378,14 @@ async def test_check_reports_the_last_run_error_class(client: httpx.AsyncClient)
             )
         )
 
-    body = (await client.post("/api/v1/providers/fixture/check")).json()
-    assert body["ok"] is False
+    body = (await client.get("/api/v1/providers/fixture/last-run")).json()
+    assert body["status"] == "failed"
     assert body["error_class"] == "auth"
     assert body["detail"] == "token rejected"
 
 
-async def test_check_on_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -> None:
-    assert (await client.post("/api/v1/providers/nope/check")).status_code == 404
+async def test_latest_run_on_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -> None:
+    assert (await client.get("/api/v1/providers/nope/last-run")).status_code == 404
 
 
 # --- Containment -------------------------------------------------------------------------------

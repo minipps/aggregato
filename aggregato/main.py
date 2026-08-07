@@ -43,6 +43,7 @@ from aggregato.api.routes import settings as settings_routes
 from aggregato.config import Config, load_config
 from aggregato.db.engine import create_engine
 from aggregato.db.migrate import upgrade_to_head
+from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.logging import configure_logging
 
 log = logging.getLogger(__name__)
@@ -50,7 +51,12 @@ log = logging.getLogger(__name__)
 API_PREFIX = "/api/v1"
 
 
-def create_app(config: Config | None = None, *, run_migrations: bool = True) -> FastAPI:
+def create_app(
+    config: Config | None = None,
+    *,
+    run_migrations: bool = True,
+    clock: Clock = SYSTEM_CLOCK,
+) -> FastAPI:
     """Build the application.
 
     Args:
@@ -58,6 +64,7 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
             test builds an app without touching the real environment.
         run_migrations: Whether to apply migrations on startup . Tests that build their
             own schema pass ``False``.
+        clock: Injectable UTC time source for request-side timestamps.
 
     Returns:
         A configured ``FastAPI`` app.
@@ -94,9 +101,11 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
         docs_url=f"{API_PREFIX}/docs",
         openapi_url=f"{API_PREFIX}/openapi.json",
     )
+    app.state.clock = clock
 
     register_error_handlers(app)
     register_auth(app, config=settings, engine=engine)
+    _add_security_headers(app)
     _mount_cors(app, settings)
 
     app.include_router(auth.router, prefix=API_PREFIX)
@@ -116,6 +125,27 @@ def create_app(config: Config | None = None, *, run_migrations: bool = True) -> 
 
     _mount_frontend(app, settings)
     return app
+
+
+def _add_security_headers(app: FastAPI) -> None:
+    """Set baseline browser isolation headers on API, SPA, and cached media responses."""
+
+    @app.middleware("http")
+    async def security_headers(request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; "
+            "img-src 'self' data:; connect-src 'self'; script-src 'self' 'unsafe-inline' "
+            "https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        )
+        return response
 
 
 def _mount_cors(app: FastAPI, settings: Config) -> None:

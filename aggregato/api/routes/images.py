@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
 from starlette.requests import Request
 
+from aggregato.api.clock import now as request_now
 from aggregato.db.retention import get_settings
 from aggregato.images.cache import cached_image
 
@@ -38,7 +39,11 @@ async def image(request: Request, hash: str) -> Response:
         return _placeholder()
     enabled = (await get_settings(request.app.state.engine))["image_cache_enabled"]
     found = await cached_image(
-        request.app.state.engine, request.app.state.config.data_dir, hash, enabled=enabled
+        request.app.state.engine,
+        request.app.state.config.data_dir,
+        hash,
+        enabled=enabled,
+        now=request_now(request),
     )
     if found is None:
         return _placeholder()

@@ -12,8 +12,8 @@ import { calendarWeeks, type HeatmapCell } from './heatmap'
 const period: StatsPeriod = 'day'
 const includeSubunits = ref(false)
 const summary = useRequest(() => statsSummary(period, includeSubunits.value))
-const works = useRequest(() => topStats('work', period, includeSubunits.value))
-const creators = useRequest(() => topStats('creator', period, includeSubunits.value))
+const works = useRequest(() => topStats('work', includeSubunits.value))
+const creators = useRequest(() => topStats('creator', includeSubunits.value))
 
 const mediaTypes = computed(() => Object.entries(summary.data.value?.by_media_type ?? {}))
 const providers = computed(() => Object.entries(summary.data.value?.by_provider ?? {}))

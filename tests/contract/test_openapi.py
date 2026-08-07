@@ -164,7 +164,7 @@ def test_phase_three_paths_are_present(served: dict[str, Any]) -> None:
         "/works/{id}",
         "/providers",
         "/providers/{id}/sync",
-        "/providers/{id}/check",
+        "/providers/{id}/last-run",
     } <= set(_served_paths(served))
 
 
