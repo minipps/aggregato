@@ -67,6 +67,7 @@ async def run(
     state: dict[str, str],
     import_path: Path | None,
     provider_dir: Path | None = None,
+    host_state_dir: Path | None = None,
     replay_records: list[RawRecord] | None = None,
 ) -> int:
     """Fetch and normalize one run's worth of records.
@@ -88,7 +89,7 @@ async def run(
     # Feeding it to the request limiter made a provider with two requests per run sleep for an hour
     # after its first request.  Providers without an explicit request-rate declaration use the
     # host-owned acquisition floor.
-    client = PoliteClient(_politeness_policy(provider))
+    client = PoliteClient(_politeness_policy(provider), host_state_dir=host_state_dir)
     ctx = ProviderContext(
         http=client,  # type: ignore[arg-type]  # PoliteClient is the wrapper the contract promises
         config=provider.config_model.model_validate(_with_secrets(config, secrets)),
@@ -212,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
             state=payload.get("state", {}),
             import_path=Path(import_path) if import_path else None,
             provider_dir=Path(payload["provider_dir"]) if payload.get("provider_dir") else None,
+            host_state_dir=Path(payload["host_state_dir"])
+            if payload.get("host_state_dir")
+            else None,
             replay_records=[
                 RawRecord.model_validate(record) for record in payload["replay_records"]
             ]

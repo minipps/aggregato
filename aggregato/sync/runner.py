@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -53,6 +54,9 @@ MAX_ARG_STRLEN = 128 * 1024
 #: Grace between SIGTERM and SIGKILL. A child mid-write gets a moment to finish its line; a child
 #: that is genuinely wedged does not get to ignore us.
 TERMINATE_GRACE_SECONDS = 5.0
+#: A descendant can keep a pipe open after the direct child exits. Never let stream cleanup defeat
+#: the wall-clock boundary.
+STDERR_CLEANUP_TIMEOUT_SECONDS = 1.0
 MAX_PAYLOAD_BYTES = 128 * 1024 * 1024
 MAX_REPLAY_RECORDS = 100_000
 MAX_STDOUT_BYTES = 64 * 1024 * 1024
@@ -93,6 +97,8 @@ class RunRequest:
     state: dict[str, str] = field(default_factory=dict)
     import_path: Path | None = None
     provider_dir: Path | None = None
+    #: Shared host pacing state stored outside the child so separately spawned runs coordinate.
+    host_state_dir: Path | None = None
     #: Stored raw records to normalize again after a provider schema-version bump.  This is kept
     #: separate from ``fetch`` so replay is credential-free and makes no network request .
     replay_records: list[RawRecord] = field(default_factory=list)
@@ -113,6 +119,7 @@ class RunRequest:
             "state": self.state,
             "import_path": str(self.import_path) if self.import_path else None,
             "provider_dir": str(self.provider_dir) if self.provider_dir else None,
+            "host_state_dir": str(self.host_state_dir) if self.host_state_dir else None,
         }
         if self.replay_records:
             payload["replay_records"] = [
@@ -140,17 +147,24 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
         scheduler loop .
     """
     del now  # documented above; kept out of the body so no clock is read here
+    spawn_options: dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "env": _child_environment(),
+        "limit": MAX_LINE_BYTES + 1,
+    }
+    if os.name == "posix":
+        # A provider may fork. Starting a session makes the child the process-group leader, so the
+        # supervisor can terminate the whole run rather than only the process it spawned.
+        spawn_options["start_new_session"] = True
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
         "aggregato.sync.child",
         "--provider",
         request.provider_id,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=_child_environment(),
-        limit=MAX_LINE_BYTES + 1,
+        **spawn_options,
     )
 
     outcome = RunOutcome(status=RunStatus.RUNNING)
@@ -178,15 +192,13 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
         outcome.error_message = str(exc)
         return outcome
     finally:
-        if process.returncode is None:
-            await _terminate(process)
+        await _terminate(process)
         if not consume_task.done():
             consume_task.cancel()
             with suppress(asyncio.CancelledError):
                 await consume_task
         if not stderr_task.done():
-            with suppress(asyncio.CancelledError):
-                await stderr_task
+            await _finish_stderr_task(stderr_task)
 
     stderr = stderr_task.result() if stderr_task.done() and not stderr_task.cancelled() else ""
     if stderr:
@@ -275,16 +287,63 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
-    """Stop a child that will not stop itself: SIGTERM, brief grace, then SIGKILL."""
-    if process.returncode is not None:
+    """Stop a child and its descendants: SIGTERM, brief grace, then SIGKILL."""
+    if os.name != "posix":
+        if process.returncode is None:
+            process.terminate()
+            try:
+                async with asyncio.timeout(TERMINATE_GRACE_SECONDS):
+                    await process.wait()
+            except TimeoutError:
+                process.kill()
+                await process.wait()
         return
-    process.terminate()
-    try:
-        async with asyncio.timeout(TERMINATE_GRACE_SECONDS):
-            await process.wait()
-    except TimeoutError:
-        process.kill()
+
+    if process.returncode is not None and not _process_group_exists(process.pid):
+        return
+
+    deadline = asyncio.get_running_loop().time() + TERMINATE_GRACE_SECONDS
+    _signal_process_group(process.pid, signal.SIGTERM)
+    if process.returncode is None:
+        try:
+            async with asyncio.timeout(TERMINATE_GRACE_SECONDS):
+                await process.wait()
+        except TimeoutError:
+            pass
+
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining > 0 and _process_group_exists(process.pid):
+        await asyncio.sleep(remaining)
+    if _process_group_exists(process.pid):
+        _signal_process_group(process.pid, signal.SIGKILL)
+    if process.returncode is None:
         await process.wait()
+
+
+def _process_group_exists(pid: int) -> bool:
+    """Return whether a POSIX process group still has members."""
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _signal_process_group(pid: int, sig: signal.Signals) -> None:
+    """Signal a child process group, tolerating a group that exited between checks."""
+    with suppress(ProcessLookupError):
+        os.killpg(pid, sig)
+
+
+async def _finish_stderr_task(task: asyncio.Task[str]) -> None:
+    """Collect stderr briefly, then cancel a reader whose pipe never reaches EOF."""
+    try:
+        async with asyncio.timeout(STDERR_CLEANUP_TIMEOUT_SECONDS):
+            await asyncio.shield(task)
+    except TimeoutError:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 async def _read_stderr(process: asyncio.subprocess.Process) -> str:

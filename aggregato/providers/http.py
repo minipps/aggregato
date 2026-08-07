@@ -23,13 +23,20 @@ client in ``ProviderContext.http`` and has no way to obtain an unwrapped one:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import math
+import os
 import random
+import tempfile
+import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from types import TracebackType
-from typing import cast
+from typing import BinaryIO, cast
 from weakref import WeakKeyDictionary
 
 import httpx
@@ -67,6 +74,9 @@ MAX_ATTEMPTS = 4
 MAX_SLEEP_SECONDS = 60.0
 MAX_REDIRECTS = 5
 _ALLOWED_REQUEST_KWARGS = frozenset({"params", "headers", "json", "content", "data"})
+_REDIRECT_CREDENTIAL_HEADERS = frozenset(
+    {"authorization", "proxy-authorization", "cookie", "cookie2"}
+)
 
 
 class RateLimiter:
@@ -111,6 +121,175 @@ _HOST_STATES: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple[str, int],
 )
 
 
+class _FileLock:
+    """A kernel-released exclusive lock held by one process or thread."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._handle: BinaryIO | None = None
+
+    def acquire(self, *, blocking: bool = True) -> None:
+        """Open and lock the file, closing it again if acquisition fails."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self._path.open("a+b")
+        try:
+            _lock_handle(handle, blocking=blocking)
+        except BaseException:
+            handle.close()
+            raise
+        self._handle = handle
+
+    def release(self) -> None:
+        """Release the kernel lock and close its descriptor."""
+        handle = self._handle
+        if handle is None:
+            return
+        self._handle = None
+        try:
+            _unlock_handle(handle)
+        finally:
+            handle.close()
+
+
+class ProcessHostState:
+    """Coordinate request reservations and scraper exclusivity across child processes.
+
+    The reservation clock is monotonic and the state is protected by a kernel file lock. A caller
+    reserves a future slot without holding that lock during the request itself. Scrapers acquire a
+    second per-host lock and hold its descriptor for the complete request, so a crashed process
+    releases exclusivity when the kernel closes its descriptors.
+    """
+
+    def __init__(self, directory: Path, *, clock: Callable[[], float] | None = None) -> None:
+        self._directory = directory
+        self._clock = clock or time.monotonic
+
+    def reserve(
+        self,
+        host: str,
+        min_interval_seconds: float,
+        *,
+        now: float | None = None,
+    ) -> float:
+        """Reserve the next host slot and return how long the caller must wait.
+
+        This synchronous method is intentionally small and deterministic when ``now`` is supplied;
+        the async wrapper used by :class:`PoliteClient` runs it in a worker thread so file locking
+        never blocks the event loop.
+        """
+        current = self._clock() if now is None else now
+        lock = _FileLock(self._reservation_lock_path(host))
+        lock.acquire()
+        try:
+            next_allowed = _read_next_allowed(self._state_path(host))
+            reserved_at = max(current, next_allowed)
+            _write_next_allowed(
+                self._state_path(host), reserved_at + max(0.0, min_interval_seconds)
+            )
+        finally:
+            lock.release()
+        return max(0.0, reserved_at - current)
+
+    async def reserve_async(self, host: str, min_interval_seconds: float) -> float:
+        """Reserve a slot without blocking the provider event loop on filesystem I/O."""
+        return await asyncio.to_thread(self.reserve, host, min_interval_seconds)
+
+    def acquire_scrape_lock(self, host: str, *, blocking: bool = True) -> _FileLock:
+        """Acquire the held per-host scraper lock.
+
+        ``blocking=False`` is useful for deterministic tests; production callers use the async
+        wrapper, which performs the blocking acquisition in a worker thread.
+        """
+        lock = _FileLock(self._scrape_lock_path(host))
+        lock.acquire(blocking=blocking)
+        return lock
+
+    async def acquire_scrape(self, host: str) -> _FileLock:
+        """Acquire scraper exclusivity without blocking the provider event loop."""
+        return await asyncio.to_thread(self.acquire_scrape_lock, host)
+
+    def _host_stem(self, host: str) -> str:
+        return hashlib.sha256(host.encode("utf-8")).hexdigest()
+
+    def _reservation_lock_path(self, host: str) -> Path:
+        return self._directory / f"{self._host_stem(host)}.reservation.lock"
+
+    def _scrape_lock_path(self, host: str) -> Path:
+        return self._directory / f"{self._host_stem(host)}.scrape.lock"
+
+    def _state_path(self, host: str) -> Path:
+        return self._directory / f"{self._host_stem(host)}.state"
+
+
+def _lock_handle(handle: BinaryIO, *, blocking: bool) -> None:
+    """Take an exclusive advisory lock using the platform's kernel primitive."""
+    if os.name == "posix":
+        import fcntl
+
+        operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        fcntl.flock(handle.fileno(), operation)
+        return
+
+    # The supported deployment is Linux, but keep the helper usable on Windows without adding a
+    # dependency. ``msvcrt`` locks one byte and releases it automatically when the descriptor
+    # closes.
+    msvcrt = __import__("msvcrt")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"\0")
+        handle.flush()
+    handle.seek(0)
+    operation = msvcrt.LK_NBLCK
+    while True:
+        try:
+            msvcrt.locking(handle.fileno(), operation, 1)
+        except OSError:
+            if not blocking:
+                raise
+            time.sleep(0.01)
+        else:
+            return
+
+
+def _unlock_handle(handle: BinaryIO) -> None:
+    """Release a lock taken by :func:`_lock_handle`."""
+    if os.name == "posix":
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+
+    msvcrt = __import__("msvcrt")
+    handle.seek(0)
+    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _read_next_allowed(path: Path) -> float:
+    """Read a reservation, treating a missing or interrupted state as empty."""
+    try:
+        value = float(path.read_text(encoding="ascii"))
+    except (FileNotFoundError, ValueError):
+        return 0.0
+    return value if math.isfinite(value) else 0.0
+
+
+def _write_next_allowed(path: Path, value: float) -> None:
+    """Atomically replace a reservation state while its per-host lock is held."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent, text=True
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+            handle.write(f"{value:.9f}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary_name)
+
+
 @dataclass(frozen=True)
 class PolitenessPolicy:
     """The resolved, un-overridable pacing for one provider's run.
@@ -147,11 +326,15 @@ class PoliteClient:
         policy: PolitenessPolicy,
         *,
         client: httpx.AsyncClient | None = None,
+        host_state_dir: Path | None = None,
         rng: random.Random | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._policy = policy
         self._limiter = RateLimiter(policy.effective_interval_seconds)
+        self._process_host_state = (
+            ProcessHostState(host_state_dir) if host_state_dir is not None else None
+        )
         # One semaphore per host, created on first sight. A single global semaphore would make a
         # slow platform throttle an unrelated one.
         self._host_locks: dict[str, asyncio.Semaphore] = {}
@@ -244,16 +427,34 @@ class PoliteClient:
                 state = self._host_state(target)
                 async with state.semaphore:
                     await state.limiter.acquire()
-                    try:
-                        response = await self._client.request(
-                            method,
-                            target,
-                            **request_kwargs,  # type: ignore[arg-type]
+                    if self._process_host_state is not None:
+                        wait = await self._process_host_state.reserve_async(
+                            target.host or "", self._policy.effective_interval_seconds
                         )
-                    except httpx.TransportError as exc:
-                        last_transport_error = exc
-                    else:
-                        last_transport_error = None
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                    scrape_lock: _FileLock | None = None
+                    try:
+                        if (
+                            self._process_host_state is not None
+                            and self._policy.acquisition is Acquisition.SCRAPE
+                        ):
+                            scrape_lock = await self._process_host_state.acquire_scrape(
+                                target.host or ""
+                            )
+                        try:
+                            response = await self._client.request(
+                                method,
+                                target,
+                                **request_kwargs,  # type: ignore[arg-type]
+                            )
+                        except httpx.TransportError as exc:
+                            last_transport_error = exc
+                        else:
+                            last_transport_error = None
+                    finally:
+                        if scrape_lock is not None:
+                            await asyncio.to_thread(scrape_lock.release)
                 if response is None:
                     if attempt == MAX_ATTEMPTS:
                         raise TransportError(
@@ -291,7 +492,11 @@ class PoliteClient:
             redirects += 1
             if redirects > MAX_REDIRECTS:
                 raise TransportError(f"{url} exceeded the {MAX_REDIRECTS}-redirect limit")
+            previous_target = target
             target = _validated_url(str(target.join(location)))
+            if not _same_origin(previous_target, target):
+                for header in _REDIRECT_CREDENTIAL_HEADERS:
+                    headers.pop(header, None)
             if response.status_code in {301, 302, 303} and method.upper() not in {"GET", "HEAD"}:
                 method = "GET"
                 request_kwargs = {
@@ -353,3 +558,8 @@ def _validated_url(value: str) -> httpx.URL:
     if target.scheme not in {"http", "https"} or not target.host:
         raise TransportError("host HTTP requests require an absolute http(s) URL")
     return target
+
+
+def _same_origin(left: httpx.URL, right: httpx.URL) -> bool:
+    """Return whether redirect credentials remain on the same scheme, host, and port."""
+    return left.scheme == right.scheme and left.host == right.host and left.port == right.port
