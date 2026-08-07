@@ -23,8 +23,6 @@ class MediaType(StrEnum):
     ALBUM = "album"
     TRACK = "track"
     GAME = "game"
-    PODCAST = "podcast"
-    PODCAST_EPISODE = "podcast_episode"
     OTHER = "other"
 
 

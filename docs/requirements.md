@@ -473,9 +473,8 @@ are not derivable from the requirements alone.
   duplicates where titles differ, and some genuinely unmatchable pairs. This is why manual curation
   quality (Product Journey 4) is load-bearing rather than optional.
 - **Items are modelled at the level a platform assigns identity and a rating to**, which differs by
-  medium: whole for films and books; series and season for episodic video; track and album for music;
-  episode for podcasts. Finer-grained activity is preserved as a reference within an entry, not as its
-  own item.
+  medium: whole for films and books; series and season for episodic video; track and album for music.
+  Finer-grained activity is preserved as a reference within an entry, not as its own item.
 - **Creator name matching is trusted only within a media domain**, while platform-supplied identifiers
   are trusted everywhere. The accepted cost is duplicate creators for people who work across domains,
   which the queue proactively suggests merging.

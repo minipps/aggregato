@@ -16,7 +16,7 @@ change with a migration.
 
 | Enum | Values |
 |---|---|
-| `media_type` | `film`, `tv`, `book`, `comic`, `manga`, `anime`, `album`, `track`, `game`, `podcast`, `podcast_episode`, `other` |
+| `media_type` | `film`, `tv`, `book`, `comic`, `manga`, `anime`, `album`, `track`, `game`, `other` |
 | `media_family` | `screen`, `print`, `audio`, `interactive`, `other` |
 | `entry_kind` | `watch`, `rewatch`, `listen`, `read`, `finish`, `progress`, `drop` |
 | `logged_precision` | `exact`, `day`, `month`, `year`, `unknown` |
@@ -36,7 +36,7 @@ change with a migration.
 
 **`media_type` → `media_family`** is a pure function in `domain/families.py`, not a stored column:
 `screen` = film, tv, anime · `print` = book, comic, manga ·
-`audio` = album, track, podcast, podcast_episode · `interactive` = game · `other` = other.
+`audio` = album, track · `interactive` = game · `other` = other.
 API `media_family` filters expand to a `media_type IN (…)` predicate .
 
 ---

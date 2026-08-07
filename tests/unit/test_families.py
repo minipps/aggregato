@@ -30,7 +30,6 @@ def test_every_media_type_maps_exactly_once() -> None:
         (MediaType.ANIME, MediaFamily.SCREEN),
         (MediaType.MANGA, MediaFamily.PRINT),
         (MediaType.TRACK, MediaFamily.AUDIO),
-        (MediaType.PODCAST_EPISODE, MediaFamily.AUDIO),
         (MediaType.GAME, MediaFamily.INTERACTIVE),
         (MediaType.OTHER, MediaFamily.OTHER),
     ],
@@ -47,6 +46,10 @@ def test_family_membership_round_trips() -> None:
 def test_types_in_families_expands_and_unions() -> None:
     expanded = types_in_families([MediaFamily.PRINT, MediaFamily.INTERACTIVE])
     assert expanded == {MediaType.BOOK, MediaType.COMIC, MediaType.MANGA, MediaType.GAME}
+
+
+def test_audio_family_contains_only_supported_media_types() -> None:
+    assert types_in_family(MediaFamily.AUDIO) == {MediaType.ALBUM, MediaType.TRACK}
 
 
 def test_types_in_families_of_nothing_is_empty() -> None:

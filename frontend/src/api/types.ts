@@ -16,8 +16,6 @@ export type MediaType =
   | 'album'
   | 'track'
   | 'game'
-  | 'podcast'
-  | 'podcast_episode'
   | 'other'
 
 export type MediaFamily = 'screen' | 'print' | 'audio' | 'interactive' | 'other'

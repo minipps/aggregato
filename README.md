@@ -3,7 +3,7 @@
 
 <img width="2524" height="1336" alt="Aggregato landing page" src="https://github.com/user-attachments/assets/4863cba9-3996-4b32-99a4-e6049eaa6d0a" />
 
-Aggregato pulls your media logs — films, series, books, comics, albums, games, podcasts — out of the
+Aggregato pulls your media logs — films, series, books, comics, albums, games — out of the
 platforms you already log them on and keeps them in one local database you own, browsable through one
 web UI.
 
