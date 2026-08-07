@@ -88,6 +88,52 @@ PY
 # is not the moment to move a dependency nobody reviewed.
 uv lock --quiet
 
+# Keep the release examples in step with the image that the release will publish. Each pattern is
+# deliberately narrow and must match exactly once: a missing match means an example drifted, while
+# a second match means the script would be leaving another release marker behind.
+python3 - "$version" <<'PY'
+import pathlib
+import re
+import sys
+
+new = sys.argv[1]
+semver = r"[0-9]+\.[0-9]+\.[0-9]+"
+updates = {
+    pathlib.Path("README.md"): (
+        ("published image version", rf"published `{semver}` image", f"published `{new}` image"),
+        (
+            "README image pin",
+            rf"AGGREGATO_VERSION={semver}",
+            f"AGGREGATO_VERSION={new}",
+        ),
+    ),
+    pathlib.Path("docker/compose.yml"): (
+        (
+            "Compose image pin comment",
+            rf"AGGREGATO_VERSION={semver}",
+            f"AGGREGATO_VERSION={new}",
+        ),
+        (
+            "Compose default image tag",
+            rf"\$\{{AGGREGATO_VERSION:-{semver}\}}",
+            f"${{AGGREGATO_VERSION:-{new}}}",
+        ),
+    ),
+}
+
+changed: dict[pathlib.Path, str] = {}
+for path, rules in updates.items():
+    text = path.read_text(encoding="utf-8")
+    for label, pattern, replacement in rules:
+        text, count = re.subn(pattern, replacement, text)
+        if count != 1:
+            sys.exit(f"release: expected one {label} in {path}, found {count}")
+    changed[path] = text
+
+for path, text in changed.items():
+    path.write_text(text, encoding="utf-8")
+PY
+
 # The release workflow's version gate, run here so a disagreement fails before the tag is public.
 python3 - "$version" <<'PY'
 import json
@@ -130,7 +176,7 @@ read -r reply
 case "$reply" in
     y | Y) ;;
     *)
-        git checkout -- pyproject.toml frontend/package.json frontend/package-lock.json uv.lock
+        git checkout -- README.md docker/compose.yml pyproject.toml frontend/package.json frontend/package-lock.json uv.lock
         echo "release: aborted, version files restored"
         exit 1
         ;;
