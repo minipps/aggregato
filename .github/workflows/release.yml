@@ -33,23 +33,31 @@ jobs:
         # public — one of the two being laxer is how a stale uv.lock reached v0.1.1.
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          python -c "
-          import json, pathlib, sys, tomllib
-          tag = '$tag'
-          project = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
-          frontend = json.loads(pathlib.Path('frontend/package.json').read_text())['version']
-          packages = tomllib.loads(pathlib.Path('uv.lock').read_text())['package']
-          locked = next(p['version'] for p in packages if p['name'] == 'aggregato')
+          python - "$tag" <<'PY'
+          import json
+          import pathlib
+          import sys
+          import tomllib
+
+          tag = sys.argv[1]
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
+          packages = tomllib.loads(pathlib.Path("uv.lock").read_text())["package"]
+          locked = next(p["version"] for p in packages if p["name"] == "aggregato")
           if {project, frontend, locked} != {tag}:
-              sys.exit(f'tag v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}')
+              sys.exit(
+                  f"tag v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}"
+              )
           expected_examples = {
-              pathlib.Path('README.md'): f'AGGREGATO_VERSION={tag}',
-              pathlib.Path('docker/compose.yml'): f'AGGREGATO_VERSION={tag}',
+              pathlib.Path("README.md"): f"AGGREGATO_VERSION={tag}",
+              pathlib.Path("docker/compose.yml"): f"AGGREGATO_VERSION={tag}",
           }
-          missing = [str(path) for path, marker in expected_examples.items() if marker not in path.read_text()]
+          missing = [
+              str(path) for path, marker in expected_examples.items() if marker not in path.read_text()
+          ]
           if missing:
-              sys.exit(f'release examples do not name v{tag}: {", ".join(missing)}')
-          "
+              sys.exit(f"release examples do not name v{tag}: {', '.join(missing)}")
+          PY
 
       - name: Build the release archive
         # `git archive` honours the export-ignore rules in .gitattributes, so this carries what is

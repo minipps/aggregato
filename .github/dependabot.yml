@@ -1,9 +1,10 @@
 version: 2
 updates:
-  # Dockerfile base images are exact tags, not moving aliases. Dependabot proposes reviewed
-  # updates so the image supply chain gets a bounded, visible refresh rather than silent drift.
+  # Dockerfile and Compose base images are exact tags plus digests. Dependabot proposes reviewed
+  # updates in the directory that contains them, so the image supply chain gets a bounded, visible
+  # refresh rather than silent drift.
   - package-ecosystem: docker
-    directory: "/"
+    directory: "/docker"
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
