@@ -102,7 +102,7 @@ jobs:
           password: ${{ github.token }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           # Lowercased by the action, which ghcr requires and a repository name does not guarantee.
           images: ghcr.io/${{ github.repository }}
