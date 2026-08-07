@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import socket
+import struct
 from contextlib import asynccontextmanager
 from datetime import datetime
 from hashlib import sha256
@@ -18,8 +20,81 @@ from aggregato.api.routes.images import _PLACEHOLDER, image
 from aggregato.images import cache as image_cache
 from aggregato.images.cache import cached_image, url_hash
 
-_PNG = b"\x89PNG\r\n\x1a\nfixture"
+_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 _PNG_HASH = sha256(_PNG).hexdigest()
+_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAABAAEDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q=="
+)
+_GIF = base64.b64decode("R0lGODlhAQABAPAAAP8AAAAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==")
+_WEBP = base64.b64decode(
+    "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAgA0JaACdLoB+AADsAD+8MQL/yC5YXXI1/8gP+QH/ID/+PIAAAA="
+)
+_BMP = (
+    b"BM"
+    + struct.pack("<IHHI", 58, 0, 0, 54)
+    + struct.pack("<IiiHHIIiiII", 40, 1, 1, 1, 24, 0, 4, 0, 0, 0, 0)
+    + b"\x00\x00\xff\x00"
+)
+_ICO = (
+    struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", 1, 1, 0, 0, 1, 32, len(_PNG), 22) + _PNG
+)
+
+
+def _make_tiff() -> bytes:
+    def entry(tag: int, value_type: int, value: int) -> bytes:
+        if value_type == 3:
+            raw = struct.pack("<H", value) + b"\x00\x00"
+        else:
+            raw = struct.pack("<I", value)
+        return struct.pack("<HHI", tag, value_type, 1) + raw
+
+    pixel_offset = 8 + 2 + 9 * 12 + 4
+    entries = b"".join(
+        [
+            entry(256, 3, 1),
+            entry(257, 3, 1),
+            entry(258, 3, 8),
+            entry(259, 3, 1),
+            entry(262, 3, 1),
+            entry(273, 4, pixel_offset),
+            entry(277, 3, 1),
+            entry(278, 4, 1),
+            entry(279, 4, 1),
+        ]
+    )
+    return (
+        b"II*\x00" + struct.pack("<I", 8) + struct.pack("<H", 9) + entries + b"\x00" * 4 + b"\x80"
+    )
+
+
+_TIFF = _make_tiff()
+
+
+def _box(box_type: bytes, payload: bytes) -> bytes:
+    return struct.pack(">I4s", len(payload) + 8, box_type) + payload
+
+
+_JP2 = (
+    b"\x00\x00\x00\x0cjP  \r\n\x87\n"
+    + _box(b"jp2h", _box(b"ihdr", struct.pack(">IIHBBBB", 1, 1, 3, 7, 7, 0, 0)))
+    + _box(b"jp2c", b"\xff\x4f")
+)
+
+
+def _make_isobmff(brand: bytes) -> bytes:
+    image_property = _box(b"ispe", b"\x00\x00\x00\x00" + struct.pack(">II", 1, 1))
+    properties = _box(b"ipco", image_property)
+    meta = _box(b"meta", b"\x00\x00\x00\x00" + _box(b"iprp", properties))
+    return _box(b"ftyp", brand + b"\x00\x00\x00\x00" + brand) + meta + _box(b"mdat", b"\x00")
+
+
+_AVIF = _make_isobmff(b"avif")
+_HEIC = _make_isobmff(b"heic")
 
 
 class _FakeResult:
@@ -155,16 +230,18 @@ async def test_redirect_target_is_validated_before_following(
     assert [str(request.url) for request in calls] == ["https://93.184.216.34/image.png"]
 
 
-async def test_dns_is_rechecked_for_the_connection_request(
+async def test_dns_address_is_pinned_for_the_connection_request(
     engine: _FakeDatabase, data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    results = iter(("93.184.216.34", "127.0.0.1"))
+    calls_to_resolver = 0
 
     def rebinding_result(
         host: str, port: int, *args: object, **kwargs: object
     ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        nonlocal calls_to_resolver
         del host, args, kwargs
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(results), port))]
+        calls_to_resolver += 1
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
 
     monkeypatch.setattr(socket, "getaddrinfo", rebinding_result)
     calls: list[httpx.Request] = []
@@ -172,7 +249,10 @@ async def test_dns_is_rechecked_for_the_connection_request(
     digest = await _register(engine, "https://image.example/image.png")
 
     assert await cached_image(engine, data_dir, digest) is None
-    assert calls == []
+    assert calls_to_resolver == 1
+    assert [str(request.url) for request in calls] == ["https://93.184.216.34/image.png"]
+    assert calls[0].headers["host"] == "image.example"
+    assert calls[0].extensions["sni_hostname"] == "image.example"
 
 
 @pytest.mark.parametrize(
@@ -181,9 +261,80 @@ async def test_dns_is_rechecked_for_the_connection_request(
         ("image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
         ("image/png", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
         ("image/png", b"not an image"),
+        ("image/png", _PNG[:8] + b"truncated"),
     ],
 )
 async def test_image_body_must_be_a_non_svg_known_format(
+    engine: _FakeDatabase,
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    content_type: str,
+    body: bytes,
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, request=request, headers={"content-type": content_type}, content=body
+        )
+
+    _mock_client(monkeypatch, respond)
+    digest = await _register(engine, "https://93.184.216.34/image.png")
+
+    assert await cached_image(engine, data_dir, digest) is None
+    assert list((data_dir / "images").rglob("*.tmp")) == []
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body"),
+    [
+        ("image/png", _PNG),
+        ("image/jpeg", _JPEG),
+        ("image/gif", _GIF),
+        ("image/webp", _WEBP),
+        ("image/bmp", _BMP),
+        ("image/tiff", _TIFF),
+        ("image/x-icon", _ICO),
+        ("image/jp2", _JP2),
+        ("image/avif", _AVIF),
+        ("image/heic", _HEIC),
+    ],
+)
+async def test_common_raster_formats_pass_structural_validation(
+    engine: _FakeDatabase,
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    content_type: str,
+    body: bytes,
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, request=request, headers={"content-type": content_type}, content=body
+        )
+
+    _mock_client(monkeypatch, respond)
+    digest = await _register(engine, "https://93.184.216.34/image.png")
+
+    result = await cached_image(engine, data_dir, digest)
+
+    assert result is not None
+    assert result[1] == content_type
+    assert result[0].read_bytes() == body
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body"),
+    [
+        ("image/jpeg", _JPEG[:-2]),
+        ("image/gif", _GIF[:-1]),
+        ("image/webp", _WEBP[:-1]),
+        ("image/bmp", _BMP[:-1]),
+        ("image/tiff", _TIFF[:-1]),
+        ("image/x-icon", _ICO[:-1]),
+        ("image/jp2", _JP2[:-1]),
+        ("image/avif", _AVIF[:-1]),
+        ("image/heic", _HEIC[:-1]),
+    ],
+)
+async def test_truncated_raster_formats_are_not_published(
     engine: _FakeDatabase,
     data_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
