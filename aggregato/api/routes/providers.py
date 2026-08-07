@@ -19,13 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import uuid
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
+from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from fastapi import APIRouter, Body, File, UploadFile
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.requests import Request
@@ -35,7 +39,7 @@ from aggregato.config import Config
 from aggregato.db.engine import transaction
 from aggregato.db.schema import import_jobs, provider_state, providers, sync_runs
 from aggregato.domain.enums import Acquisition, Capability, ErrorClass, MediaType, ProviderStatus
-from aggregato.providers.registry import ProviderInfo, discover_providers, load_provider
+from aggregato.providers.registry import ProviderInfo, discover_providers
 
 router = APIRouter(tags=["providers"])
 
@@ -82,6 +86,14 @@ class SyncQueued(BaseModel):
     """What ``POST /providers/{id}/sync`` returns: the lineage the attempts will share ."""
 
     lineage_id: uuid.UUID
+
+
+class SyncRequest(BaseModel):
+    """Validated body for a queued sync request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["incremental", "full"] = "incremental"
 
 
 MAX_IMPORT_BYTES = 50 * 1024 * 1024
@@ -149,8 +161,8 @@ async def provider_config_schema(request: Request, id: str) -> dict[str, Any]:
     ``writeOnly`` extras survive in the resulting JSON Schema without a host-maintained secret list.
     """
     config: Config = request.app.state.config
-    _require_installed(id, config.provider_dir)
-    return load_provider(id, config.provider_dir).config_model.model_json_schema()
+    info = _require_installed(id, config.provider_dir)
+    return deepcopy(info.config_schema)
 
 
 @router.put("/providers/{id}/config", response_model=ProviderView)
@@ -180,15 +192,14 @@ async def update_provider_config(
             detail=f"{id} is configured by the mounted YAML file and cannot be changed on the web.",
             type=error_type("provider-config-file-pinned"),
         )
-    try:
-        load_provider(id, config.provider_dir).config_model.model_validate(body)
-    except ValidationError as exc:
+    errors = _validate_settings(info.config_schema, body)
+    if errors:
         raise ProblemError(
             status=422,
             title="Provider configuration is invalid",
-            detail="; ".join(error["msg"] for error in exc.errors()),
+            detail="; ".join(errors),
             type=error_type("provider-config-invalid"),
-        ) from exc
+        )
 
     now = datetime.now(UTC)
     async with transaction(engine) as conn:
@@ -233,7 +244,7 @@ async def sync_now(
     id: str,
     # Annotated rather than `= Body(...)`: a call in a default is ruff's B008, and this is
     # FastAPI's own current recommendation anyway.
-    body: Annotated[dict[str, Any] | None, Body()] = None,
+    body: Annotated[SyncRequest | None, Body()] = None,
 ) -> SyncQueued:
     """Queue a run now by making the provider due.
 
@@ -261,14 +272,7 @@ async def sync_now(
     engine: AsyncEngine = request.app.state.engine
     config: Config = request.app.state.config
     _require_installed(id, config.provider_dir)
-    mode = (body or {}).get("mode", "incremental")
-    if mode not in {"incremental", "full"}:
-        raise ProblemError(
-            status=422,
-            title="Unknown sync mode",
-            detail=f"mode must be 'incremental' or 'full', got {mode!r}",
-            type=error_type("invalid-sync-mode"),
-        )
+    mode = (body or SyncRequest()).mode
 
     now = datetime.now(UTC)
     lineage = uuid.uuid4()
@@ -392,9 +396,8 @@ async def import_file(
         )
 
     path = await _store_import(config.data_dir, id, file)
-    provider = load_provider(id, config.provider_dir)
     inferred_settings = await _settings_inferred_from_import(
-        provider,
+        info,
         path,
         enabled=not any(setting.startswith(f"providers.{id}.") for setting in config.file_pinned),
     )
@@ -469,23 +472,38 @@ async def _store_import(data_dir: Path, provider_id: str, upload: UploadFile) ->
 
 
 async def _settings_inferred_from_import(
-    provider: object, path: Path, *, enabled: bool
+    info: ProviderInfo, path: Path, *, enabled: bool
 ) -> dict[str, object]:
-    """Ask a provider with import metadata support for non-secret settings it can discover.
+    """Run a host-owned, manifest-selected metadata parser.
 
-    Import parsing remains worker-owned. This best-effort metadata step exists solely for optional
-    settings, such as a public feed's account name, and never rejects an otherwise valid upload.
-    File-pinned settings remain authoritative and are never copied into the database.
+    This best-effort step exists solely for optional settings, such as a public feed's account name.
+    It never imports or calls provider code. File-pinned settings remain authoritative and are never
+    copied into the database.
     """
-    infer = getattr(provider, "config_from_import", None)
-    if not enabled or not callable(infer):
+    if not enabled or info.import_inference != "letterboxd_rss_username":
         return {}
     try:
         payload = await asyncio.to_thread(path.read_bytes)
-        settings = infer(payload)
-    except (OSError, ValueError):
+        settings = _infer_letterboxd_username(payload)
+    except (OSError, ET.ParseError):
         return {}
-    return dict(settings) if isinstance(settings, dict) else {}
+    return {"username": settings} if settings is not None else {}
+
+
+def _infer_letterboxd_username(payload: bytes) -> str | None:
+    """Read only the public account link from a Letterboxd RSS export."""
+    root = ET.fromstring(payload)
+    link = root.findtext("./channel/link")
+    if not isinstance(link, str) or not link:
+        return None
+    parsed = urlsplit(link.strip())
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+        "letterboxd.com",
+        "www.letterboxd.com",
+    }:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    return parts[0] if len(parts) == 1 and re.fullmatch(r"[A-Za-z0-9_]+", parts[0]) else None
 
 
 # --- internals ---------------------------------------------------------------------------------
@@ -536,9 +554,7 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
     if settings is None:
         fallback = config.providers.get(info.id)
         settings = fallback.settings if fallback is not None else {}
-    current_settings = _public_settings(
-        load_provider(info.id, config.provider_dir).config_model, settings
-    )
+    current_settings = _public_settings(info.config_schema, settings)
 
     if row is None:
         # Discovered but never enabled: the fresh-install state, and not an error.
@@ -575,7 +591,7 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
     )
 
 
-def _public_settings(model: type[BaseModel], settings: dict[str, Any]) -> dict[str, Any]:
+def _legacy_public_settings(model: type[BaseModel], settings: dict[str, Any]) -> dict[str, Any]:
     """Return only configuration values that are explicitly safe to send to the browser.
 
     Provider settings can contain credentials.  The provider-owned JSON Schema is the authority:
@@ -621,6 +637,151 @@ def _is_sensitive_setting(name: str, schema: dict[str, Any]) -> bool:
         or schema.get("format") == "password"
         or normalized in sensitive_names
     )
+
+
+def _public_settings(schema: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """Project settings through the manifest schema without exposing secret descendants."""
+    public: dict[str, Any] = {}
+    properties = _schema_properties(schema, schema)
+    for key, value in settings.items():
+        node = properties.get(key)
+        if not isinstance(node, dict) or _schema_is_sensitive(key, node, schema):
+            continue
+        public[key] = _public_schema_value(value, node, schema)
+    return public
+
+
+def _public_schema_value(value: Any, node: dict[str, Any], root: dict[str, Any]) -> Any:
+    variants = _schema_variants(node, root)
+    if isinstance(value, dict):
+        properties: dict[str, dict[str, Any]] = {}
+        for variant in variants:
+            properties.update(_schema_properties(variant, root))
+        return {
+            key: _public_schema_value(child, child_schema, root)
+            for key, child in value.items()
+            if isinstance(key, str)
+            and isinstance(child_schema := properties.get(key), dict)
+            and not _schema_is_sensitive(key, child_schema, root)
+        }
+    if isinstance(value, list):
+        item_schema = next(
+            (
+                variant.get("items")
+                for variant in variants
+                if isinstance(variant.get("items"), dict)
+            ),
+            None,
+        )
+        if isinstance(item_schema, dict):
+            return [_public_schema_value(item, item_schema, root) for item in value]
+    return value
+
+
+def _schema_is_sensitive(name: str, node: dict[str, Any], root: dict[str, Any]) -> bool:
+    normalized = name.lower().replace("-", "_")
+    sensitive_names = {
+        "access_token",
+        "api_key",
+        "apikey",
+        "client_secret",
+        "credential",
+        "key",
+        "password",
+        "private_key",
+        "secret",
+        "session_cookie",
+        "token",
+    }
+    return normalized in sensitive_names or any(
+        bool(variant.get("writeOnly")) or variant.get("format") == "password"
+        for variant in _schema_variants(node, root)
+    )
+
+
+def _schema_variants(node: dict[str, Any], root: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(ref := node.get("$ref"), str) and ref.startswith("#/"):
+        resolved: Any = root
+        for part in ref[2:].split("/"):
+            if not isinstance(resolved, dict):
+                return []
+            resolved = resolved.get(part.replace("~1", "/").replace("~0", "~"))
+        return _schema_variants(resolved, root) if isinstance(resolved, dict) else []
+    variants = [node]
+    for key in ("anyOf", "oneOf", "allOf"):
+        for child in node.get(key, []):
+            if isinstance(child, dict):
+                variants.extend(_schema_variants(child, root))
+    return variants
+
+
+def _schema_properties(node: dict[str, Any], root: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    properties: dict[str, dict[str, Any]] = {}
+    for variant in _schema_variants(node, root):
+        value = variant.get("properties")
+        if isinstance(value, dict):
+            properties.update(
+                {key: child for key, child in value.items() if isinstance(child, dict)}
+            )
+    return properties
+
+
+def _validate_settings(schema: dict[str, Any], value: object) -> list[str]:
+    """Validate the manifest subset needed by the API without importing provider code."""
+    errors = _validate_schema_node(value, schema, schema, path="settings")
+    return errors
+
+
+def _validate_schema_node(
+    value: object, node: dict[str, Any], root: dict[str, Any], *, path: str
+) -> list[str]:
+    variants = _schema_variants(node, root)
+    if len(variants) > 1 and ("anyOf" in node or "oneOf" in node):
+        if any(not _validate_schema_node(value, variant, root, path=path) for variant in variants):
+            return []
+        return [f"{path} does not match the provider schema"]
+    for variant in variants:
+        if "allOf" in variant:
+            nested = [
+                _validate_schema_node(value, child, root, path=path)
+                for child in variant.get("allOf", [])
+                if isinstance(child, dict)
+            ]
+            if any(nested):
+                return [error for errors in nested for error in errors]
+    expected = node.get("type")
+    if expected == "object":
+        if not isinstance(value, dict):
+            return [f"{path} must be an object"]
+        properties = _schema_properties(node, root)
+        required = {
+            item
+            for variant in variants
+            for item in variant.get("required", [])
+            if isinstance(item, str)
+        }
+        errors = [f"{path}.{key} is required" for key in sorted(required) if key not in value]
+        if any(variant.get("additionalProperties") is False for variant in variants):
+            errors.extend(
+                f"{path}.{key} is not a recognized setting"
+                for key in value
+                if key not in properties
+            )
+        for key, child in value.items():
+            if isinstance(key, str) and isinstance(child_schema := properties.get(key), dict):
+                errors.extend(
+                    _validate_schema_node(child, child_schema, root, path=f"{path}.{key}")
+                )
+        return errors
+    if expected == "string":
+        if not isinstance(value, str):
+            return [f"{path} must be a string"]
+        minimum = node.get("minLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return [f"{path} must contain at least {minimum} characters"]
+    elif expected == "null" and value is not None:
+        return [f"{path} must be null"]
+    return []
 
 
 def _aware(value: datetime | None) -> datetime | None:

@@ -91,7 +91,7 @@ async def run(
     client = PoliteClient(_politeness_policy(provider))
     ctx = ProviderContext(
         http=client,  # type: ignore[arg-type]  # PoliteClient is the wrapper the contract promises
-        config=provider.config_model.model_validate(config),
+        config=provider.config_model.model_validate(_with_secrets(config, secrets)),
         secrets=secrets,
         log=log,
         state=state,
@@ -157,6 +157,22 @@ def _emit_normalized(provider: Any, record: RawRecord) -> None:
         )
         return
     emit(BatchMessage(raw=record, batch=batch))
+
+
+def _with_secrets(config: dict[str, Any], secrets: dict[str, str]) -> dict[str, Any]:
+    """Reconstitute secret fields inside the selected provider's validated config."""
+    merged = dict(config)
+    for path, value in secrets.items():
+        node = merged
+        parts = path.split(".")
+        for part in parts[:-1]:
+            child = node.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                node[part] = child
+            node = child
+        node[parts[-1]] = value
+    return merged
 
 
 def _tail(text: str, limit: int = 4000) -> str:

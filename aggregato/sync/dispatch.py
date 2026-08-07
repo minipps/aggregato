@@ -49,7 +49,7 @@ from aggregato.ingest.failures import capture_failure
 from aggregato.ingest.normalize_replay import records_needing_replay, tombstone_replay_derivatives
 from aggregato.ingest.resolve_queue import supersede_stale_open_items
 from aggregato.ingest.writer import WriteContext, ensure_rating_scales, infer_deletes, write_batches
-from aggregato.providers.registry import load_provider
+from aggregato.providers.registry import ProviderInfo, discover_providers
 from aggregato.sync.errors import action_required, schedules_retry
 from aggregato.sync.retry import plan_after_failure, plan_after_success
 from aggregato.sync.runner import RunOutcome, RunRequest, execute_run
@@ -168,6 +168,87 @@ async def _provider_settings(
     return dict(fallback.settings) if fallback is not None else {}
 
 
+def _provider_info(provider_id: str, provider_dir: Path | None) -> ProviderInfo:
+    for info in discover_providers(provider_dir):
+        if info.id == provider_id:
+            return info
+    raise LookupError(f"no provider with id {provider_id!r} is installed")
+
+
+def _public_provider_settings(
+    schema: dict[str, object], settings: dict[str, object]
+) -> dict[str, object]:
+    public, _ = _split_provider_settings(schema, settings)
+    return public
+
+
+def _secret_provider_settings(
+    schema: dict[str, object], settings: dict[str, object]
+) -> dict[str, str]:
+    _, secrets = _split_provider_settings(schema, settings)
+    return secrets
+
+
+def _split_provider_settings(
+    schema: dict[str, object], settings: dict[str, object], prefix: str = ""
+) -> tuple[dict[str, object], dict[str, str]]:
+    properties = _schema_properties(schema)
+    public: dict[str, object] = {}
+    secrets: dict[str, str] = {}
+    for key, value in settings.items():
+        node = properties.get(key, {})
+        path = f"{prefix}.{key}" if prefix else key
+        if _schema_secret(key, node):
+            secrets[path] = str(value)
+        elif isinstance(value, dict) and isinstance(node, dict):
+            nested_public, nested_secrets = _split_provider_settings(node, value, path)
+            public[key] = nested_public
+            secrets.update(nested_secrets)
+        else:
+            public[key] = value
+    return public, secrets
+
+
+def _schema_properties(schema: dict[str, object]) -> dict[str, dict[str, object]]:
+    properties: dict[str, dict[str, object]] = {}
+    for candidate in _schema_variants(schema):
+        value = candidate.get("properties")
+        if isinstance(value, dict):
+            properties.update(
+                {key: child for key, child in value.items() if isinstance(child, dict)}
+            )
+    return properties
+
+
+def _schema_variants(schema: dict[str, object]) -> list[dict[str, object]]:
+    variants = [schema]
+    for key in ("anyOf", "oneOf", "allOf"):
+        value = schema.get(key)
+        if isinstance(value, list):
+            variants.extend(child for child in value if isinstance(child, dict))
+    return variants
+
+
+def _schema_secret(name: str, schema: dict[str, object]) -> bool:
+    normalized = name.lower().replace("-", "_")
+    return normalized in {
+        "access_token",
+        "api_key",
+        "apikey",
+        "client_secret",
+        "credential",
+        "key",
+        "password",
+        "private_key",
+        "secret",
+        "session_cookie",
+        "token",
+    } or any(
+        bool(candidate.get("writeOnly")) or candidate.get("format") == "password"
+        for candidate in _schema_variants(schema)
+    )
+
+
 async def run_once(
     engine: AsyncEngine,
     config: Config,
@@ -202,7 +283,7 @@ async def run_once(
         The run's outcome, already persisted.
     """
     now = clock.now()
-    provider = load_provider(provider_id, config.provider_dir)
+    provider = _provider_info(provider_id, config.provider_dir)
     provider_settings = await _provider_settings(engine, config, provider_id)
     lineage = lineage_id or uuid.uuid4()
     attempt = retry_step + 1
@@ -218,7 +299,7 @@ async def run_once(
     )
 
     replay_records = await records_needing_replay(
-        engine, provider_id=provider_id, schema_version=int(getattr(provider, "schema_version", 1))
+        engine, provider_id=provider_id, schema_version=provider.schema_version
     )
     replay_outcome: RunOutcome | None = None
     if replay_records:
@@ -226,8 +307,8 @@ async def run_once(
             RunRequest(
                 provider_id=provider_id,
                 mode=mode,
-                config=provider_settings,
-                secrets={},
+                config=_public_provider_settings(provider.config_schema, provider_settings),
+                secrets=_secret_provider_settings(provider.config_schema, provider_settings),
                 provider_dir=config.provider_dir,
                 replay_records=replay_records,
             )
@@ -245,11 +326,8 @@ async def run_once(
             provider_id=provider_id,
             mode=mode,
             cursor=cursor,
-            config=provider_settings,
-            # `secrets` stays empty: config.py resolves ${VAR} references into `settings` at read
-            # time (research.md ), so a provider's credentials already arrive inside its own
-            # validated config block. A second channel would be two places to leak from.
-            secrets={},
+            config=_public_provider_settings(provider.config_schema, provider_settings),
+            secrets=_secret_provider_settings(provider.config_schema, provider_settings),
             import_path=import_path,
             provider_dir=config.provider_dir,
         )
@@ -273,7 +351,7 @@ async def run_once(
         await _record_provider_schema_version(
             engine,
             provider_id=provider_id,
-            schema_version=int(getattr(provider, "schema_version", 1)),
+            schema_version=provider.schema_version,
             now=now,
         )
     sanity_passed = await _apply_full_run_guards(
@@ -342,7 +420,7 @@ async def _open_run(
 
 async def _ingest(
     engine: AsyncEngine,
-    provider: object,
+    provider: ProviderInfo,
     outcome: RunOutcome,
     *,
     provider_id: str,
@@ -354,7 +432,7 @@ async def _ingest(
     Called even when the run failed: records that arrived and validated are real, and throwing them
     away would turn a mid-run failure into data loss rather than a partial success .
     """
-    scales = list(getattr(provider, "rating_scales", []))
+    scales = list(provider.rating_scales)
     async with transaction(engine) as conn:
         await ensure_rating_scales(conn, scales)
         counts = await write_batches(
@@ -362,7 +440,7 @@ async def _ingest(
             WriteContext(
                 provider_id=provider_id,
                 sync_run_id=run_id,
-                schema_version=int(getattr(provider, "schema_version", 1)),
+                schema_version=provider.schema_version,
                 now=now,
                 rating_scales={scale.id: scale for scale in scales},
             ),
@@ -491,7 +569,7 @@ async def _reschedule(
 async def _apply_full_run_guards(
     engine: AsyncEngine,
     *,
-    provider: object,
+    provider: ProviderInfo,
     provider_id: str,
     mode: FetchMode,
     outcome: RunOutcome,
@@ -533,10 +611,10 @@ async def _apply_full_run_guards(
             refreshed_at=run_started_at,
             now=run_started_at,
         )
-        capabilities = set(getattr(provider, "capabilities", set()))
+        capabilities = set(provider.capabilities)
         if (
             bool(config.get("infer_deletes", False))
-            and Capability.REPORTS_DELETES not in capabilities
+            and Capability.REPORTS_DELETES.value not in capabilities
         ):
             await infer_deletes(conn, provider_id=provider_id, seen_since=run_started_at)
         return True

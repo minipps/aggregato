@@ -30,8 +30,11 @@ UI labels them — that directory scan is a later task  and deliberately absent 
 
 from __future__ import annotations
 
+import ast
+import copy
 import importlib
 import importlib.util
+import json
 import pkgutil
 import sys
 import warnings
@@ -39,8 +42,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 from .base import Provider
+from .manifest import BUNDLED_MANIFESTS
 
 #: This module's own directory, which is the provider tree. Derived from __file__ rather than by
 #: importing the package into itself, which is a cycle waiting to bite during interpreter startup.
@@ -73,14 +78,21 @@ class ProviderInfo:
     and warns about on the enable action ."""
     api_visible: bool
     """Whether the provider should be advertised by the operator-facing API."""
+    config_schema: dict[str, Any]
+    """Static settings schema; reading it never imports provider code."""
+    rating_scales: tuple[Any, ...]
+    """Host-owned rating declarations used by parent-side validation and writing."""
+    import_inference: str | None
+    """Name of a host-owned import metadata parser, never a provider callback."""
 
 
 def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
-    """List the provider packages bundled in this tree.
+    """List installed providers using static manifests only.
 
-    Imports each provider package to read its declared metadata — which is safe precisely because
-    convention 4 forbids import-time work. Nothing is fetched, nothing is enabled and no network
-    connection is opened .
+    A provider package is extension code, not metadata. Discovery therefore reads host-owned
+    bundled manifests or a drop-in's manifest.json and never imports __init__.py. A legacy
+    drop-in without a manifest is listed with conservative metadata for compatibility, but remains
+    unreviewed and is imported only if an operator selects it for a child run.
 
     Returns:
         One ``ProviderInfo`` per bundled provider, sorted by ``id`` so the UI order is stable.
@@ -117,6 +129,10 @@ def load_provider(provider_id: str, drop_in_dir: Path | None = None) -> Provider
     """
     for info in discover_providers(drop_in_dir):
         if info.id == provider_id:
+            if info.module.startswith(f"{_DROPIN_NAMESPACE}."):
+                if drop_in_dir is None:
+                    raise LookupError(f"no provider with id {provider_id!r} is installed")
+                _drop_in_module_path(drop_in_dir / provider_id)
             return _provider_object(info.module, provider_id)
     raise LookupError(f"no provider with id {provider_id!r} is installed")
 
@@ -159,31 +175,53 @@ def _drop_in_package_paths(drop_in_dir: Path | None) -> list[Path]:
 
 
 def _drop_in_info(path: Path) -> ProviderInfo:
-    provider = _provider_object(_drop_in_module_path(path), path.name)
-    declared_version = getattr(sys.modules[_drop_in_module_path(path)], "provider_api_version", 1)
+    manifest_path = path / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"invalid drop-in provider manifest: {manifest_path}") from exc
+        return _manifest_info(
+            raw,
+            provider_id=path.name,
+            module=_drop_in_module_name(path),
+            reviewed=False,
+        )
+
+    # Keep old tutorial packages discoverable, but obtain only literal metadata from their source.
+    # Executing a package here would put arbitrary drop-in code in the API.
+    declared_version = _literal_module_value(path / "__init__.py", "provider_api_version", 1)
     if declared_version != PROVIDER_API_VERSION:
         warnings.warn(
-            f"drop-in provider {provider.id!r} declares provider API {declared_version!r}; "
+            f"drop-in provider {path.name!r} declares provider API {declared_version!r}; "
             f"this host implements {PROVIDER_API_VERSION}. It may be incompatible.",
             stacklevel=2,
         )
     return ProviderInfo(
-        id=provider.id,
-        name=provider.name,
-        module=_drop_in_module_path(path),
-        media_types=frozenset(str(m) for m in provider.media_types),
-        capabilities=frozenset(str(c) for c in provider.capabilities),
-        acquisition=str(provider.acquisition),
-        schema_version=provider.schema_version,
-        default_poll_interval=provider.default_poll_interval,
+        id=path.name,
+        name=path.name,
+        module=_drop_in_module_name(path),
+        media_types=frozenset(),
+        capabilities=frozenset(),
+        acquisition="export",
+        schema_version=1,
+        default_poll_interval=timedelta(hours=1),
         reviewed=False,
-        api_visible=bool(getattr(sys.modules[_drop_in_module_path(path)], "api_visible", True)),
+        api_visible=True,
+        config_schema={"type": "object", "properties": {}, "additionalProperties": True},
+        rating_scales=(),
+        import_inference=None,
     )
+
+
+def _drop_in_module_name(path: Path) -> str:
+    """Return a drop-in module name without importing the package."""
+    return f"{_DROPIN_NAMESPACE}.{path.name}"
 
 
 def _drop_in_module_path(path: Path) -> str:
     """Load a package under a host-owned namespace without putting its directory on ``sys.path``."""
-    module_path = f"{_DROPIN_NAMESPACE}.{path.name}"
+    module_path = _drop_in_module_name(path)
     if module_path in sys.modules:
         return module_path
     namespace = sys.modules.get(_DROPIN_NAMESPACE)
@@ -208,22 +246,87 @@ def _drop_in_module_path(path: Path) -> str:
 
 def _info(package_name: str, *, reviewed: bool) -> ProviderInfo:
     module_path = f"{__package__}.{package_name}"
-    module = importlib.import_module(module_path)
-    provider = _provider_object(module_path, package_name)
+    try:
+        raw = BUNDLED_MANIFESTS[package_name]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"bundled provider {package_name!r} has no static manifest; add it to "
+            "aggregato/providers/manifest.py"
+        ) from exc
+    return _manifest_info(raw, provider_id=package_name, module=module_path, reviewed=reviewed)
+
+
+def _manifest_info(raw: object, *, provider_id: str, module: str, reviewed: bool) -> ProviderInfo:
+    """Validate and convert a JSON/static manifest without executing extension code."""
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"provider manifest for {provider_id!r} must be an object")
+    required = {
+        "name",
+        "media_types",
+        "capabilities",
+        "acquisition",
+        "schema_version",
+        "default_poll_interval_seconds",
+        "config_schema",
+    }
+    if not required <= raw.keys():
+        missing = ", ".join(sorted(required - raw.keys()))
+        raise RuntimeError(f"provider manifest for {provider_id!r} is missing: {missing}")
+    if not isinstance(raw["name"], str) or not raw["name"]:
+        raise RuntimeError(f"provider manifest for {provider_id!r} has an invalid name")
+    if not isinstance(raw["media_types"], (list, tuple)) or not all(
+        isinstance(value, str) for value in raw["media_types"]
+    ):
+        raise RuntimeError(f"provider manifest for {provider_id!r} has invalid media_types")
+    if not isinstance(raw["capabilities"], (list, tuple)) or not all(
+        isinstance(value, str) for value in raw["capabilities"]
+    ):
+        raise RuntimeError(f"provider manifest for {provider_id!r} has invalid capabilities")
+    if not isinstance(raw["config_schema"], dict):
+        raise RuntimeError(f"provider manifest for {provider_id!r} has an invalid config_schema")
+    interval = raw["default_poll_interval_seconds"]
+    version = raw["schema_version"]
+    if (
+        not isinstance(interval, int)
+        or interval <= 0
+        or not isinstance(version, int)
+        or version < 1
+    ):
+        raise RuntimeError(f"provider manifest for {provider_id!r} has invalid scheduling metadata")
     return ProviderInfo(
-        id=provider.id,
-        name=provider.name,
-        module=module_path,
-        # Enum members stringify to their values (StrEnum), and ProviderInfo is pure declared
-        # metadata that the API serializes — so it carries the wire strings, not the enum types.
-        media_types=frozenset(str(m) for m in provider.media_types),
-        capabilities=frozenset(str(c) for c in provider.capabilities),
-        acquisition=str(provider.acquisition),
-        schema_version=provider.schema_version,
-        default_poll_interval=provider.default_poll_interval,
+        id=provider_id,
+        name=raw["name"],
+        module=module,
+        media_types=frozenset(raw["media_types"]),
+        capabilities=frozenset(raw["capabilities"]),
+        acquisition=str(raw["acquisition"]),
+        schema_version=version,
+        default_poll_interval=timedelta(seconds=interval),
         reviewed=reviewed,
-        api_visible=bool(getattr(module, "api_visible", True)),
+        api_visible=bool(raw.get("api_visible", True)),
+        config_schema=copy.deepcopy(raw["config_schema"]),
+        rating_scales=tuple(raw.get("rating_scales", ())),
+        import_inference=(
+            raw.get("import_inference") if isinstance(raw.get("import_inference"), str) else None
+        ),
     )
+
+
+def _literal_module_value(path: Path, name: str, default: int) -> int:
+    """Read one integer assignment from a legacy drop-in without executing it."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        raise RuntimeError(f"cannot read drop-in provider metadata: {path}") from exc
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                value = node.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, int):
+                    return value.value
+                raise RuntimeError(f"drop-in metadata {name} must be a literal integer: {path}")
+    return default
 
 
 def _provider_object(module_path: str, expected_id: str) -> Provider:
