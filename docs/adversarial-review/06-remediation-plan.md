@@ -4,6 +4,40 @@ This plan is ordered by blast radius and by the number of guarantees each change
 start with documentation cleanup while the provider capability boundary and deletion safety remain
 broken.
 
+## Follow-up audit — 2026-08-07
+
+The checklist and closure ledger below are the original remediation record, not a current proof that
+every finding is closed. The current scoped evidence is:
+
+- `scripts/postgres_smoke.py` now creates a temporary PostgreSQL database, migrates it to revision
+  `0013`, seeds provider state plus a retained work/external-ID row, upgrades to head, and verifies
+  those rows survive. It then starts two upgrades against the ordinary empty database, races two
+  scheduler claims, checks release/retry state, writes/searches a valid record, races two no-native-ID
+  writers, and proves a late invalid rating leaves no provider item, work, or entry behind. The CI
+  PostgreSQL job invokes this script with a ten-minute timeout.
+- The CI workflow now has a working non-benchmark collection guard, a separate benchmark job, and
+  bounded Python and PostgreSQL jobs. The smoke source is covered locally by Ruff and isolated mypy,
+  and the full smoke passed against a disposable local PostgreSQL 15 container; CI remains the
+  execution evidence against the pinned PostgreSQL 16 service.
+
+Remaining evidence or drift in this scope:
+
+- The previous-revision check creates and drops a temporary database, so the CI service account must
+  have `CREATEDB` and `DROP DATABASE` privileges. The disposable local run passed; CI remains the
+  execution evidence against PostgreSQL 16.
+- The release workflow and `scripts/release.sh` both require the literal
+  `AGGREGATO_VERSION=<tag>` marker in `README.md` and `docker/compose.yml`; the current `0.1.5`
+  examples match the checked-in project/frontend/lock versions.
+- Docker build inputs and the PostgreSQL CI service now pin exact tags plus immutable manifest
+  digests. Dependabot proposes reviewed refreshes, and release CI publishes an SBOM/provenance
+  attestation and verifies it against the release workflow identity.
+- Replay/native-ID OpenAPI contract work is covered by `tests/contract/test_openapi.py`: replay is
+  documented as a queued `202` worker job and the retained failure identity is exposed in the
+  contract and frontend type.
+- `00-index.md` and `quickstart-validation.md` contain dated review counts; they are now explicitly
+  labeled historical records rather than current CI evidence. `validation.md` now mirrors CI's
+  separate non-benchmark and benchmark commands.
+
 ## Scoped documentation/CI pass — 2026-08-07
 
 - [x] M-01 — synchronize release examples and add the release-version check.
@@ -21,10 +55,11 @@ broken.
 - [x] M-11 — document API/operator limits and asynchronous behavior, and expose the latest-run
   loading/error state through the frontend.
 
-## Closure ledger — 2026-08-07
+## Closure ledger — 2026-08-07 (historical checklist)
 
-Every finding in the review is now covered by an implementation change and a regression or contract
-check. The detailed finding text above remains the rationale; this is the execution checklist.
+The original pass recorded the following implementation and regression/contract claims. The
+detailed finding text remains the rationale; the follow-up audit above supersedes any blanket
+closure reading where current evidence is missing.
 
 - [x] S-01–S-08 — static provider manifests, selected-child loading, minimal child environment,
   worker-owned replay/import work, bounded image and child streams, import lifecycle controls,
@@ -93,7 +128,7 @@ These changes should land with regression tests before adding providers or enabl
 10. Set subprocess stream limits explicitly, drain stderr concurrently, and bound total replay/
     output payload sizes. This fixes S-05.
 
-## P2 — Contract, operational, and maintainability hardening
+## P2 — Historical contract, operational, and maintainability backlog
 
 - Replace untyped sync request dictionaries with Pydantic request models (A-02).
 - Make redaction schema-aware and strict; add nested/ref/composition tests (A-04).
@@ -105,7 +140,7 @@ These changes should land with regression tests before adding providers or enabl
 - Inject Clock consistently, retaining monotonic time only for pacing/deadlines (R-10, A-11).
 - Run migrations under a one-owner or database lock strategy (R-09, A-10).
 - Document or paginate fixed API caps and define stats period semantics (A-07, D-11).
-- Pin the uv image/base dependencies and publish provenance/SBOM (M-07).
+- Keep digest-pinned uv/base dependencies and provenance/SBOM verification current (M-07).
 - Repair version/link/contract drift, remove missing plan references, and make the check product
   behavior consistent across code/OpenAPI/README/frontend (M-01 through M-06, M-10, M-11).
 - Mark benchmarks correctly and give them a separate budgeted job; add suite timeouts and stuck-test
@@ -153,7 +188,7 @@ These changes should land with regression tests before adding providers or enabl
 - CI’s non-bench collection excludes tests/bench, and every suite has a bounded timeout.
 - OpenAPI contract tests cover the real check/replay/import asynchronous semantics.
 
-## Suggested implementation sequence
+## Suggested implementation sequence (historical)
 
 1. Add failing tests for P0 invariants without changing the architecture.
 2. Fix provider loading/environment/API execution and image fetching.
@@ -165,7 +200,7 @@ These changes should land with regression tests before adding providers or enabl
 8. Re-run all static gates, focused suites, full non-bench pytest, benchmarks separately, and the
    frontend build.
 
-## Exit criteria
+## Exit criteria for a future full closure
 
 The review should be considered closed only when every Critical/High finding has a passing
 regression test, the full non-bench suite completes with a final result, PostgreSQL concurrency

@@ -185,11 +185,13 @@ a justification in the architecture documentation, per the engineering guidance.
 ## Quality gates before merge
 
 ```bash
-uv run ruff format --check . && uv run ruff check . && uv run mypy aggregato/   # zero warnings
-uv run pytest                                                                   # all suites
-uv run lint-imports                                                             # decoupling contract
+uv run ruff format --check . && uv run ruff check . && uv run mypy                  # zero warnings
+uv run lint-imports                                                               # decoupling contract
+uv run pytest -m "not bench"                                                      # bounded CI suite
+uv run pytest -m bench tests/bench                                                # separate budgets
 cd frontend && npm run type-check && npm run test:unit
 ```
 
-All four must be clean. Warnings are errors (code-quality guidance), and the import contract is a merge gate
-rather than a convention (decoupling guidance).
+The PostgreSQL portability smoke is a separate CI job because the ordinary pytest fixture blocks
+sockets. All jobs must be clean. Warnings are errors (code-quality guidance), and the import contract
+is a merge gate rather than a convention (decoupling guidance).

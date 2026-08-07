@@ -53,8 +53,12 @@ def backup_sqlite(url: str) -> Path | None:
 
     # Timestamped, never a fixed name: a second startup after a failed migration must not overwrite
     # the one good copy with the half-migrated file.
-    stamp = SYSTEM_CLOCK.now().strftime("%Y%m%dT%H%M%S")
+    stamp = SYSTEM_CLOCK.now().strftime("%Y%m%dT%H%M%S%f")
     backup = source.with_name(f"{source.name}.{stamp}.bak")
+    suffix = 1
+    while backup.exists():
+        backup = source.with_name(f"{source.name}.{stamp}.{suffix}.bak")
+        suffix += 1
     # sqlite3's backup API rather than shutil.copy2, for one reason: WAL. A plain copy of the `.db`
     # alone silently drops every committed transaction still sitting in the `-wal` file, which is
     # the normal state of this database (engine.py sets journal_mode=WAL). Same few lines, correct
@@ -87,6 +91,7 @@ def upgrade_to_head(url: str) -> None:
     if lock_path is None:
         migrate()
         return
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:

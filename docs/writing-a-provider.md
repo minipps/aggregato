@@ -58,8 +58,9 @@ settings and capabilities.
 The package is imported only after an operator selects its provider for an operation. A scheduled
 sync runs the selected provider in its short-lived child, while the parent keeps the database and
 performs validation and writes. That child boundary contains crashes and hangs; it is not an OS
-sandbox. An unreviewed drop-in retains the worker process's ambient environment, filesystem, and
-network permissions, so review the source and do not place unrelated secrets in that environment.
+sandbox. The runner passes a minimal explicit runtime environment and the selected provider's
+configuration/secrets over the child protocol. An unreviewed drop-in still retains filesystem and
+network permissions, so review the source and deployment location.
 Import errors affect the selected operation and do not make an unrelated provider part of discovery.
 
 The inheritance above is only a compact illustration. A real provider implements the three methods in the contract: `fetch`, pure synchronous `normalize`, and asynchronous `check`.

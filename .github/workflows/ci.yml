@@ -81,12 +81,12 @@ jobs:
   postgres:
     # PostgreSQL is a supported backend, but the ordinary pytest suite deliberately blocks all
     # sockets. Keep this explicit service smoke check separate so offline tests stay hermetic while
-    # the dialect-specific migration/claim/retry/search path remains a merge gate.
+    # the dialect-specific migration/claim/retry/writer/search path remains a merge gate.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
         env:
           POSTGRES_USER: aggregato
           POSTGRES_PASSWORD: aggregato
@@ -105,7 +105,7 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --all-extras --dev
-      - name: PostgreSQL portability smoke
+      - name: PostgreSQL portability and concurrency smoke
         env:
           AGGREGATO_POSTGRES_URL: postgresql+asyncpg://aggregato:aggregato@127.0.0.1:5432/aggregato
         run: timeout --foreground --signal=TERM --kill-after=30s 10m uv run python scripts/postgres_smoke.py

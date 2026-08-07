@@ -53,8 +53,9 @@ models and performs every database write itself.
 **Rationale**: Three separate spec requirements collapse into this one mechanism — hang and crash
 containment, no database engine in provider code, and a killable per-run wall-clock timeout (§6.7).
 The child process and selected-provider context provide the normal sync boundary; this is not an OS
-sandbox. Unreviewed drop-ins retain the worker process's ambient environment, filesystem, and
-network permissions, so operators must not supply unrelated secrets to that process. JSON lines
+sandbox. The runner passes a small explicit runtime environment and the selected provider's
+configuration/secrets over the child protocol. Unreviewed drop-ins still retain filesystem and
+network permissions, so operators must review their source and deployment location. JSON lines
 rather than pickle because the payload crosses a boundary from
 plugin-controlled code, and because it is the same shape the recorded fixtures use — one wire format
 for production and tests .

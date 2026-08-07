@@ -46,7 +46,7 @@ declares only `full` and accepts full resyncs.
 | Rule | Why | How it is enforced |
 |---|---|---|
 | `normalize` is **pure** — no network, no clock, no randomness, no storage | Makes replay  and credential-free offline tests  possible | Conformance suite: called twice on one fixture must produce identical output; sockets blocked; clock frozen |
-| During a normal scheduled run, a provider receives no database handle and the host passes only the selected provider's context |  | The parent owns the engine and sends the selected configuration through the child protocol. Discovery reads static manifests without importing provider packages. This is a process boundary, not an OS sandbox: unreviewed drop-ins may still see ambient environment, filesystem, and network permissions. |
+| During a normal scheduled run, a provider receives no database handle and the host passes only the selected provider's context |  | The parent owns the engine and sends the selected configuration through the child protocol. Discovery reads static manifests without importing provider packages. The runner passes a minimal explicit runtime environment. This is a process boundary, not an OS sandbox: unreviewed drop-ins may still access the child's filesystem and network permissions. |
 | A provider never constructs its own HTTP client |  politeness floors must be un-overridable | `ctx.http` is the only client; an import-linter rule forbids importing `httpx` from `aggregato/providers/*` |
 | A provider may not invent a `media_type`, `role`, or `subject_ref` key |  | Parent-side validation at the ingest boundary; violations become `ingest_failures`, not writes |
 | Every identifier present in a payload is extracted, including ones Aggregato has no use for | ; the single largest lever on match quality under the no-enrichment rule | Conformance suite asserts identifiers visible in the fixture appear in the output |
@@ -62,7 +62,7 @@ declares only `full` and accepts full resyncs.
 |---|---|
 | `http` | `httpx.AsyncClient` wrapped with rate limiting at `max(declared, host_floor)`, one in-flight request per host within that run for `scrapes` providers, retry on 5xx/429/transport with jitter, `Retry-After` compliance, ETag pass-through, and the project User-Agent with a contact URL |
 | `config` | The validated `config_model` instance for this provider only |
-| `secrets` | The selected provider's credentials, resolved before the child starts; unreviewed drop-ins are not an OS sandbox and may still observe ambient process environment |
+| `secrets` | The selected provider's credentials, resolved before the child starts and sent explicitly; unreviewed drop-ins are not an OS sandbox and may still access filesystem and network permissions |
 | `log` | Logger already bound to `provider_id`, `run_id`, `lineage_id` |
 | `state` | Small opaque key/value store, this provider's own, persisted in `provider_state.kv` |
 | `import_path` | Set only in `import` mode |

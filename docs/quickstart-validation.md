@@ -2,6 +2,8 @@
 
 Validated 2026-07-30 from a fresh test data directory per test case. Every validation is offline:
 the test fixture blocks socket access, so a passing result cannot have contacted a platform.
+This is a dated validation record, not a current branch baseline; use the [CI workflow](../.github/workflows/ci.yml)
+for the commands and results that gate a release.
 
 | Quickstart section | Command / evidence | Result |
 |---|---|---|

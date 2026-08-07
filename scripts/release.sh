@@ -1,11 +1,12 @@
 #!/bin/sh
-# Cut a release: bump the two version files, commit, tag, push.
+# Cut a release: bump the version files, verify release examples, commit, tag, push.
 #
 # The tag is the release procedure (.github/workflows/release.yml) — pushing it runs the CI gates,
 # publishes a source archive and a GitHub release, and pushes multi-arch images to ghcr tagged
 # `x.y.z`, `x.y` and `latest`. What this script adds is the part that is easy to get wrong by hand:
-# the workflow refuses a tag whose version disagrees with pyproject.toml or frontend/package.json,
-# and that refusal happens *after* the tag is public, so it has to be caught here instead.
+# the workflow refuses a tag whose version disagrees with pyproject.toml, frontend/package.json,
+# uv.lock, or the documented image markers, and that refusal happens *after* the tag is public, so it
+# has to be caught here instead.
 #
 # Everything before the push is local and reversible. The guards are the point: a release cut from a
 # stale main, or with an unrelated edit swept into the bump commit, ships something nobody reviewed.
@@ -103,6 +104,15 @@ if {project, frontend, locked} != {tag}:
     sys.exit(
         f"release: v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}"
     )
+expected_examples = {
+    pathlib.Path("README.md"): f"AGGREGATO_VERSION={tag}",
+    pathlib.Path("docker/compose.yml"): f"AGGREGATO_VERSION={tag}",
+}
+missing = [
+    str(path) for path, marker in expected_examples.items() if marker not in path.read_text()
+]
+if missing:
+    sys.exit(f"release: examples do not name v{tag}: {', '.join(missing)}")
 PY
 
 # --- Confirm, then publish ----------------------------------------------------------------------

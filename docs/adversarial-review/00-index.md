@@ -47,7 +47,11 @@ poisoning bug; the most urgent security issue is the provider execution/credenti
 - [Documentation, CI, dead code, and architecture debt](./05-docs-ci-dead-code.md)
 - [Prioritized remediation and regression-test plan](./06-remediation-plan.md)
 
-## Verification status
+## Verification status at the review baseline (historical)
+
+The counts and incomplete runs below describe the original adversarial-review snapshot. They are not
+current-branch CI evidence; see [the follow-up audit](06-remediation-plan.md#follow-up-audit--2026-08-07)
+for the scoped PostgreSQL and documentation status.
 
 Passing checks:
 

@@ -1,10 +1,11 @@
 # Multi-stage so the operator never installs Node and the runtime image carries no toolchain
 # (docs/research.md — the mitigation for the SPA deviation recorded in architecture.md).
-# Base images and the uv tool image use exact version tags. Dependabot proposes reviewed refreshes;
-# release CI attaches an SBOM and provenance attestation to the resulting image.
+# Base images and the uv tool image use exact version tags plus immutable manifest digests.
+# Dependabot proposes reviewed refreshes; release CI attaches an SBOM and provenance attestation to
+# the resulting image.
 
 # --- Stage 1: build the SPA -------------------------------------------------------------------
-FROM node:22.23.2-slim AS frontend
+FROM node:22.23.2-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
@@ -12,8 +13,8 @@ COPY frontend/ ./
 RUN npm --loglevel=error run build
 
 # --- Stage 2: resolve Python dependencies into a venv ----------------------------------------
-FROM python:3.13-slim AS deps
-COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS deps
+COPY --from=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./
@@ -23,7 +24,7 @@ COPY README.md ./
 RUN uv sync --frozen --no-dev
 
 # --- Stage 3: runtime — venv, code, built assets, no toolchain -------------------------------
-FROM python:3.13-slim AS runtime
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS runtime
 
 RUN useradd --create-home --uid 10001 aggregato
 COPY --from=deps /opt/venv /opt/venv

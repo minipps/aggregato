@@ -76,7 +76,7 @@ data volume if the old failure evidence matters.
 ## API limits and asynchronous work
 
 Collection endpoints use keyset pagination. `limit` defaults to 50 and is clamped to 1–200; a
-non-null `next_cursor` means another page is available. There is no offset mode. Full-text search is
+non-null `next_cursor` means another page is available. There is no offset mode. Full-text search
 returns every matching id before the collection page is applied. A work-detail response embeds only the 200 newest
 live entries and 200 newest opinions for that work and does not paginate those embedded lists.
 

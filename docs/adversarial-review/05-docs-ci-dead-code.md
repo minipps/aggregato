@@ -4,6 +4,10 @@ The documentation is detailed and useful, but it has drifted from the current im
 several places. The drift is dangerous here because the docs describe safety guarantees that
 operators and contributors will rely on.
 
+This file records the review-time findings. Some items have since been addressed or have new
+evidence; use the [follow-up audit](06-remediation-plan.md#follow-up-audit--2026-08-07) rather than
+reading an individual finding below as the current repository status.
+
 ## M-01 — Version and release examples are stale (Low/Medium)
 
 The project/package and frontend versions are 0.1.5, while README, Docker Compose comments, and
@@ -94,13 +98,14 @@ Fix:
 
 ## M-08 — Dead or half-wired contracts create false confidence (Medium)
 
-The following paths are present but not connected to the production behavior their names imply:
+At the review baseline, the following paths were present but not connected to the production
+behavior their names implied:
 
 - Provider.check exists in the protocol/providers but is not called by the API check route.
 - load_config accepts/advertises database overrides, but startup does not load that layer.
 - API-generated lineage is returned but not persisted into dispatch/retry state.
-- RunRequest has a secrets field, while dispatch currently supplies an empty mapping and the child
-  inherits ambient environment variables instead.
+- At the review baseline, RunRequest had a secrets field while dispatch supplied an empty mapping and
+  the child inherited ambient environment variables instead.
 - The replay API path bypasses the worker architecture rather than using the intended child route.
 
 Fix:
@@ -112,9 +117,9 @@ Fix:
 
 ## M-09 — Quality gates do not cover the highest-risk runtime combinations (Medium)
 
-Static checks and import-linter are good, but the observed pytest hang means the primary test gate
-can fail to produce a result. There is also no visible PostgreSQL concurrency/migration gate in the
-reviewed workflow, despite PostgreSQL being a supported storage backend.
+At the review baseline, static checks and import-linter were good, but the observed pytest hang
+meant the primary test gate could fail to produce a result. The reviewed workflow also had no visible
+PostgreSQL concurrency/migration gate, despite PostgreSQL being a supported storage backend.
 
 Fix:
 
@@ -125,9 +130,9 @@ Fix:
 
 ## M-10 — Source comments overstate guarantees (Medium)
 
-Examples include “only this provider is imported,” “provider receives only its own secrets,”
-“one in-flight request per host,” and “configuration precedence includes database overrides.” The
-corresponding code currently violates or only partially implements each statement.
+At the review baseline, examples included “only this provider is imported,” “provider receives only
+its own secrets,” “one in-flight request per host,” and “configuration precedence includes database
+overrides.” The corresponding code then violated or only partially implemented each statement.
 
 Fix:
 
