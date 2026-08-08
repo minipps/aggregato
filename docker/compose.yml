@@ -4,9 +4,9 @@
 services:
   aggregato:
     # The published backend image, so `docker compose pull` works (docs/operations.md) — pin a
-    # release with AGGREGATO_VERSION=0.2.0. The build section stays: with no image pulled, `up`
+    # release with AGGREGATO_VERSION=0.2.1. The build section stays: with no image pulled, `up`
     # builds from this checkout, which is what a development run and a source install both want.
-    image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-0.2.0}
+    image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-0.2.1}
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -65,7 +65,7 @@ services:
   frontend:
     # The published SPA image. It is the public service: Nginx serves the built frontend and proxies
     # /api to aggregato, so the API container never needs to publish a host port.
-    image: ghcr.io/minipps/aggregato-frontend:${AGGREGATO_VERSION:-0.2.0}
+    image: ghcr.io/minipps/aggregato-frontend:${AGGREGATO_VERSION:-0.2.1}
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
