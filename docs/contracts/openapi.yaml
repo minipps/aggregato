@@ -25,8 +25,9 @@ info:
       * Sub-unit records (`subject_ref` non-null) are EXCLUDED from work-level aggregates
         unless `include_subunits=true`.
       * Soft-deleted rows are excluded unless `include_deleted=true`.
-      * Sync and import requests return 202 after queueing work. The `lineage_id` groups the
-        resulting attempts; inspect provider runs for eventual status.
+      * Sync, import, and provider-check requests return 202 after queueing work. The `lineage_id`
+        groups the resulting attempts; inspect provider runs for sync status and `Provider.last_check`
+        for the latest provider diagnostic.
       * Retained provider payloads and ingest-failure payloads can contain private platform data.
         They are returned only through authenticated endpoints and follow the local retention and
         export rules described by the operator guide.
@@ -279,7 +280,7 @@ paths:
         - $ref: "#/components/parameters/cursor"
       responses:
         "200":
-          description: Sync run history, newest first, grouped by retry lineage. Pages are keyset-paginated and capped by the shared limit parameter.
+          description: Sync run history, newest first, grouped by retry lineage. Provider check runs are excluded; use `Provider.last_check` for the latest diagnostic. Pages are keyset-paginated and capped by the shared limit parameter.
           content:
             application/json:
               schema:
@@ -312,6 +313,28 @@ paths:
                 properties: { lineage_id: { type: string, format: uuid } }
         "409":
           $ref: "#/components/responses/Problem"
+
+  /providers/{id}/check:
+    post:
+      tags: [providers]
+      summary: Queue an asynchronous provider credential check
+      description: >-
+        Queues an isolated diagnostic and returns immediately. A validly configured provider may be
+        checked whether it is enabled or disabled. The check does not enable, schedule, retry, or
+        change the provider's ordinary sync health; follow `Provider.last_check` for its result.
+      parameters: [{ $ref: "#/components/parameters/providerId" }]
+      responses:
+        "202":
+          description: Provider check queued; no provider request has necessarily started yet.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lineage_id]
+                properties: { lineage_id: { type: string, format: uuid } }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
 
   /providers/{id}/last-run:
     get:
@@ -906,7 +929,7 @@ components:
 
     Provider:
       type: object
-      required: [id, name, enabled, status, acquisition, reviewed, capabilities, media_types]
+      required: [id, name, enabled, status, acquisition, reviewed, capabilities, media_types, last_check]
       properties:
         id: { type: string }
         name: { type: string }
@@ -943,6 +966,11 @@ components:
           type: object
           additionalProperties: true
           description: Configured values safe to display; passwords, API keys, and other write-only settings are omitted.
+        last_check:
+          allOf:
+            - $ref: "#/components/schemas/LastCheck"
+          nullable: true
+          description: The latest explicitly requested provider diagnostic, separate from sync health and history.
 
     SyncRun:
       type: object
@@ -952,7 +980,7 @@ components:
         provider_id: { type: string }
         lineage_id: { type: string, format: uuid }
         attempt: { type: integer }
-        mode: { type: string, enum: [incremental, full, import] }
+        mode: { type: string, enum: [incremental, full, import, check] }
         status: { $ref: "#/components/schemas/RunStatus" }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time, nullable: true }
@@ -963,6 +991,18 @@ components:
         error_message: { type: string, nullable: true }
         next_retry_at: { type: string, format: date-time, nullable: true }
         log_excerpt: { type: string, nullable: true, description: Application logs, not user log data }
+
+    ProviderCheckStatus: { type: string, enum: [pending, success, failure] }
+    LastCheck:
+      type: object
+      required: [status, lineage_id]
+      properties:
+        status: { $ref: "#/components/schemas/ProviderCheckStatus" }
+        lineage_id: { type: string, format: uuid }
+        requested_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        detail: { type: string, nullable: true }
+        error_class: { $ref: "#/components/schemas/ErrorClass", nullable: true }
 
     ResolutionItem:
       type: object

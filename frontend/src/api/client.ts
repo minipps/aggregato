@@ -19,6 +19,7 @@ import type {
   Page,
   Problem,
   Provider,
+  QueuedOperation,
   Session,
   SyncRun,
   IngestFailure,
@@ -271,17 +272,22 @@ export function setProviderEnabled(id: string, enabled: boolean): Promise<Provid
 export function syncProvider(
   id: string,
   mode: 'incremental' | 'full' = 'incremental',
-): Promise<{ lineage_id?: string }> {
-  return request<{ lineage_id?: string }>('POST', `/providers/${encodeURIComponent(id)}/sync`, {
+): Promise<QueuedOperation> {
+  return request<QueuedOperation>('POST', `/providers/${encodeURIComponent(id)}/sync`, {
     body: { mode },
   })
+}
+
+/** Queue an isolated provider credential diagnostic; the worker performs it asynchronously. */
+export function checkProvider(id: string): Promise<QueuedOperation> {
+  return request<QueuedOperation>('POST', `/providers/${encodeURIComponent(id)}/check`)
 }
 
 /** Upload a personal export without assigning a JSON content type to multipart form data. */
 export async function importProviderFile(
   id: string,
   file: File,
-): Promise<{ lineage_id?: string }> {
+): Promise<QueuedOperation> {
   const data = new FormData()
   data.append('file', file)
   const response = await fetch(buildUrl(`/providers/${encodeURIComponent(id)}/import`, undefined), {
@@ -294,7 +300,7 @@ export async function importProviderFile(
     body: data,
   })
   if (!response.ok) throw new ProblemError(await problemFrom(response))
-  return (await response.json()) as { lineage_id?: string }
+  return (await response.json()) as QueuedOperation
 }
 
 export function latestProviderRun(id: string): Promise<LastRun> {
