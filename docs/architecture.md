@@ -114,6 +114,8 @@ aggregato/
 │   ├── scheduler.py            # due-queue poll loop, jitter, concurrency cap
 │   ├── runner.py               # spawns and supervises one child per run; wall-clock kill
 │   ├── child.py                # child entrypoint: fetch + normalize -> JSON lines on a pipe
+│   ├── jobs.py                 # typed import/replay leases and shared lifecycle transitions
+│   ├── dispatch.py              # RunPlan/RunFinalization orchestration and ingest boundary
 │   ├── retry.py                # backoff ladder, lineage, degraded state
 │   └── errors.py               # ErrorClass mapping and the never-retry set
 ├── providers/

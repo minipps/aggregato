@@ -39,16 +39,14 @@ from aggregato.db.schema import (
 )
 from aggregato.db.search import create_search_index
 from aggregato.domain.enums import ErrorClass, FetchMode, IngestStage, ProviderStatus, RunStatus
-from aggregato.providers.fixture import FixtureProvider
+from aggregato.providers.manifest import BUNDLED_MANIFESTS
 from aggregato.sync.dispatch import (
-    _finish_import_job,
-    _next_import_job,
-    _next_replay_job,
     _open_run,
     _reschedule,
     build_dispatch,
     run_once,
 )
+from aggregato.sync.jobs import ImportLease, claim_import, claim_replay, finish_import
 from aggregato.sync.runner import RunOutcome
 from aggregato.sync.scheduler import (
     DEFAULT_MAX_CONCURRENT_RUNS,
@@ -426,10 +424,10 @@ async def test_import_with_null_lease_expiry_is_reclaimed(
             )
         )
 
-    job = await _next_import_job(engine, "fixture", now=NOW)
+    job = await claim_import(engine, "fixture", now=NOW)
 
     assert job is not None
-    assert job[1] == path
+    assert job.path == path
     async with transaction(engine) as conn:
         row = (
             await conn.execute(
@@ -440,11 +438,17 @@ async def test_import_with_null_lease_expiry_is_reclaimed(
                 )
             )
         ).one()
-    assert row.lease_owner == job[3]
+    assert row.lease_owner == job.owner
     assert row.lease_expires_at == (NOW + timedelta(minutes=15)).replace(tzinfo=None)
     assert row.attempts == 2
 
-    assert not await _finish_import_job(engine, job[0], owner="stale-worker", now=NOW)
+    stale = ImportLease(
+        job_id=job.job_id,
+        path=job.path,
+        lineage_id=job.lineage_id,
+        owner="stale-worker",
+    )
+    assert not await finish_import(engine, stale, now=NOW)
     async with transaction(engine) as conn:
         row = (await conn.execute(select(import_jobs.c.finished_at))).one()
     assert row.finished_at is None
@@ -558,14 +562,14 @@ async def test_replay_with_null_lease_expiry_is_reclaimed(engine: AsyncEngine) -
             )
         )
 
-    job = await _next_replay_job(engine, "fixture", now=NOW)
+    job = await claim_replay(engine, "fixture", now=NOW)
 
     assert job is not None
     async with transaction(engine) as conn:
         row = (
             await conn.execute(select(replay_jobs.c.lease_owner, replay_jobs.c.lease_expires_at))
         ).one()
-    assert row.lease_owner == job[3]
+    assert row.lease_owner == job.owner
     assert row.lease_expires_at == (NOW + timedelta(minutes=15)).replace(tzinfo=None)
 
 
@@ -588,7 +592,7 @@ async def test_schema_bump_replays_retained_payloads_before_the_next_sync(
 
     # The subprocess used for normalization need not know this test-only bump: replay's important
     # boundary is that it receives stored raws and the parent records the declared new version.
-    monkeypatch.setattr(FixtureProvider, "schema_version", 2)
+    monkeypatch.setitem(BUNDLED_MANIFESTS["fixture"], "schema_version", 2)
     outcome = await run_once(
         engine,
         config_for(FIXTURE),
