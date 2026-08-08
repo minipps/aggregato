@@ -43,7 +43,7 @@ from aggregato.db.schema import (
     sync_runs,
 )
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
-from aggregato.domain.enums import Capability, ErrorClass, ProviderStatus, RunStatus
+from aggregato.domain.enums import Capability, ErrorClass, FetchMode, ProviderStatus, RunStatus
 from aggregato.logging import bind_run
 from aggregato.providers.registry import discover_providers
 from aggregato.sync.errors import action_required
@@ -98,6 +98,8 @@ class DueProvider:
     ordinary scheduled run, which is always incremental."""
     requested_lineage_id: UUID | None = None
     """The durable lineage assigned to an operator request, if one is pending."""
+    enabled: bool = True
+    status: ProviderStatus = ProviderStatus.IDLE
 
 
 def _pollable_provider_ids(provider_dir: Path | None = None) -> frozenset[str]:
@@ -168,18 +170,51 @@ def _has_claimable_worker_job(now: datetime) -> ColumnElement[bool]:
 
 
 def _admission_capability(now: datetime, pollable_ids: frozenset[str]) -> ColumnElement[bool]:
-    """Admit polling providers or providers with a reclaimable worker-owned job."""
-    return or_(providers.c.id.in_(pollable_ids), _has_claimable_worker_job(now))
+    """Admit polling providers, worker jobs, or an explicitly queued credential check."""
+    return or_(
+        providers.c.id.in_(pollable_ids),
+        _has_claimable_worker_job(now),
+        _check_requested(),
+    )
+
+
+def _check_requested() -> ColumnElement[bool]:
+    """Return an ``EXISTS`` predicate for a queued credential check."""
+    return exists(
+        select(1)
+        .select_from(provider_state)
+        .where(
+            provider_state.c.provider_id == providers.c.id,
+            provider_state.c.requested_mode == str(FetchMode.CHECK),
+        )
+        .correlate(providers)
+    )
+
+
+def _provider_ready_for_claim() -> ColumnElement[bool]:
+    """Allow checks to use a disabled provider while preserving ordinary sync admission."""
+    return or_(
+        and_(
+            providers.c.enabled.is_(True),
+            providers.c.status.in_((str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))),
+        ),
+        and_(
+            _check_requested(),
+            providers.c.status.in_(
+                (str(ProviderStatus.DISABLED), str(ProviderStatus.MISCONFIGURED))
+            ),
+        ),
+    )
 
 
 def _state_due_or_worker_job(now: datetime) -> ColumnElement[bool]:
     """Run scheduled work or queued worker jobs regardless of the ordinary schedule timestamp."""
-    return or_(_state_is_due(now), _has_claimable_worker_job(now))
+    return or_(_state_is_due(now), _has_claimable_worker_job(now), _check_requested())
 
 
 def _claim_due_or_worker_job(now: datetime) -> ColumnElement[bool]:
     """Recheck either the schedule or a queued worker job in the atomic provider claim."""
-    return or_(_claim_due_state(now), _has_claimable_worker_job(now))
+    return or_(_claim_due_state(now), _has_claimable_worker_job(now), _check_requested())
 
 
 async def due_providers(
@@ -209,13 +244,14 @@ async def due_providers(
             provider_state.c.cursor,
             provider_state.c.requested_mode,
             provider_state.c.requested_lineage_id,
+            providers.c.enabled,
+            providers.c.status,
         )
         .join(providers, providers.c.id == provider_state.c.provider_id)
         .where(
             and_(
                 _admission_capability(now, pollable_ids),
-                providers.c.enabled.is_(True),
-                providers.c.status.in_((str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))),
+                _provider_ready_for_claim(),
                 _state_due_or_worker_job(now),
             )
         )
@@ -232,6 +268,8 @@ async def due_providers(
                 cursor=row.cursor,
                 requested_mode=row.requested_mode,
                 requested_lineage_id=row.requested_lineage_id,
+                enabled=bool(row.enabled),
+                status=ProviderStatus(row.status),
             )
             for row in result
         ]
@@ -259,10 +297,7 @@ async def claim(
                 and_(
                     providers.c.id == provider_id,
                     _admission_capability(now, pollable_ids),
-                    providers.c.enabled.is_(True),
-                    providers.c.status.in_(
-                        (str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))
-                    ),
+                    _provider_ready_for_claim(),
                     _claim_due_or_worker_job(now),
                 )
             )
@@ -291,12 +326,24 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
         if not provider_ids:
             return []
 
+        normal_running = (
+            await conn.execute(
+                select(sync_runs.c.provider_id).where(
+                    sync_runs.c.provider_id.in_(provider_ids),
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                    sync_runs.c.mode != str(FetchMode.CHECK),
+                )
+            )
+        ).scalars()
+        normal_provider_ids = list(normal_running)
+
         await conn.execute(
             update(sync_runs)
             .where(
                 and_(
                     sync_runs.c.provider_id.in_(provider_ids),
                     sync_runs.c.status == str(RunStatus.RUNNING),
+                    sync_runs.c.mode != str(FetchMode.CHECK),
                 )
             )
             .values(
@@ -304,6 +351,22 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
                 finished_at=now,
                 error_class=str(ErrorClass.INTERNAL),
                 error_message="worker stopped before this sync completed; it will be retried",
+            )
+        )
+        await conn.execute(
+            update(sync_runs)
+            .where(
+                and_(
+                    sync_runs.c.provider_id.in_(provider_ids),
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                    sync_runs.c.mode == str(FetchMode.CHECK),
+                )
+            )
+            .values(
+                status=str(RunStatus.FAILED),
+                finished_at=now,
+                error_class=str(ErrorClass.INTERNAL),
+                error_message="worker stopped before this credential check completed",
             )
         )
         await conn.execute(
@@ -326,7 +389,7 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
         )
         await conn.execute(
             update(provider_state)
-            .where(provider_state.c.provider_id.in_(provider_ids))
+            .where(provider_state.c.provider_id.in_(normal_provider_ids))
             .values(next_run_at=now)
         )
     return provider_ids

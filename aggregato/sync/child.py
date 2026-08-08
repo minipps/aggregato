@@ -32,6 +32,7 @@ from aggregato.providers.registry import load_provider
 from aggregato.sync.errors import classify
 from aggregato.sync.protocol import (
     BatchMessage,
+    CheckMessage,
     CheckpointMessage,
     ChildMessage,
     ErrorMessage,
@@ -100,7 +101,10 @@ async def run(
     )
 
     try:
-        if replay_records is not None:
+        if mode is FetchMode.CHECK:
+            async with client:
+                emit(CheckMessage(result=await provider.check(ctx)))
+        elif replay_records is not None:
             # Replay never calls fetch: the durable raw payload is the source of truth.
             for record in replay_records:
                 _emit_normalized(provider, record)

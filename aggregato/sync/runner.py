@@ -31,10 +31,11 @@ from pathlib import Path
 from typing import Any
 
 from aggregato.domain.enums import ErrorClass, FetchMode, RunStatus
-from aggregato.domain.models import Cursor, NormalizedBatch, RawRecord
+from aggregato.domain.models import CheckResult, Cursor, NormalizedBatch, RawRecord
 from aggregato.sync.protocol import (
     MAX_LINE_BYTES,
     BatchMessage,
+    CheckMessage,
     CheckpointMessage,
     ErrorMessage,
     FailureMessage,
@@ -74,6 +75,7 @@ class RunOutcome:
     error_message: str | None = None
     log_excerpt: str | None = None
     retry_after: timedelta | None = None
+    check_result: CheckResult | None = None
 
     @property
     def checkpointed(self) -> bool:
@@ -196,6 +198,19 @@ async def execute_run(request: RunRequest) -> RunOutcome:
     if stderr:
         outcome.log_excerpt = _tail(stderr)
 
+    if request.mode is FetchMode.CHECK:
+        if outcome.check_result is not None and (
+            outcome.records or outcome.failures or outcome.cursor_after is not None
+        ):
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "credential check emitted non-diagnostic protocol messages"
+        elif outcome.check_result is None and outcome.error_class is None:
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "credential check emitted no result"
+    elif outcome.check_result is not None:
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = "sync emitted an unexpected credential-check result"
+
     if outcome.error_class is not None:
         # The child reported and exited cleanly. Partial if it had already checkpointed, because the
         # work before the checkpoint is real and must not be redone .
@@ -269,6 +284,10 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
                 outcome.cursor_after = message.cursor
             case FailureMessage():
                 outcome.failures.append(message)
+            case CheckMessage():
+                if outcome.check_result is not None:
+                    raise ProtocolViolation("credential check emitted more than one result")
+                outcome.check_result = message.result
             case ErrorMessage():
                 outcome.error_class = message.error_class
                 outcome.error_message = message.message

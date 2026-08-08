@@ -110,11 +110,17 @@ def build_dispatch(
                     if job is not None
                     else FetchMode.REPLAY
                     if replay_job is not None
+                    else FetchMode.CHECK
+                    if requested_mode == str(FetchMode.CHECK)
                     else requested
                 ),
                 cursor=(
                     None
-                    if job is not None or replay_job is not None
+                    if (
+                        job is not None
+                        or replay_job is not None
+                        or requested_mode == str(FetchMode.CHECK)
+                    )
                     else (Cursor(state=due.cursor) if due.cursor else None)
                 ),
                 retry_step=due.retry_step,
@@ -128,6 +134,10 @@ def build_dispatch(
                 import_path=job[1] if job is not None else None,
                 replay_records=[replay_job[2]] if replay_job is not None else None,
                 replay_only=replay_job is not None,
+                check_restore_status=due.status if requested_mode == str(FetchMode.CHECK) else None,
+                check_restore_enabled=due.enabled
+                if requested_mode == str(FetchMode.CHECK)
+                else None,
             )
         except Exception as exc:
             if job is not None:
@@ -479,6 +489,8 @@ async def run_once(
     import_path: Path | None = None,
     replay_records: list[RawRecord] | None = None,
     replay_only: bool = False,
+    check_restore_status: ProviderStatus | None = None,
+    check_restore_enabled: bool | None = None,
 ) -> RunOutcome:
     """Execute and record one sync run.
 
@@ -502,6 +514,8 @@ async def run_once(
         import_path: Set only in ``import`` mode.
         replay_records: Explicit failure payloads to normalize in the child.
         replay_only: Do not fetch after replaying ``replay_records``.
+        check_restore_status: Provider status to restore after a diagnostic check.
+        check_restore_enabled: Whether the provider was enabled before a diagnostic check.
 
     Returns:
         The run's outcome, already persisted.
@@ -545,8 +559,30 @@ async def run_once(
             now=now,
             preserve_requested_request=preserve_requested_request,
             requested_lineage_id=requested_lineage_id,
+            check_restore_status=check_restore_status,
+            check_restore_enabled=check_restore_enabled,
         )
     except Exception as exc:
+        if mode is FetchMode.CHECK:
+            outcome = RunOutcome(
+                status=RunStatus.FAILED,
+                error_class=ErrorClass.INTERNAL,
+                error_message=f"{type(exc).__name__}: {str(exc)[:1000]}",
+            )
+            await _finalize_check(
+                engine,
+                provider_id=provider_id,
+                run_id=run_id,
+                outcome=outcome,
+                restore_status=check_restore_status
+                or (
+                    ProviderStatus.DISABLED
+                    if check_restore_enabled is False
+                    else ProviderStatus.IDLE
+                ),
+                now=clock.now(),
+            )
+            return outcome
         await _finalize_host_failure(
             engine,
             provider_id=provider_id,
@@ -589,8 +625,33 @@ async def _run_opened(
     now: datetime,
     preserve_requested_request: bool,
     requested_lineage_id: uuid.UUID | None,
+    check_restore_status: ProviderStatus | None,
+    check_restore_enabled: bool | None,
 ) -> RunOutcome:
     """Execute the post-insertion portion of a run."""
+    if mode is FetchMode.CHECK:
+        outcome = await execute_run(
+            RunRequest(
+                provider_id=provider_id,
+                mode=FetchMode.CHECK,
+                config=_public_provider_settings(provider.config_schema, provider_settings),
+                secrets=_secret_provider_settings(provider.config_schema, provider_settings),
+                provider_dir=config.provider_dir,
+                host_state_dir=config.data_dir / "http-host-state",
+            )
+        )
+        outcome = _validate_check_outcome(outcome)
+        await _finalize_check(
+            engine,
+            provider_id=provider_id,
+            run_id=run_id,
+            outcome=outcome,
+            restore_status=check_restore_status
+            or (ProviderStatus.DISABLED if check_restore_enabled is False else ProviderStatus.IDLE),
+            now=clock.now(),
+        )
+        return outcome
+
     stored_replay_records = (
         replay_records
         if replay_records is not None
@@ -688,6 +749,76 @@ async def _run_opened(
         requested_lineage_id=requested_lineage_id,
     )
     return outcome
+
+
+def _validate_check_outcome(outcome: RunOutcome) -> RunOutcome:
+    """Turn a supervised child result into the diagnostic run classification."""
+    if outcome.error_class is not None:
+        return outcome
+    if outcome.records or outcome.failures or outcome.cursor_after is not None:
+        outcome.status = RunStatus.FAILED
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = "credential check emitted non-diagnostic protocol messages"
+        return outcome
+    result = outcome.check_result
+    if result is None:
+        outcome.status = RunStatus.FAILED
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = "credential check emitted no result"
+        return outcome
+    if result.ok:
+        if result.error_class is not None:
+            outcome.status = RunStatus.FAILED
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "credential check returned an invalid successful result"
+        else:
+            outcome.status = RunStatus.SUCCESS
+            outcome.error_message = result.detail
+        return outcome
+    outcome.status = RunStatus.FAILED
+    outcome.error_class = result.error_class or ErrorClass.INTERNAL
+    outcome.error_message = result.detail or "provider credential check failed"
+    return outcome
+
+
+async def _finalize_check(
+    engine: AsyncEngine,
+    *,
+    provider_id: str,
+    run_id: int,
+    outcome: RunOutcome,
+    restore_status: ProviderStatus,
+    now: datetime,
+) -> None:
+    """Close a diagnostic run without changing sync health, cursor, or schedule state."""
+    async with transaction(engine) as conn:
+        result = await conn.execute(
+            update(sync_runs)
+            .where(sync_runs.c.id == run_id, sync_runs.c.status == str(RunStatus.RUNNING))
+            .values(
+                status=str(outcome.status),
+                finished_at=now,
+                items_seen=0,
+                items_written=0,
+                items_failed=0,
+                error_class=str(outcome.error_class) if outcome.error_class else None,
+                error_message=outcome.error_message,
+                log_excerpt=outcome.log_excerpt,
+                cursor_after=None,
+            )
+        )
+        if result.rowcount != 1:
+            raise RuntimeError(f"check run {run_id} was not open when finalized")
+        provider_result = await conn.execute(
+            update(providers)
+            .where(
+                providers.c.id == provider_id,
+                providers.c.status == str(ProviderStatus.SYNCING),
+            )
+            .values(status=str(restore_status), updated_at=now)
+        )
+        if provider_result.rowcount != 1:
+            raise RuntimeError(f"provider {provider_id!r} was not locked by its check")
 
 
 async def _record_provider_schema_version(
@@ -817,13 +948,19 @@ async def _open_run(
         # ``run_once`` is also a direct orchestration seam for recovery/import callers and focused
         # tests that do not pass through ``claim``. Make the same durable provider lock explicit
         # here; a scheduler claim that already set ``syncing`` is idempotent.
+        provider_admission = providers.c.enabled.is_(True) & providers.c.status.in_(
+            (str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))
+        )
+        if mode is FetchMode.CHECK:
+            provider_admission = provider_admission | (
+                providers.c.enabled.is_(False)
+                & providers.c.status.in_(
+                    (str(ProviderStatus.DISABLED), str(ProviderStatus.MISCONFIGURED))
+                )
+            )
         provider_result = await conn.execute(
             update(providers)
-            .where(
-                providers.c.id == provider_id,
-                providers.c.enabled.is_(True),
-                providers.c.status.in_((str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))),
-            )
+            .where(providers.c.id == provider_id, provider_admission)
             .values(status=str(ProviderStatus.SYNCING), updated_at=now)
         )
         running_elsewhere = (
@@ -849,8 +986,8 @@ async def _open_run(
             ).first()
             if (
                 provider_row is None
-                or not provider_row.enabled
                 or provider_row.status != str(ProviderStatus.SYNCING)
+                or (mode is not FetchMode.CHECK and not provider_row.enabled)
             ):
                 raise RuntimeError(f"provider {provider_id!r} was not admitted for a sync")
         return int(primary_key[0])

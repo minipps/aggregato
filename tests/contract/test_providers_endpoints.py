@@ -8,7 +8,9 @@ race itself.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -16,8 +18,8 @@ from sqlalchemy import select, update
 
 from aggregato.config import Config, load_config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import provider_state, providers
-from aggregato.domain.enums import ProviderStatus
+from aggregato.db.schema import provider_state, providers, sync_runs
+from aggregato.domain.enums import FetchMode, ProviderStatus, RunStatus
 from aggregato.main import create_app
 
 TOKEN = "providers-contract-token"
@@ -342,6 +344,167 @@ async def test_an_unknown_sync_mode_is_rejected(client: httpx.AsyncClient) -> No
 async def test_syncing_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/v1/providers/nope/sync")
     assert response.status_code == 404
+
+
+# --- Credential check --------------------------------------------------------------------------
+
+
+async def test_check_queues_a_disabled_provider_without_rescheduling_it(
+    client: httpx.AsyncClient,
+) -> None:
+    """A diagnostic is an explicit worker job, not an enable or a schedule mutation."""
+    await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+    engine = await _engine_for(client)
+    preserved_schedule = datetime(2099, 1, 1, tzinfo=UTC)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(next_run_at=preserved_schedule, cursor={"next_page": 7})
+        )
+
+    response = await client.post("/api/v1/providers/fixture/check")
+    assert response.status_code == 202
+    lineage_id = response.json()["lineage_id"]
+
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        state = (
+            await conn.execute(
+                select(
+                    provider_state.c.next_run_at,
+                    provider_state.c.cursor,
+                    provider_state.c.requested_mode,
+                    provider_state.c.requested_lineage_id,
+                ).where(provider_state.c.provider_id == "fixture")
+            )
+        ).one()
+        provider = (
+            await conn.execute(
+                select(providers.c.enabled, providers.c.status).where(providers.c.id == "fixture")
+            )
+        ).one()
+    assert provider.enabled is False
+    assert provider.status == str(ProviderStatus.DISABLED)
+    assert state.next_run_at.replace(tzinfo=UTC) == preserved_schedule
+    assert state.cursor == {"next_page": 7}
+    assert state.requested_mode == str(FetchMode.CHECK)
+    assert str(state.requested_lineage_id) == lineage_id
+
+    from aggregato.sync.scheduler import due_providers
+
+    due = await due_providers(engine, now=datetime(2026, 1, 1, tzinfo=UTC))  # type: ignore[arg-type]
+    assert [item.provider_id for item in due] == ["fixture"]
+    assert (await client.post("/api/v1/providers/fixture/check")).status_code == 409
+
+
+async def test_check_runs_in_isolation_and_is_not_sync_history(
+    client: httpx.AsyncClient,
+) -> None:
+    await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+    engine = await _engine_for(client)
+    preserved_schedule = datetime(2099, 1, 1, tzinfo=UTC)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(next_run_at=preserved_schedule, cursor={"next_page": 7})
+        )
+
+    queued = await client.post("/api/v1/providers/fixture/check")
+    assert queued.status_code == 202
+
+    from aggregato.sync.dispatch import build_dispatch
+    from aggregato.sync.scheduler import claim, due_providers
+
+    due = await due_providers(engine, now=datetime(2026, 1, 1, tzinfo=UTC))  # type: ignore[arg-type]
+    assert await claim(engine, "fixture", now=datetime(2026, 1, 1, tzinfo=UTC))  # type: ignore[arg-type]
+    transport = client._transport_for_url(httpx.URL("http://test/"))
+    assert isinstance(transport, httpx.ASGITransport)
+    await build_dispatch(engine, transport.app.state.config)(due[0])  # type: ignore[arg-type, union-attr]
+
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        run = (
+            await conn.execute(
+                select(
+                    sync_runs.c.mode,
+                    sync_runs.c.status,
+                    sync_runs.c.items_written,
+                    sync_runs.c.items_failed,
+                )
+                .where(sync_runs.c.provider_id == "fixture")
+                .order_by(sync_runs.c.id.desc())
+                .limit(1)
+            )
+        ).one()
+        state = (
+            await conn.execute(
+                select(
+                    provider_state.c.next_run_at,
+                    provider_state.c.cursor,
+                    provider_state.c.requested_mode,
+                ).where(provider_state.c.provider_id == "fixture")
+            )
+        ).one()
+        provider = (
+            await conn.execute(
+                select(providers.c.enabled, providers.c.status).where(providers.c.id == "fixture")
+            )
+        ).one()
+    assert run.mode == str(FetchMode.CHECK)
+    assert run.status == str(RunStatus.SUCCESS)
+    assert run.items_written == 0
+    assert run.items_failed == 0
+    assert state.next_run_at.replace(tzinfo=UTC) == preserved_schedule
+    assert state.cursor == {"next_page": 7}
+    assert state.requested_mode is None
+    assert provider.enabled is False
+    assert provider.status == str(ProviderStatus.DISABLED)
+
+    latest = await client.get("/api/v1/providers/fixture/last-run")
+    assert latest.status_code == 200
+    assert latest.json()["status"] is None
+    view = await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+    assert view.json()["last_check"]["status"] == "success"
+
+
+async def test_check_rejects_invalid_configuration(client: httpx.AsyncClient) -> None:
+    await client.post("/api/v1/providers/fixture/enable")
+    engine = await _engine_for(client)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            update(providers).where(providers.c.id == "fixture").values(config={"wrong_key": 1})
+        )
+
+    response = await client.post("/api/v1/providers/fixture/check")
+    assert response.status_code == 422
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        requested = (
+            await conn.execute(
+                select(provider_state.c.requested_mode).where(
+                    provider_state.c.provider_id == "fixture"
+                )
+            )
+        ).scalar_one()
+    assert requested is None
+
+
+async def test_check_rejects_an_active_sync(client: httpx.AsyncClient) -> None:
+    await client.post("/api/v1/providers/fixture/enable")
+    engine = await _engine_for(client)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            sync_runs.insert().values(
+                provider_id="fixture",
+                lineage_id=uuid4(),
+                attempt=1,
+                mode=str(FetchMode.INCREMENTAL),
+                status=str(RunStatus.RUNNING),
+                started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+
+    response = await client.post("/api/v1/providers/fixture/check")
+    assert response.status_code == 409
 
 
 # --- Latest recorded run -----------------------------------------------------------------------

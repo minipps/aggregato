@@ -17,7 +17,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from aggregato.domain.enums import ErrorClass
-from aggregato.domain.models import Cursor, NormalizedBatch, RawRecord
+from aggregato.domain.models import CheckResult, Cursor, NormalizedBatch, RawRecord
 
 #: Cap on one line's length. A provider that emits an unbounded line would otherwise let the parent
 #: read until it runs out of memory — which is a hang the wall-clock kill cannot help with, because
@@ -82,8 +82,17 @@ class FailureMessage(BaseModel):
     error: str
 
 
+class CheckMessage(BaseModel):
+    """The one diagnostic result emitted by a credential-check child run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["check"] = "check"
+    result: CheckResult
+
+
 ChildMessage = Annotated[
-    BatchMessage | CheckpointMessage | ErrorMessage | FailureMessage,
+    BatchMessage | CheckpointMessage | ErrorMessage | FailureMessage | CheckMessage,
     Field(discriminator="type"),
 ]
 
