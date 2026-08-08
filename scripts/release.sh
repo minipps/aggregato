@@ -57,6 +57,53 @@ if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null ||
     exit 1
 fi
 
+# The preflight above is deliberately outside this transaction: it has not changed anything. From
+# here on, every failure must leave the worktree as it was before the bump, including failures after
+# the commit or local tag have been created.
+base_commit=$(git rev-parse HEAD)
+bump_started=1
+release_commit_created=0
+main_pushed=0
+tag_created=0
+release_complete=0
+abort_requested=0
+
+rollback() {
+    status=$?
+    trap - 0
+
+    if [ "$release_complete" -eq 0 ] && [ "$bump_started" -eq 1 ]; then
+        # The script refuses a dirty worktree before this point, so restoring the base commit cannot
+        # discard anything belonging to the caller. A hard reset is needed once commit has run;
+        # checkout alone would leave a failed release commit behind.
+        if [ "$release_commit_created" -eq 1 ] || [ "$(git rev-parse HEAD)" != "$base_commit" ]; then
+            if ! git reset --hard "$base_commit"; then
+                echo "release: could not restore the pre-release commit" >&2
+            fi
+        elif ! git checkout -- README.md docker/compose.yml pyproject.toml \
+            frontend/package.json frontend/package-lock.json uv.lock; then
+            echo "release: could not restore the version files" >&2
+        fi
+
+        if [ "$tag_created" -eq 1 ]; then
+            git tag --delete "$tag" >/dev/null 2>&1 ||
+                echo "release: could not remove local tag $tag" >&2
+        fi
+
+        if [ "$main_pushed" -eq 1 ]; then
+            echo "release: main was pushed before the failure; the remote commit was not rolled back" >&2
+        fi
+        if [ "$abort_requested" -eq 1 ]; then
+            echo "release: aborted, version files restored" >&2
+        else
+            echo "release: failed, release changes rolled back" >&2
+        fi
+    fi
+
+    exit "$status"
+}
+trap rollback 0
+
 # --- Bump ---------------------------------------------------------------------------------------
 
 # Anchored to the line-start `version` key, which only the [project] table has, and asserting
@@ -89,8 +136,8 @@ PY
 uv lock --quiet
 
 # Keep the release examples in step with the image that the release will publish. Each pattern is
-# deliberately narrow and must match exactly once: a missing match means an example drifted, while
-# a second match means the script would be leaving another release marker behind.
+# deliberately narrow and must match the expected number of times: a missing match means an example
+# drifted, while an unexpected extra match means the script would be leaving another marker behind.
 python3 - "$version" <<'PY'
 import pathlib
 import re
@@ -100,7 +147,11 @@ new = sys.argv[1]
 semver = r"[0-9]+\.[0-9]+\.[0-9]+"
 updates = {
     pathlib.Path("README.md"): (
-        ("published image version", rf"published `{semver}` image", f"published `{new}` image"),
+        (
+            "published image version",
+            rf"published backend and frontend `{semver}` images",
+            f"published backend and frontend `{new}` images",
+        ),
         (
             "README image pin",
             rf"AGGREGATO_VERSION={semver}",
@@ -117,6 +168,7 @@ updates = {
             "Compose default image tag",
             rf"\$\{{AGGREGATO_VERSION:-{semver}\}}",
             f"${{AGGREGATO_VERSION:-{new}}}",
+            2,
         ),
     ),
 }
@@ -124,10 +176,12 @@ updates = {
 changed: dict[pathlib.Path, str] = {}
 for path, rules in updates.items():
     text = path.read_text(encoding="utf-8")
-    for label, pattern, replacement in rules:
+    for rule in rules:
+        expected = rule[3] if len(rule) == 4 else 1
+        label, pattern, replacement = rule[:3]
         text, count = re.subn(pattern, replacement, text)
-        if count != 1:
-            sys.exit(f"release: expected one {label} in {path}, found {count}")
+        if count != expected:
+            sys.exit(f"release: expected {expected} {label} in {path}, found {count}")
     changed[path] = text
 
 for path, text in changed.items():
@@ -176,17 +230,20 @@ read -r reply
 case "$reply" in
     y | Y) ;;
     *)
-        git checkout -- README.md docker/compose.yml pyproject.toml frontend/package.json frontend/package-lock.json uv.lock
-        echo "release: aborted, version files restored"
+        abort_requested=1
         exit 1
         ;;
 esac
 
 git commit --quiet -am "chore: release $version"
+release_commit_created=1
 # main before the tag: if the branch is protected, this fails while the tag is still local and the
 # only cleanup needed is `git reset --hard origin/main`.
 git push --quiet origin main
+main_pushed=1
 git tag "$tag"
+tag_created=1
 git push --quiet origin "$tag"
+release_complete=1
 
 echo "release: pushed $tag — https://github.com/minipps/aggregato/actions"
