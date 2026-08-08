@@ -13,7 +13,8 @@ Set `AGGREGATO_PROVIDER_DIR` to a directory you control. Add one package directl
 ```text
 $AGGREGATO_PROVIDER_DIR/
 └── example_log/
-    └── __init__.py
+    ├── __init__.py
+    └── manifest.json
 ```
 
 `__init__.py` exposes exactly one module-level object named `provider`. Importing it must not do I/O, make network calls, read credentials, or schedule work.
@@ -43,17 +44,43 @@ class ExampleProvider(FixtureProvider):
 
 
 provider = ExampleProvider()
-provider_api_version = 1
+```
+
+`manifest.json` is required for discovery. It contains the host-visible declaration, so listing a
+provider never imports `__init__.py`:
+
+```json
+{
+  "name": "Example Log",
+  "media_types": ["film"],
+  "capabilities": ["poll"],
+  "acquisition": "api",
+  "schema_version": 1,
+  "default_poll_interval_seconds": 21600,
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "token": {
+        "type": "string",
+        "description": "Personal API token",
+        "x-aggregato-public": false,
+        "writeOnly": true
+      }
+    },
+    "required": ["token"],
+    "x-aggregato-public": true
+  }
+}
 ```
 
 ### Discovery and the trust boundary
 
 The host lists providers from host-owned metadata. Bundled providers have a static manifest in the
-core; a drop-in may supply `manifest.json` next to `__init__.py` with `name`, `media_types`,
+core; a drop-in must supply `manifest.json` next to `__init__.py` with `name`, `media_types`,
 `capabilities`, `acquisition`, `schema_version`, `default_poll_interval_seconds`, and
-`config_schema`. Listing that metadata does not execute `__init__.py`. A legacy drop-in without a
-manifest is listed with conservative metadata, so a manifest is the supported way to expose useful
-settings and capabilities.
+`config_schema`. Listing that metadata does not execute `__init__.py`. A drop-in without a manifest
+is warned about and skipped; its provider code is not imported during discovery.
 
 The package is imported only after an operator selects its provider for an operation. A scheduled
 sync runs the selected provider in its short-lived child, while the parent keeps the database and
@@ -79,7 +106,7 @@ Record representative fixtures, including invalid credentials and (for a scraper
 uv run pytest tests/conformance
 ```
 
-The provider is intentionally marked **unreviewed** in the UI. Review its source before enabling it. A warning about a different `provider_api_version` means the host can still load it, but its contract may have changed and needs review.
+The provider is intentionally marked **unreviewed** in the UI. Review its source before enabling it.
 
 ## 5. Ship normalizer fixes safely
 

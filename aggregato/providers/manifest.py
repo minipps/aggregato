@@ -37,6 +37,7 @@ def _string(
     default: str | None = None,
     format: str | None = None,
     min_length: int | None = None,
+    max_length: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     value: dict[str, Any] = {
         "type": "string",
@@ -51,13 +52,26 @@ def _string(
         value["format"] = format
     if min_length is not None:
         value["minLength"] = min_length
+    if max_length is not None:
+        value["maxLength"] = max_length
     if secret:
         value["writeOnly"] = True
     return value, required
 
 
-def _nullable_string(*, description: str, format: str | None = None) -> dict[str, Any]:
-    value, _ = _string(description=description, format=format)
+def _nullable_string(
+    *,
+    description: str,
+    format: str | None = None,
+    min_length: int | None = None,
+    max_length: int | None = None,
+) -> dict[str, Any]:
+    value, _ = _string(
+        description=description,
+        format=format,
+        min_length=min_length,
+        max_length=max_length,
+    )
     return {"anyOf": [value, {"type": "null"}], "default": None}
 
 
@@ -138,17 +152,22 @@ _goodreads_profile = _nullable_string(
         "(/review/list_rss/<id>). The public RSS feed is refreshed daily."
     ),
     format="uri",
+    min_length=1,
+    max_length=2083,
 )
-_goodreads_export = _nullable_string(
-    description="Optional local library-export CSV for a manually requested full sync.",
-    format="path",
-)
-
 _koito_base_url, _ = _string(
-    description="Base URL of the Koito server: scheme, host and optional port.", required=True
+    description=(
+        "Base URL of the Koito server: scheme, host and optional port, for example "
+        "http://koito.lan:4110. Stop before /apis — the API path is appended."
+    ),
+    required=True,
+    min_length=1,
 )
 _koito_api_key, _ = _string(
-    description="Koito API key. Use a ${ENV_VAR} reference to keep it out of the config file.",
+    description=(
+        "Koito API key, from Settings -> API keys on the server. Use a ${ENV_VAR} reference to "
+        "keep it out of the config file. Required whenever Koito's login gate is on."
+    ),
     required=True,
     secret=True,
     format="password",
@@ -161,22 +180,29 @@ _letterboxd_username = _nullable_string(
 _letterboxd_rss = _nullable_string(
     description="Optional full public RSS URL; overrides the URL derived from username.",
     format="uri",
+    min_length=1,
+    max_length=2083,
 )
-_letterboxd_export = _nullable_string(
-    description="Optional local RSS/XML export for a manually requested full sync.", format="path"
-)
-
 _listenbrainz_base, _ = _string(
-    description="Base URL of the ListenBrainz-compatible API.",
+    description=(
+        "Base URL of the ListenBrainz-compatible API: scheme, host, optional port and optional "
+        "path prefix. Leave it at https://api.listenbrainz.org for ListenBrainz itself, or point "
+        "it at a compatible server — Maloja is the tested case, at "
+        "http://maloja.lan:42010/apis/listenbrainz."
+    ),
     default="https://api.listenbrainz.org",
 )
 _listenbrainz_username, _ = _string(
-    description="ListenBrainz username whose listens are read.", required=True, min_length=1
+    description=(
+        "ListenBrainz username whose listens are read. Case-sensitive, as the platform stores it."
+    ),
+    required=True,
+    min_length=1,
 )
 _listenbrainz_token, _ = _string(
     description=(
-        "ListenBrainz user token. Use an environment-variable reference to keep it "
-        "out of the config file."
+        "ListenBrainz user token, from Settings on the server. Use a ${ENV_VAR} reference to keep "
+        "it out of the config file."
     ),
     required=True,
     secret=True,
@@ -235,7 +261,7 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
             "has_credits",
         ),
         acquisition="export",
-        schema_version=2,
+        schema_version=1,
         interval_seconds=3600,
         config_schema=_object_schema({"path": _fixture_path}, required=["path"]),
         api_visible=False,
@@ -246,13 +272,11 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
     "goodreads": _manifest(
         name="Goodreads",
         media_types=("book",),
-        capabilities=("poll", "file_import", "has_ratings", "has_reviews", "has_credits"),
+        capabilities=("poll", "has_ratings", "has_reviews", "has_credits"),
         acquisition="feed",
         schema_version=3,
         interval_seconds=86400,
-        config_schema=_object_schema(
-            {"profile_url": _goodreads_profile, "export_path": _goodreads_export}
-        ),
+        config_schema=_object_schema({"profile_url": _goodreads_profile}),
         rating_scales=(
             _scale("goodreads-5-star", kind="linear", minimum="1", maximum="5", step="1"),
         ),
@@ -272,16 +296,12 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
     "letterboxd": _manifest(
         name="Letterboxd",
         media_types=("film", "tv"),
-        capabilities=("poll", "file_import", "has_ratings", "has_reviews"),
+        capabilities=("poll", "has_ratings", "has_reviews"),
         acquisition="feed",
         schema_version=1,
         interval_seconds=21600,
         config_schema=_object_schema(
-            {
-                "username": _letterboxd_username,
-                "rss_url": _letterboxd_rss,
-                "export_path": _letterboxd_export,
-            }
+            {"username": _letterboxd_username, "rss_url": _letterboxd_rss}
         ),
         rating_scales=(
             _scale(
@@ -299,7 +319,7 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
         media_types=("track",),
         capabilities=("poll", "backfill", "has_credits"),
         acquisition="api",
-        schema_version=2,
+        schema_version=1,
         interval_seconds=900,
         config_schema=_object_schema(
             {

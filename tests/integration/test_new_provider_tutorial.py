@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from aggregato.providers.registry import PROVIDER_API_VERSION, discover_providers, load_provider
+from aggregato.providers.registry import discover_providers, load_provider
 
 
 def test_throwaway_provider_from_the_guide_needs_no_core_file(tmp_path: Path) -> None:
@@ -18,7 +19,20 @@ def test_throwaway_provider_from_the_guide_needs_no_core_file(tmp_path: Path) ->
         "from aggregato.providers.fixture import FixtureProvider\n"
         "provider = FixtureProvider()\n"
         "provider.id = 'tutorial_provider'\n"
-        f"provider_api_version = {PROVIDER_API_VERSION}\n"
+    )
+    (package / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "Tutorial provider",
+                "media_types": [],
+                "capabilities": [],
+                "acquisition": "export",
+                "schema_version": 1,
+                "default_poll_interval_seconds": 3600,
+                "config_schema": {"type": "object", "properties": {}},
+            }
+        ),
+        encoding="utf-8",
     )
 
     info = next(info for info in discover_providers(tmp_path) if info.id == "tutorial_provider")
