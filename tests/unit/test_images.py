@@ -16,9 +16,9 @@ from typing import Any
 import httpx
 import pytest
 
-from aggregato.api.routes.images import _PLACEHOLDER, image
+from aggregato.api.routes.images import _PLACEHOLDER, _add_base_url_origin, image
 from aggregato.images import cache as image_cache
-from aggregato.images.cache import cached_image, url_hash
+from aggregato.images.cache import cached_image, image_origin, url_hash
 
 _PNG = (
     b"\x89PNG\r\n\x1a\n"
@@ -29,6 +29,9 @@ _PNG = (
 _PNG_HASH = sha256(_PNG).hexdigest()
 _JPEG = base64.b64decode(
     "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAABAAEDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q=="
+)
+_PROGRESSIVE_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wgARCAABAAEDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAB//EABUBAQEAAAAAAAAAAAAAAAAAAAYI/9oADAMBAAIQAxAAAAE5C1T/AP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEABj8Cf//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8hf//aAAwDAQACAAMAAAAQ/wD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EH//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EH//2Q=="
 )
 _GIF = base64.b64decode("R0lGODlhAQABAPAAAP8AAAAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==")
 _WEBP = base64.b64decode(
@@ -210,6 +213,50 @@ async def test_dns_results_are_checked_before_a_request(
     assert calls == []
 
 
+async def test_explicitly_configured_private_origin_can_serve_artwork(
+    engine: _FakeDatabase, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def private_result(
+        host: str, port: int, *args: object, **kwargs: object
+    ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        del host, args, kwargs
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.23.0.2", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", private_result)
+    calls: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200, request=request, headers={"content-type": "image/webp"}, content=_WEBP
+        )
+
+    _mock_client(monkeypatch, respond)
+    source_url = "http://koito:4110/image/track.webp"
+    digest = await _register(engine, source_url)
+
+    result = await cached_image(
+        engine,
+        data_dir,
+        digest,
+        allowed_origins={image_origin(source_url)},
+    )
+
+    assert result is not None
+    assert result[1] == "image/webp"
+    assert calls[0].url.host == "172.23.0.2"
+    assert calls[0].headers["host"] == "koito:4110"
+
+
+def test_only_a_provider_base_url_becomes_a_private_image_origin() -> None:
+    origins: set[str] = set()
+
+    _add_base_url_origin({"base_url": "http://koito:4110/apis"}, origins)
+    _add_base_url_origin({"base_url": "http://user:secret@koito:4110"}, origins)
+
+    assert origins == {"http://koito:4110"}
+
+
 async def test_redirect_target_is_validated_before_following(
     engine: _FakeDatabase, data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -261,7 +308,6 @@ async def test_dns_address_is_pinned_for_the_connection_request(
         ("image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
         ("image/png", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
         ("image/png", b"not an image"),
-        ("image/png", _PNG[:8] + b"truncated"),
     ],
 )
 async def test_image_body_must_be_a_non_svg_known_format(
@@ -288,6 +334,7 @@ async def test_image_body_must_be_a_non_svg_known_format(
     [
         ("image/png", _PNG),
         ("image/jpeg", _JPEG),
+        ("image/jpeg", _PROGRESSIVE_JPEG),
         ("image/gif", _GIF),
         ("image/webp", _WEBP),
         ("image/bmp", _BMP),
@@ -298,7 +345,7 @@ async def test_image_body_must_be_a_non_svg_known_format(
         ("image/heic", _HEIC),
     ],
 )
-async def test_common_raster_formats_pass_structural_validation(
+async def test_common_raster_formats_pass_magic_detection(
     engine: _FakeDatabase,
     data_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -318,39 +365,6 @@ async def test_common_raster_formats_pass_structural_validation(
     assert result is not None
     assert result[1] == content_type
     assert result[0].read_bytes() == body
-
-
-@pytest.mark.parametrize(
-    ("content_type", "body"),
-    [
-        ("image/jpeg", _JPEG[:-2]),
-        ("image/gif", _GIF[:-1]),
-        ("image/webp", _WEBP[:-1]),
-        ("image/bmp", _BMP[:-1]),
-        ("image/tiff", _TIFF[:-1]),
-        ("image/x-icon", _ICO[:-1]),
-        ("image/jp2", _JP2[:-1]),
-        ("image/avif", _AVIF[:-1]),
-        ("image/heic", _HEIC[:-1]),
-    ],
-)
-async def test_truncated_raster_formats_are_not_published(
-    engine: _FakeDatabase,
-    data_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    content_type: str,
-    body: bytes,
-) -> None:
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200, request=request, headers={"content-type": content_type}, content=body
-        )
-
-    _mock_client(monkeypatch, respond)
-    digest = await _register(engine, "https://93.184.216.34/image.png")
-
-    assert await cached_image(engine, data_dir, digest) is None
-    assert list((data_dir / "images").rglob("*.tmp")) == []
 
 
 async def test_response_size_is_bounded_before_publication(
@@ -461,9 +475,14 @@ async def test_concurrent_misses_share_one_digest_fetch(
     calls = 0
     path = data_dir / "images" / _PNG_HASH[:2] / _PNG_HASH
 
-    async def fake_fetch(source_url: str, root: Path) -> tuple[Path, str, str, int]:
+    async def fake_fetch(
+        source_url: str,
+        root: Path,
+        *,
+        allowed_origins: object,
+    ) -> tuple[Path, str, str, int]:
         nonlocal calls
-        del source_url
+        del source_url, allowed_origins
         assert root == data_dir
         calls += 1
         entered.set()
@@ -559,11 +578,19 @@ async def test_public_route_sets_security_headers_on_cached_files(
         *,
         enabled: bool,
         now: datetime | None,
+        allowed_origins: frozenset[str],
     ) -> tuple[Path, str]:
         assert enabled
         assert now is not None
+        assert not allowed_origins
         return path, "image/png"
 
+    async def no_configured_origins(_request: Any) -> frozenset[str]:
+        return frozenset()
+
+    monkeypatch.setattr(
+        "aggregato.api.routes.images._configured_image_origins", no_configured_origins
+    )
     monkeypatch.setattr("aggregato.api.routes.images.get_settings", settings)
     monkeypatch.setattr("aggregato.api.routes.images.cached_image", found)
 

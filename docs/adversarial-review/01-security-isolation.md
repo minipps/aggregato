@@ -101,10 +101,11 @@ Impact:
 Fix:
 
 - Parse and validate schemes (\`https\` by default), resolve every redirect, reject loopback,
-  link-local, private, multicast, unspecified, and internal DNS results, and re-check DNS at connect
-  time. Prefer an explicit allowlist for provider hosts.
-- Stream with a hard byte limit; enforce both declared and observed size; validate magic bytes and
-  decode the image rather than trusting \`Content-Type\`.
+  link-local, private, multicast, unspecified, and internal DNS results unless the origin is an
+  explicitly configured provider endpoint, and re-check DNS at connect time. Prefer an explicit
+  allowlist for provider hosts.
+- Stream with a hard byte limit; enforce both declared and observed size; identify supported raster
+  formats from magic bytes with a maintained library rather than trusting \`Content-Type\`.
 - Reject SVG or sanitize/rasterize it; send \`X-Content-Type-Options: nosniff\`, a restrictive CSP,
   and a non-inline content disposition.
 - Use per-digest locking plus temporary-file/\`fsync\`/atomic-rename writes. Verify the stored digest.

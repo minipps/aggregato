@@ -155,8 +155,8 @@ These changes should land with regression tests before adding providers or enabl
 - Child environment contains no API token, readonly token, database URL, or unrelated sentinel.
 - A drop-in cannot write outside its allowed directory or access a forbidden capability, if the
   chosen deployment model promises that restriction.
-- Image requests reject private IPs, DNS rebinding, unsafe redirects, oversized bodies, SVG, invalid
-  magic bytes, and partial/concurrent writes.
+- Image requests reject unconfigured private IPs, DNS rebinding, unsafe redirects, oversized bodies,
+  SVG, invalid magic bytes, and partial/concurrent writes.
 - Child handles max-size lines, stderr saturation, malformed lines, and replay payload limits.
 
 ### Scheduler and lifecycle
