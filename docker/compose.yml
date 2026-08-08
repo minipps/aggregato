@@ -21,7 +21,9 @@ services:
     # in the database and read by the worker when it starts a provider run.
     environment:
       # The only fatal configuration error . Generate: openssl rand -hex 32
-      AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
+      # Keep this optional at Compose parse time so `docker compose pull` works before the
+      # operator has configured a token. The application still rejects an empty token at startup.
+      AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:-}
       AGGREGATO_DATA: /data
       # Import storage quotas include the upload currently being admitted.
       AGGREGATO_IMPORT_QUOTA_BYTES: ${AGGREGATO_IMPORT_QUOTA_BYTES:-536870912}

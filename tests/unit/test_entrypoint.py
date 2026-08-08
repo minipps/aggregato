@@ -27,6 +27,14 @@ def test_deployment_examples_expose_quota_and_proxy_settings() -> None:
         assert setting in compose
 
 
+def test_compose_pull_does_not_require_an_application_token() -> None:
+    root = Path(__file__).parents[2]
+    compose = (root / "docker" / "compose.yml").read_text(encoding="utf-8")
+
+    assert "AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:-}" in compose
+    assert "AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?" not in compose
+
+
 def test_compose_always_runs_a_frontend_and_dev_selects_hot_reload_target() -> None:
     root = Path(__file__).parents[2]
     base = yaml.safe_load((root / "docker" / "compose.yml").read_text(encoding="utf-8"))
