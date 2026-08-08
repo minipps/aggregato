@@ -99,6 +99,12 @@ also visible through `/health` and the Providers screen.
 
 ## Provider configuration in Docker
 
+The normal Compose stack has two long-lived containers: `aggregato` runs the API and scheduler, and
+`frontend` serves the built SPA and proxies `/api` to it. `docker compose -f docker/compose.yml pull`
+pulls both release images. Only the frontend publishes a host port (8000 by default); set
+`AGGREGATO_FRONTEND_PORT` to choose another one. The development overlay replaces both images with
+local builds and enables Vite and API hot reload.
+
 Settings saved from the Providers screen are stored in the archive database at
 `/data/aggregato.db`. Docker Compose mounts `/data` on the named `aggregato-data` volume, so those
 settings survive `docker compose stop`, `docker compose up`, image upgrades, and `docker compose

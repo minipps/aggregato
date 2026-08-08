@@ -1,18 +1,10 @@
-# Multi-stage so the operator never installs Node and the runtime image carries no toolchain
-# (docs/research.md — the mitigation for the SPA deviation recorded in architecture.md).
+# Multi-stage so the runtime image carries no build toolchain. The frontend is a separate image in
+# frontend.Dockerfile; this image is deliberately API + scheduler only.
 # Base images and the uv tool image use exact version tags plus immutable manifest digests.
 # Dependabot proposes reviewed refreshes; release CI attaches an SBOM and provenance attestation to
-# the resulting image.
+# each resulting image.
 
-# --- Stage 1: build the SPA -------------------------------------------------------------------
-FROM node:26.5.1-slim@sha256:deae974a69e140f44f434ab29cb519fb5f8fe250fd364b8ca446bd0761acdc6a AS frontend
-WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
-COPY frontend/ ./
-RUN npm --loglevel=error run build
-
-# --- Stage 2: resolve Python dependencies into a venv ----------------------------------------
+# --- Stage 1: resolve Python dependencies into a venv ------------------------------------------
 FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS deps
 COPY --from=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded /uv /usr/local/bin/uv
 WORKDIR /app
@@ -23,13 +15,12 @@ COPY aggregato/ ./aggregato/
 COPY README.md ./
 RUN uv sync --frozen --no-dev
 
-# --- Stage 3: runtime — venv, code, built assets, no toolchain -------------------------------
+# --- Stage 2: runtime — venv and code, no toolchain -------------------------------------------
 FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS runtime
 
 RUN useradd --create-home --uid 10001 aggregato
 COPY --from=deps /opt/venv /opt/venv
 COPY --from=deps /app/aggregato /app/aggregato
-COPY --from=frontend /build/dist /app/static
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
@@ -37,8 +28,7 @@ WORKDIR /app
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    AGGREGATO_DATA=/data \
-    AGGREGATO_STATIC_DIR=/app/static
+    AGGREGATO_DATA=/data
 
 RUN mkdir -p /data && chown aggregato:aggregato /data
 USER aggregato

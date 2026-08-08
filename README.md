@@ -72,14 +72,16 @@ export AGGREGATO_TOKEN=$(openssl rand -hex 32)   # keep this — it is your logi
 docker compose -f docker/compose.yml up -d
 ```
 
-That runs the published `0.2.0` image (amd64 and arm64); pin it explicitly with
+That pulls the published backend and frontend `0.2.0` images (amd64 and arm64); pin them explicitly with
 `AGGREGATO_VERSION=0.2.0`, or set `AGGREGATO_VERSION` to a newer release when upgrading. Use
 `docker compose -f docker/compose.yml pull && docker compose
 -f docker/compose.yml up -d`, and if you would rather build from your checkout, use `docker compose
 -f docker/compose.yml build`.
 
-Open <http://localhost:8000> and sign in with that token. One image, one volume, two processes (the
-API and the scheduler). No database server, no message broker, no other services.
+Open <http://localhost:8000> and sign in with that token. The frontend container serves the SPA and
+proxies `/api` to the backend container, which runs the API and scheduler. There is one named volume;
+no database server, message broker, or other service is needed. Set `AGGREGATO_FRONTEND_PORT` if the
+host's port 8000 is already in use.
 
 Then, on the **Providers** screen:
 
@@ -160,7 +162,8 @@ cd frontend && npm install && npm run dev    # dev server proxies /api to :8000
 ```
 
 To develop the frontend entirely in Docker, start the normal service plus the development overlay and
-open <http://localhost:5173>; `frontend/` is bind-mounted into Vite, so edits reload immediately.
+open <http://localhost:8000>; the overlay replaces the production frontend image with Vite and
+bind-mounts `frontend/`, so edits hot-reload immediately. Backend Python edits reload the API too.
 
 ```bash
 docker compose -f docker/compose.yml -f docker/compose.dev.yml up

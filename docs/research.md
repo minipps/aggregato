@@ -183,8 +183,8 @@ fetch is what makes "an image host being down never fails a sync" true rather th
 **Decision**: Vue 3 + Vite + TypeScript + vue-router. No state library — a `useApi` composable and
 component-local state cover it; there is one user and no shared mutable client state worth a store.
 Provider settings forms are rendered by one `SchemaForm.vue` from the provider's Pydantic JSON Schema
-served by `GET /providers/{id}/config-schema`. Built in a Docker stage; the runtime image contains
-only static assets served by the API process.
+served by `GET /providers/{id}/config-schema`. Built in a Docker stage and served by a dedicated
+Nginx frontend container; the API container remains API-only.
 
 **Rationale**: Operator's explicit choice. It reinforces  — an SPA cannot reach the database or
 a private endpoint even by accident, so "the UI consumes only the public API" becomes structural.
@@ -239,10 +239,11 @@ slow test.
 
 ##  — Packaging
 
-**Decision**: Multi-stage Dockerfile — Node stage builds `frontend/`, Python stage installs the
-package (uv), final stage carries the venv, the built assets, and no toolchain. One `docker
-compose.yml` with one volume. Two processes started by the image entrypoint (API + scheduler), the
-scheduler being restartable independently.
+**Decision**: Two multi-stage Dockerfiles — the backend installs the Python package (uv), while the
+frontend builds `frontend/` and serves it from Nginx. Compose runs both images with one volume; the
+backend image's entrypoint still starts the two processes (API + scheduler), with the scheduler
+restartable independently. The development overlay selects the frontend Dockerfile's Node target,
+bind-mounts both source trees, and enables Vite/API reloaders.
 
 **Rationale**:  and the deviation mitigation in . `docker compose pull` is documented as the
 standard operator response to a `structure_changed` provider, per the source design's §12.7.

@@ -1,17 +1,18 @@
-# One service, one volume, one command . No database server and no broker: the schedule is
-# a table (research.md ) and the default store is SQLite in the volume below.
+# Two services, one volume, one command. No database server and no broker: the schedule is a table
+# (research.md) and the default store is SQLite in the volume below. The frontend is always present
+# in the normal stack; compose.dev.yml overlays it with Vite for development.
 services:
   aggregato:
-    # The published image, so `docker compose pull` works (docs/operations.md) — pin a release with
-    # AGGREGATO_VERSION=0.2.0. The build section stays: with no image pulled, `up` builds from this
-    # checkout, which is what a development run and a source install both want.
+    # The published backend image, so `docker compose pull` works (docs/operations.md) — pin a
+    # release with AGGREGATO_VERSION=0.2.0. The build section stays: with no image pulled, `up`
+    # builds from this checkout, which is what a development run and a source install both want.
     image: ghcr.io/minipps/aggregato:${AGGREGATO_VERSION:-0.2.0}
     build:
       context: ..
       dockerfile: docker/Dockerfile
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     # Every setting the application reads, with the defaults shown. Uncommented lines are the ones
     # this image sets: those it needs, plus optional ones forwarded from your .env, which are empty
     # when you leave them out and an empty value counts as unset. The rest are commented examples,
@@ -33,17 +34,15 @@ services:
       AGGREGATO_CORS_ORIGINS: ${AGGREGATO_CORS_ORIGINS:-}
       # Only these proxy addresses may supply forwarded scheme/host headers to uvicorn.
       AGGREGATO_FORWARDED_ALLOW_IPS: ${AGGREGATO_FORWARDED_ALLOW_IPS:-127.0.0.1}
-      # What uvicorn binds inside the container. 0.0.0.0 is right here — the published port above is
-      # what decides who can reach it — so change this only if you know why.
+      # What uvicorn binds inside the container. 0.0.0.0 is right here — the frontend is the only
+      # published service — so change this only if you know why.
       # AGGREGATO_HOST: 0.0.0.0
-      # The container-internal port. Publish a different one by editing `ports:` instead.
+      # The container-internal API port. The frontend proxy uses this service port.
       # AGGREGATO_PORT: 8000
       # Optional: point at Postgres past roughly 1M entries. Default is SQLite under AGGREGATO_DATA.
       # AGGREGATO_DATABASE_URL: postgresql+asyncpg://aggregato:secret@db/aggregato
       # Optional YAML config file, for settings the UI then shows as file-pinned. Mount it first.
       # AGGREGATO_CONFIG: /data/config.yaml
-      # The built web UI the API serves. The image sets this; an empty value means API only.
-      # AGGREGATO_STATIC_DIR: /app/static
       # Optional directory of your own provider packages, discovered from static metadata as
       # unreviewed drop-ins. Selecting one loads its package; this is not an OS sandbox.
       # AGGREGATO_PROVIDER_DIR: /data/providers
@@ -62,6 +61,26 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  frontend:
+    # The published SPA image. It is the public service: Nginx serves the built frontend and proxies
+    # /api to aggregato, so the API container never needs to publish a host port.
+    image: ghcr.io/minipps/aggregato-frontend:${AGGREGATO_VERSION:-0.2.0}
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${AGGREGATO_FRONTEND_PORT:-8000}:80"
+    depends_on:
+      aggregato:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
 volumes:
   aggregato-data:
