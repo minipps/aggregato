@@ -183,11 +183,16 @@ def test_process_shared_scrape_lock_is_held_across_processes(tmp_path: Path) -> 
 
 
 async def test_separate_hosts_do_not_block_each_other() -> None:
-    """A slow platform must not throttle an unrelated one — hence a semaphore per host."""
-    seen: list[str] = []
+    """A request held by one host must not block an unrelated host."""
+    started = {host: asyncio.Event() for host in ("a.test", "b.test")}
+    release_a = asyncio.Event()
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url.host)
+        host = request.url.host
+        assert host is not None
+        started[host].set()
+        if host == "a.test":
+            await release_a.wait()
         return httpx.Response(200)
 
     policy = PolitenessPolicy(acquisition=Acquisition.SCRAPE, declared_interval_seconds=0.0)
@@ -195,11 +200,15 @@ async def test_separate_hosts_do_not_block_each_other() -> None:
     object.__setattr__(client._limiter, "_min_interval", 0.0)
 
     async with client:
-        await client.get("https://a.test/x")
-        await client.get("https://b.test/x")
-
-    assert seen == ["a.test", "b.test"]
-    assert len(client._host_locks) == 2
+        first = asyncio.create_task(client.get("https://a.test/x"))
+        await started["a.test"].wait()
+        second = asyncio.create_task(client.get("https://b.test/x"))
+        try:
+            await asyncio.sleep(0)
+            assert started["b.test"].is_set()
+        finally:
+            release_a.set()
+            await asyncio.gather(first, second)
 
 
 # --- Identity ---------------------------------------------------------------------------------
