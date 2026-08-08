@@ -15,8 +15,8 @@ polls a database-backed due-queue and executes each sync run in a **short-lived 
 streams normalized JSON batches back over a pipe. This provides crash/hang containment and ensures
 plugins never receive a database handle.
 Storage is SQLAlchemy Core over SQLite (WAL) or Postgres with Alembic migrations. The frontend is a
-Vue 3 SPA consuming only the public API , built in a Docker stage so operators never install
-Node.
+Vue 3 SPA consuming only the public API, built into its own Nginx image so the backend and frontend
+are separate always-on Compose services.
 
 ## Technical Context
 
@@ -35,7 +35,7 @@ same URL setting. No Postgres-only column types.
 fixtures only — no test touches the network or needs credentials. Vitest covers the
 one non-trivial frontend unit (the schema-driven settings form).
 
-**Target Platform**: Linux, one Docker image, one volume, `docker compose up`. Runs on
+**Target Platform**: Linux, two Docker images, one volume, `docker compose up`. Runs on
 single-board-class hardware.
 
 **Project Type**: Web service (async API + scheduler worker) with an SPA frontend and an in-repo
@@ -134,7 +134,7 @@ aggregato/
 ├── images/cache.py             # content-addressed lazy fetch and store
 └── export.py                   # portable backup artefact
 
-frontend/                       # Vue 3 + Vite SPA; built in a Docker stage, never by the operator
+frontend/                       # Vue 3 + Vite SPA; built in docker/frontend.Dockerfile
 ├── src/api/                    # generated-from-openapi client, one fetch wrapper
 ├── src/views/                  # Dashboard, Log, Work, Creators, Creator, Providers,
 │                               #   SyncHistory, Resolution, Stats, Settings, Login
@@ -148,7 +148,7 @@ tests/
 ├── bench/                      # performance budgets from the table above (lands M2)
 └── fixtures/<provider>/        # recorded payloads; the only data any test touches
 
-docker/                         # multi-stage image, compose file
+docker/                         # backend/frontend multi-stage images, Nginx config, Compose files
 CONTRIBUTING.md                 # acquisition + scraping policy (M1 deliverable, per the design)
 ```
 
@@ -164,7 +164,7 @@ separate distributions because integrations ship with the core .
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| Vue 3 SPA frontend, contradicting the spec Assumption "server-rendered, no SPA build step in v1" | Requested directly by the operator for this plan. It also strengthens : an SPA physically cannot read the database or use a private endpoint, so "the UI consumes only the public API" stops being a discipline and becomes a property. | Server-rendered templates were the spec's choice specifically so a self-hoster needs no Node toolchain. That concern is answered by building the SPA in a Docker stage — operators run `docker compose up` and never install Node — but **building from source now requires Node**, which is a real cost, not an eliminated one. Spec Assumption should be amended to say so. |
+| Vue 3 SPA frontend, contradicting the spec Assumption "server-rendered, no SPA build step in v1" | Requested directly by the operator for this plan. It also strengthens : an SPA physically cannot read the database or use a private endpoint, so "the UI consumes only the public API" stops being a discipline and becomes a property. | Server-rendered templates were the spec's choice specifically so a self-hoster needs no Node toolchain. That concern is answered by the dedicated frontend image — operators run `docker compose up` and never install Node — but **building from source now requires Node**, which is a real cost, not an eliminated one. Spec Assumption should be amended to say so. |
 | Two processes (API + scheduler) rather than one |  requires that a hanging or crashing provider never affect browsing or startup, and §6.7 requires provider work to be killable. A single-process design cannot guarantee either. | An asyncio task inside the API process covers a hang (via timeout) but not a hard crash or a C-extension deadlock, and it puts ingest CPU in the request path, which threatens . |
 | A child process per sync run, on top of the scheduler process | Same containment requirement, plus it makes  ("no database handle, no other provider's secrets") physically true rather than reviewed. Cost is ~100 ms spawn per run, against run intervals measured in hours. | A persistent worker pool would keep provider state alive across runs and share one address space between providers — reintroducing exactly the leakage  forbids, for a saving that is invisible at this cadence. |
 | Two search implementations (SQLite FTS5, Postgres tsvector) |  requires free-text search over titles and review text;  caps the first page at 1 s p95 over 1M entries. `LIKE '%…%'` cannot meet that. | A single portable `LIKE` scan fails the declared budget at scale. A third-party search engine violates  (no additional services). |

@@ -20,7 +20,7 @@ requires a real platform account except where explicitly marked **manual**.
 ## Run it
 
 ```bash
-# Release path — what an operator does
+# Release path — what an operator does (backend + frontend containers)
 export AGGREGATO_TOKEN=$(openssl rand -hex 32)
 docker compose -f docker/compose.yml up
 
@@ -32,6 +32,16 @@ uv run uvicorn aggregato.main:app --reload    # API process
 uv run python -m aggregato.worker             # scheduler process, separate on purpose
 cd frontend && npm install && npm run dev     # dev server proxies /api to :8000
 ```
+
+The Docker release exposes the frontend on port 8000; it proxies `/api` to the private backend
+container. For Docker-based frontend development, use the complete base stack plus its overlay:
+
+```bash
+docker compose -f docker/compose.yml -f docker/compose.dev.yml up --build
+```
+
+The overlay selects the frontend image's Node development target, bind-mounts `frontend/`, and
+enables Vite HMR. It also bind-mounts backend Python code and enables the API reloader.
 
 `api.token` is the only fatal configuration error: startup fails without it, because there is no
 unauthenticated mode . A missing or invalid *provider* configuration never blocks startup —

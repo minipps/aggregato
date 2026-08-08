@@ -2,7 +2,7 @@
 # source archives, so one list governs both: a release tarball carries what is needed to run
 # Aggregato or build its image, and nothing that only exists to develop it.
 #
-# Kept deliberately: frontend/ (the image builds the SPA from source), docker/, uv.lock, alembic.ini,
+# Kept deliberately: frontend/ (the frontend image builds the SPA from source), docker/, uv.lock, alembic.ini,
 # docs/ (operations.md is written for whoever is running it), README.md.
 
 .github/          export-ignore

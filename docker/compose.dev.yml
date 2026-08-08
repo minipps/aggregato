@@ -1,16 +1,11 @@
-# Development overlay: run both halves from this checkout instead of the published image. Keep this
-# separate from compose.yml so production remains one built image, one volume, and no Node runtime.
+# Development overlay: run both halves from this checkout instead of the published images. Keep this
+# separate from compose.yml so the normal stack remains the complete, always-on deployment.
 #
 #   docker compose -f compose.yml -f compose.dev.yml up --build
 #
-# compose.yml names a published `image:`, which is what makes a plain `up` pull a release rather than
-# build this checkout — correct for an operator, wrong for development. This overlay renames the tag
-# and pins `pull_policy: build`, so there is no registry lookup and no chance of testing a change
-# against last release's code.
+# The overlay replaces each published image with the matching local build. `pull_policy: build` keeps
+# a development run from testing a checkout against a stale release pulled from the registry.
 services:
-  # Same service compose.yml declares, rebuilt from source with the Python package bind-mounted, so
-  # an edit is live without a rebuild. Everything else — ports, environment, the data volume — is
-  # inherited rather than restated.
   aggregato:
     image: aggregato:dev
     pull_policy: build
@@ -37,23 +32,33 @@ services:
           action: rebuild
 
   frontend:
-    image: node:22.23.2-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+    image: aggregato-frontend:dev
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+      target: development
     working_dir: /app
-    command: sh -c "npm install --global npm@12.0.2 --silent && npm --loglevel=error ci && npm --loglevel=error run dev -- --host 0.0.0.0"
-    # The only setting the dev server has of its own; everything else the application reads is on the
-    # `aggregato` service in compose.yml.
+    command: ["npm", "--loglevel=error", "run", "dev", "--", "--host", "0.0.0.0", "--port", "80"]
+    # The only setting the dev server has of its own; everything else the application reads is on
+    # the `aggregato` service in compose.yml. It uses the same published host port as production.
     environment:
       # Where Vite proxies /api. The service name resolves on the compose network; outside Docker the
       # default is http://localhost:8000.
       VITE_API_TARGET: http://aggregato:8000
-    ports:
-      - "5173:5173"
     volumes:
       - ../frontend:/app
       # Do not write Linux container dependencies into the bind-mounted checkout.
       - frontend-node-modules:/app/node_modules
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     depends_on:
-      - aggregato
+      aggregato:
+        condition: service_healthy
 
 volumes:
   frontend-node-modules:

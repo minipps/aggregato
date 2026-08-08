@@ -15,7 +15,7 @@ for the commands and results that gate a release.
 | Performance budget assertions | `uv run pytest tests/bench/ -q` | 6 passed |
 | Backend quality suite | formatter, Ruff, mypy, full pytest | 523 passed, 5 skipped; zero formatter/lint/type errors |
 | Frontend | `npm run type-check && npm run build` | passed |
-| Clean runtime | Fresh Podman image build, isolated volume/container, authenticated `/api/v1/health` | passed: migrations, API, and worker started; health returned `200 {"status":"ok","providers":[]}` |
+| Clean runtime | Fresh Podman backend/frontend image builds, isolated volume/containers, authenticated `/api/v1/health` through the frontend | passed: migrations, API, worker, and SPA proxy started; health returned `200 {"status":"ok","providers":[]}` |
 
 The quickstart previously called `pytest --benchmark-only`, but pytest-benchmark is not a project
 dependency; that command could never run. It now invokes the repository's portable benchmark-budget
@@ -25,8 +25,7 @@ assertions directly.
 
 This workspace does not provide Docker Compose. Podman is installed, but neither a Docker Compose
 plugin nor `podman-compose` is present, so `podman compose` cannot select a provider. The equivalent
-single-service flow was therefore run directly against the same Dockerfile image and environment:
-fresh base images were pulled, the production image built, an isolated container started with a
-fresh `/data` volume and token, migrations ran, and authenticated health returned 200. The compose
-wrapper itself remains a deployment-host concern; its service, environment, port, volume, and
-healthcheck match the validated image runtime.
+single-service flow was therefore run directly against the same backend image and environment for the
+previous validation. The two-service Compose path now builds `docker/Dockerfile` and
+`docker/frontend.Dockerfile`; on a host with Compose, validate it with the commands in
+`docs/validation.md`, including an authenticated health request through the frontend port.

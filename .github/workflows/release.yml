@@ -77,14 +77,24 @@ jobs:
             --generate-notes \
             --verify-tag
 
-  # The image is what docs/operations.md tells an operator to pull, so a release that did not publish
-  # one would leave that instruction false.
+  # The images are what docs/operations.md tells an operator to pull, so a release that did not
+  # publish both backend and frontend images would leave that instruction false.
   image:
     # After the release rather than beside it: the tarball job takes seconds, and if it is going to
     # fail — a rejected token, a version disagreement — it should fail before an image is published
     # under a tag that has no release.
     needs: [gates, release]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: aggregato
+            suffix: ""
+            file: docker/Dockerfile
+          - image: aggregato-frontend
+            suffix: -frontend
+            file: docker/frontend.Dockerfile
     steps:
       - uses: actions/checkout@v5
 
@@ -105,7 +115,7 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           # Lowercased by the action, which ghcr requires and a repository name does not guarantee.
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
           # A vX.Y.Z tag publishes X.Y.Z, X.Y and latest: pin exactly, follow a minor line, or track
           # the newest. `latest` moves only on a tag, never on a push to main.
           tags: |
@@ -117,15 +127,15 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/Dockerfile
+          file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Layer cache in the registry, so a release that only changes Python code does not rebuild
           # node_modules from scratch.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           # BuildKit attaches an SBOM and in-toto provenance attestation to the pushed image.
           # The provenance step below binds that digest to this workflow identity.
           sbom: true
@@ -134,7 +144,7 @@ jobs:
       - name: Attest image provenance
         uses: actions/attest-build-provenance@v3
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
@@ -143,6 +153,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh attestation verify \
-            "oci://ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}" \
+            "oci://ghcr.io/${{ github.repository }}${{ matrix.suffix }}@${{ steps.build.outputs.digest }}" \
             --repo "${{ github.repository }}" \
             --signer-workflow "${{ github.repository }}/.github/workflows/release.yml"
