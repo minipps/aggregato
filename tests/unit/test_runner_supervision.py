@@ -369,7 +369,7 @@ async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() ->
     ``E2BIG`` and the spawn raised before a run existed — the provider's lock was released but its
     ``sync_runs`` row stayed ``running``. The payload goes on stdin, which has no such limit.
     """
-    from aggregato.sync.runner import MAX_ARG_STRLEN, RunRequest, execute_run
+    from aggregato.sync.runner import RunRequest, execute_run
 
     seed = await execute_run(
         RunRequest(
@@ -383,7 +383,7 @@ async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() ->
         replay_records=records * 200,
         wall_clock_seconds=60,
     )
-    assert len(request.payload()) > MAX_ARG_STRLEN, "payload no longer exercises the limit"
+    assert len(request.payload()) > 128 * 1024, "payload no longer exercises the limit"
 
     outcome = await execute_run(request)
 
