@@ -40,7 +40,6 @@ def _info(provider_id: str, *, poll: bool) -> ProviderInfo:
         api_visible=True,
         config_schema={},
         rating_scales=(),
-        import_inference=None,
     )
 
 

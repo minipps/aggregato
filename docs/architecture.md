@@ -123,8 +123,8 @@ aggregato/
 │   ├── fixture/                # M1 trivial provider — no network
 │   ├── listenbrainz/           # M2
 │   ├── anilist/                # M3
-│   ├── goodreads/              # M4 (import only)
-│   └── letterboxd/             # M5 (feed + import)
+│   ├── goodreads/              # M4 (public RSS feed)
+│   └── letterboxd/             # M5 (public RSS feed)
 ├── api/
 │   ├── deps.py                 # bearer auth, session cookie, CSRF
 │   ├── errors.py               # RFC 9457 problem+json

@@ -19,7 +19,8 @@ from aggregato.sync.scheduler import claim, due_providers
 
 TOKEN = "phase-9-export-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
-EXPORT = Path("tests/fixtures/goodreads/library_export.csv")
+EXPORT = Path("tests/fixtures/fixture/log-two-pages.jsonl").resolve()
+UPLOAD_NAME = "fixture.xml"
 
 
 @pytest.fixture
@@ -43,17 +44,22 @@ def _app(client: httpx.AsyncClient):
 
 
 async def _import_fixture(client: httpx.AsyncClient) -> None:
-    assert (await client.post("/api/v1/providers/goodreads/enable")).status_code == 200
+    configured = await client.put(
+        "/api/v1/providers/fixture/config",
+        json={"path": str(EXPORT)},
+    )
+    assert configured.status_code == 200
+    assert (await client.post("/api/v1/providers/fixture/enable")).status_code == 200
     response = await client.post(
-        "/api/v1/providers/goodreads/import",
+        "/api/v1/providers/fixture/import",
         files={
-            "file": ("library_export.csv", await asyncio.to_thread(EXPORT.read_bytes), "text/csv")
+            "file": (UPLOAD_NAME, await asyncio.to_thread(EXPORT.read_bytes), "application/xml")
         },
     )
     assert response.status_code == 202
     app = _app(client)
     due = await due_providers(app.state.engine, now=datetime.now(UTC))
-    assert await claim(app.state.engine, "goodreads", now=datetime.now(UTC))
+    assert await claim(app.state.engine, "fixture", now=datetime.now(UTC))
     await build_dispatch(app.state.engine, app.state.config)(due[0])
 
 
@@ -86,9 +92,9 @@ async def test_export_restores_browsable_archive_without_syncs(
             headers={"Authorization": "Bearer fresh-token"},
         ) as fresh,
     ):
-        entries = await fresh.get("/api/v1/entries")
+        entries = await fresh.get("/api/v1/entries", params={"include_subunits": True})
         assert entries.status_code == 200
-        assert len(entries.json()["items"]) == 1
+        assert len(entries.json()["items"]) == 5
 
 
 async def test_settings_report_storage_and_disable_image_cache(client: httpx.AsyncClient) -> None:

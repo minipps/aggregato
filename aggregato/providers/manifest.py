@@ -104,7 +104,6 @@ def _manifest(
     interval_seconds: int,
     config_schema: dict[str, Any],
     rating_scales: tuple[RatingScale, ...] = (),
-    import_inference: str | None = None,
     api_visible: bool = True,
 ) -> dict[str, Any]:
     return {
@@ -118,7 +117,6 @@ def _manifest(
         "rating_scales": rating_scales,
         "api_visible": api_visible,
         "provider_api_version": 1,
-        "import_inference": import_inference,
     }
 
 
@@ -312,7 +310,6 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 step="0.5",
             ),
         ),
-        import_inference="letterboxd_rss_username",
     ),
     "listenbrainz": _manifest(
         name="ListenBrainz",

@@ -1,19 +1,12 @@
-"""Goodreads library-export and bookshelf-RSS provider.
-
-Goodreads has no supported read API.  Its CSV export remains the preferred complete archive, but a
-profile's ``/review/list_rss/<user id>`` feed is useful for keeping its recent bookshelf current.
-The feed is a rolling 100-item snapshot, so the CSV export remains the complete-history path.
-"""
+"""Goodreads bookshelf RSS provider."""
 
 from __future__ import annotations
 
-import csv
 import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -51,7 +44,6 @@ from aggregato.domain.ratings import RatingScale
 from aggregato.providers.base import ProviderContext
 from aggregato.providers.errors import AuthError, BlockedError, ProviderError, StructureChangedError
 
-REQUIRED_COLUMNS = {"Book Id", "Title", "Author", "ISBN", "ISBN13", "My Rating", "Date Read"}
 GOODREADS_HOSTS = frozenset({"goodreads.com", "www.goodreads.com"})
 REVIEW_ID_RE = re.compile(r"/review/show/(\d+)(?:[/?#]|$)")
 RATING_RE = re.compile(r"\b([0-5])(?:\.0)?\b")
@@ -67,15 +59,11 @@ class GoodreadsConfig(BaseModel):
             "(/review/list_rss/<id>). The public RSS feed is refreshed daily."
         ),
     )
-    export_path: Path | None = Field(
-        default=None,
-        description="Optional local library-export CSV for a manually requested full sync.",
-    )
 
-    @field_validator("profile_url", "export_path", mode="before")
+    @field_validator("profile_url", mode="before")
     @classmethod
     def _empty_optional_setting_is_unset(cls, value: object) -> object:
-        """Keep an unfilled optional form field from becoming a bad URL or ``Path('.')``."""
+        """Keep an unfilled optional form field from becoming a bad URL."""
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("profile_url")
@@ -92,7 +80,6 @@ class GoodreadsProvider:
     media_types: set[MediaType] = {MediaType.BOOK}  # noqa: RUF012
     capabilities: set[Capability] = {  # noqa: RUF012
         Capability.POLL,
-        Capability.FILE_IMPORT,
         Capability.HAS_RATINGS,
         Capability.HAS_REVIEWS,
         Capability.HAS_CREDITS,
@@ -114,38 +101,9 @@ class GoodreadsProvider:
     async def fetch(
         self, ctx: ProviderContext, cursor: Cursor | None, mode: FetchMode
     ) -> AsyncIterator[RawRecord | Checkpoint]:
-        if mode is FetchMode.IMPORT:
-            if cursor is not None and cursor.state.get("import_complete"):
-                yield Checkpoint(cursor=cursor)
-                return
-            path = ctx.import_path
-            if path is None:
-                raise ProviderError("Goodreads import mode requires an export file")
-            for index, row in enumerate(_rows(path)):
-                native_id = row.get("Book Id", "").strip()
-                if not native_id:
-                    raise StructureChangedError(f"Goodreads CSV row {index + 2} has no Book Id")
-                yield RawRecord(native_id=native_id, payload=row)
-            yield Checkpoint(cursor=Cursor(state={"import_complete": True}))
-            return
-
         config = _config(ctx)
         if config.profile_url is None:
-            # A configured local export can still be scheduled as a convenient one-shot import.
-            if cursor is not None and cursor.state.get("import_complete"):
-                yield Checkpoint(cursor=cursor)
-                return
-            if config.export_path is None:
-                raise ProviderError(
-                    "set profile_url for Goodreads bookshelf sync or supply an export"
-                )
-            for index, row in enumerate(_rows(config.export_path)):
-                native_id = row.get("Book Id", "").strip()
-                if not native_id:
-                    raise StructureChangedError(f"Goodreads CSV row {index + 2} has no Book Id")
-                yield RawRecord(native_id=native_id, payload=row)
-            yield Checkpoint(cursor=Cursor(state={"import_complete": True}))
-            return
+            raise ProviderError("set profile_url for Goodreads bookshelf RSS sync")
 
         # Like Letterboxd RSS, Goodreads RSS is a changing snapshot. Ignore a previous CSV import
         # cursor and refetch it every time; writes deduplicate on the Goodreads book id.
@@ -237,16 +195,10 @@ class GoodreadsProvider:
         config = _config(ctx)
         if config.profile_url is not None:
             return CheckResult(ok=True, detail="Goodreads bookshelf RSS is configured")
-        if config.export_path is not None:
-            try:
-                _rows(config.export_path)
-            except ProviderError as exc:
-                return CheckResult(ok=False, error_class=exc.error_class, detail=str(exc))
-            return CheckResult(ok=True, detail="Goodreads library export is valid")
         return CheckResult(
             ok=False,
             error_class=ErrorClass.AUTH,
-            detail="set profile_url or import a Goodreads library export",
+            detail="set profile_url to enable Goodreads bookshelf RSS sync",
         )
 
 
@@ -265,19 +217,6 @@ def _rss_url(profile_url: HttpUrl) -> str:
             "profile_url must be a Goodreads profile or /review/list_rss/<user id> URL"
         )
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
-
-
-def _rows(path: Path) -> list[dict[str, str]]:
-    try:
-        with path.open(encoding="utf-8-sig", newline="") as source:
-            reader = csv.DictReader(source)
-            if reader.fieldnames is None or not set(reader.fieldnames) >= REQUIRED_COLUMNS:
-                raise StructureChangedError(
-                    "not a Goodreads library-export CSV: required columns are missing"
-                )
-            return [dict(row) for row in reader]
-    except OSError as exc:
-        raise ProviderError(f"cannot read Goodreads export: {exc}") from exc
 
 
 def _items(payload: bytes) -> list[dict[str, str]]:

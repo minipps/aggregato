@@ -83,8 +83,6 @@ class ProviderInfo:
     """Static settings schema; reading it never imports provider code."""
     rating_scales: tuple[Any, ...]
     """Host-owned rating declarations used by parent-side validation and writing."""
-    import_inference: str | None
-    """Name of a host-owned import metadata parser, never a provider callback."""
 
 
 def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
@@ -304,9 +302,6 @@ def _manifest_info(raw: object, *, provider_id: str, module: str, reviewed: bool
         api_visible=bool(raw.get("api_visible", True)),
         config_schema=copy.deepcopy(raw["config_schema"]),
         rating_scales=tuple(raw.get("rating_scales", ())),
-        import_inference=(
-            raw.get("import_inference") if isinstance(raw.get("import_inference"), str) else None
-        ),
     )
 
 

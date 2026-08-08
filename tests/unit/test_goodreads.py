@@ -1,4 +1,4 @@
-"""Goodreads library-export and RSS shapes stay faithfully interpreted."""
+"""Goodreads RSS records stay faithfully interpreted."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from aggregato.providers.goodreads import (
     GoodreadsConfig,
     GoodreadsProvider,
     _items,
-    _rows,
     _rss_url,
 )
 
@@ -46,11 +45,6 @@ def test_goodreads_does_not_turn_date_added_into_a_read_event() -> None:
     batch = GoodreadsProvider().normalize(_records()[1])
     assert batch.entries == []
     assert batch.work.metadata["exclusive_shelf"] == "to-read"
-
-
-def test_changed_goodreads_headers_are_rejected() -> None:
-    with pytest.raises(StructureChangedError):
-        _rows(Path("tests/fixtures/goodreads/structure-changed.csv"))
 
 
 RSS = b"""<?xml version="1.0"?><rss><channel><item>
@@ -89,13 +83,12 @@ def test_goodreads_profile_url_becomes_rss_url() -> None:
 
 
 def test_empty_optional_settings_are_unset() -> None:
-    """An unfilled schema-form field is not an invalid URL or the working directory."""
-    config = GoodreadsConfig(profile_url="", export_path=" ")
+    """An unfilled schema-form field is not an invalid URL."""
+    config = GoodreadsConfig(profile_url="")
     assert config.profile_url is None
-    assert config.export_path is None
 
 
-async def test_goodreads_rss_is_refetched_after_a_csv_import() -> None:
+async def test_goodreads_rss_is_refetched_on_every_automatic_poll() -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -114,7 +107,7 @@ async def test_goodreads_rss_is_refetched_after_a_csv_import() -> None:
     )
     try:
         items = [item async for item in GoodreadsProvider().fetch(context, None, FetchMode.FULL)]
-        after_import = [
+        second_poll = [
             item
             async for item in GoodreadsProvider().fetch(
                 context, Cursor(state={"import_complete": True}), FetchMode.INCREMENTAL
@@ -131,4 +124,4 @@ async def test_goodreads_rss_is_refetched_after_a_csv_import() -> None:
         "https://www.goodreads.com/review/list_rss/155188990-mini",
         "https://www.goodreads.com/review/list_rss/155188990-mini",
     ]
-    assert [item.native_id for item in after_import if isinstance(item, RawRecord)] == ["101"]
+    assert [item.native_id for item in second_poll if isinstance(item, RawRecord)] == ["101"]

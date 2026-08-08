@@ -26,9 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
-from urllib.parse import urlsplit
 
-from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from fastapi import APIRouter, Body, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text, update
@@ -619,13 +617,6 @@ async def import_file(
 
     stored = await _store_import(config.data_dir, id, file)
     try:
-        inferred_settings = await _settings_inferred_from_import(
-            info,
-            stored.temporary,
-            enabled=not any(
-                setting.startswith(f"providers.{id}.") for setting in config.file_pinned
-            ),
-        )
         lineage = uuid.uuid4()
         now = request_now(request)
         async with transaction(engine) as conn:
@@ -706,21 +697,6 @@ async def import_file(
                     type=error_type("import-total-quota-exceeded"),
                 )
             await asyncio.to_thread(stored.temporary.replace, stored.path)
-            if inferred_settings:
-                stored_config = (
-                    await conn.execute(select(providers.c.config).where(providers.c.id == id))
-                ).scalar_one_or_none()
-                merged_settings = dict(stored_config) if isinstance(stored_config, dict) else {}
-                # A value chosen explicitly in the UI always wins over a value discoverable in an
-                # export. This also avoids replacing an explicit RSS URL with a derived username
-                # URL.
-                for key, value in inferred_settings.items():
-                    merged_settings.setdefault(key, value)
-                await conn.execute(
-                    update(providers)
-                    .where(providers.c.id == id)
-                    .values(config=merged_settings, updated_at=now)
-                )
             await conn.execute(
                 import_jobs.insert().values(
                     provider_id=id,
@@ -803,41 +779,6 @@ async def _lock_import_quota(conn: AsyncConnection) -> None:
             text("SELECT pg_advisory_xact_lock(:lock_key)"),
             {"lock_key": _IMPORT_QUOTA_LOCK_KEY},
         )
-
-
-async def _settings_inferred_from_import(
-    info: ProviderInfo, path: Path, *, enabled: bool
-) -> dict[str, object]:
-    """Run a host-owned, manifest-selected metadata parser.
-
-    This best-effort step exists solely for optional settings, such as a public feed's account name.
-    It never imports or calls provider code. File-pinned settings remain authoritative and are never
-    copied into the database.
-    """
-    if not enabled or info.import_inference != "letterboxd_rss_username":
-        return {}
-    try:
-        payload = await asyncio.to_thread(path.read_bytes)
-        settings = _infer_letterboxd_username(payload)
-    except (OSError, ET.ParseError):
-        return {}
-    return {"username": settings} if settings is not None else {}
-
-
-def _infer_letterboxd_username(payload: bytes) -> str | None:
-    """Read only the public account link from a Letterboxd RSS export."""
-    root = ET.fromstring(payload)
-    link = root.findtext("./channel/link")
-    if not isinstance(link, str) or not link:
-        return None
-    parsed = urlsplit(link.strip())
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
-        "letterboxd.com",
-        "www.letterboxd.com",
-    }:
-        return None
-    parts = [part for part in parsed.path.split("/") if part]
-    return parts[0] if len(parts) == 1 and re.fullmatch(r"[A-Za-z0-9_]+", parts[0]) else None
 
 
 # --- internals ---------------------------------------------------------------------------------
@@ -968,7 +909,7 @@ def _last_check(provider_row: Any | None, check_row: Any | None) -> LastCheck | 
             )
     if check_row is None:
         return None
-    status = (
+    status: Literal["pending", "success", "failure"] = (
         "pending"
         if check_row.status == str(RunStatus.RUNNING)
         else ("success" if check_row.status == str(RunStatus.SUCCESS) else "failure")

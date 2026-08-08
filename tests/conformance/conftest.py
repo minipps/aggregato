@@ -99,13 +99,19 @@ REGISTERED = [
         provider_id="goodreads",
         records="library_export.csv",
         invalid="structure-changed.csv",
-        config=lambda path: {"export_path": path},
+        config=lambda path: {
+            "profile_url": None
+            if path.name == "structure-changed.csv"
+            else "https://www.goodreads.com/user/show/155188990-fixture"
+        },
     ),
     Registration(
         provider_id="letterboxd",
         records="activity.rss",
         invalid="structure-changed.rss",
-        config=lambda path: {"export_path": path},
+        config=lambda path: {
+            "username": None if path.name == "structure-changed.rss" else "fixture_user"
+        },
     ),
 ]
 """Every bundled provider. ``test_every_bundled_provider_is_registered`` fails if one is missing, so
@@ -161,6 +167,10 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
         http = httpx.AsyncClient(transport=httpx.MockTransport(_anilist_fixture(path)))
     elif registration.provider_id == "koito":
         http = httpx.AsyncClient(transport=httpx.MockTransport(_koito_fixture(path)))
+    elif registration.provider_id == "goodreads":
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_goodreads_fixture(path)))
+    elif registration.provider_id == "letterboxd":
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_letterboxd_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -229,6 +239,42 @@ def _anilist_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
         return httpx.Response(
             200, json=json.loads(path.parent.joinpath("records.json").read_text())
         )
+
+    return respond
+
+
+_GOODREADS_RSS = b"""<?xml version="1.0"?><rss><channel>
+<item><guid>https://www.goodreads.com/review/show/77?utm_source=rss</guid>
+<title>Example Book</title><book_id>101</book_id><author_name>Example Author</author_name>
+<isbn>9780306406157</isbn><user_rating>4</user_rating>
+<user_read_at>Tue, 02 Jan 2024 00:00:00 +0000</user_read_at>
+<user_date_added>Mon, 01 Jan 2024 00:00:00 +0000</user_date_added>
+<user_shelves>read, fiction</user_shelves><user_review>Great book</user_review>
+<book_published>2020</book_published><book><num_pages>123</num_pages></book>
+</item></channel></rss>"""
+_GOODREADS_INVALID_RSS = (
+    b'<?xml version="1.0"?><rss><channel><item><title>Changed</title></item></channel></rss>'
+)
+
+
+def _goodreads_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    """Serve the recorded Goodreads RSS response for both valid and changed structures."""
+
+    payload = _GOODREADS_INVALID_RSS if path.name == "structure-changed.csv" else _GOODREADS_RSS
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=payload)
+
+    return respond
+
+
+def _letterboxd_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    """Serve the recorded Letterboxd RSS response selected by the registration fixture."""
+
+    payload = path.read_bytes()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=payload)
 
     return respond
 
