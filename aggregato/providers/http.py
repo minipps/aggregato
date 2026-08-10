@@ -335,10 +335,6 @@ class PoliteClient:
         self._process_host_state = (
             ProcessHostState(host_state_dir) if host_state_dir is not None else None
         )
-        # One semaphore per host, created on first sight. A single global semaphore would make a
-        # slow platform throttle an unrelated one.
-        self._host_locks: dict[str, asyncio.Semaphore] = {}
-        self._host_limiters: dict[str, RateLimiter] = {}
         # Injected so retry jitter is reproducible in tests (testing guidance).
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._now = now or SYSTEM_CLOCK.now
@@ -362,9 +358,6 @@ class PoliteClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    def _host_lock(self, url: httpx.URL) -> asyncio.Semaphore:
-        return self._host_state(url).semaphore
-
     def _host_state(self, url: httpx.URL) -> _HostState:
         host = url.host or ""
         key = (host, self._policy.max_concurrent_per_host)
@@ -379,8 +372,6 @@ class PoliteClient:
             states[key] = state
         else:
             state.limiter.ensure_minimum(self._policy.effective_interval_seconds)
-        self._host_locks[host] = state.semaphore
-        self._host_limiters[host] = state.limiter
         return state
 
     async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:

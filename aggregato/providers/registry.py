@@ -24,16 +24,14 @@ The convention, which third parties will follow, so it is deliberately boring:
 4. Constructing the provider object is free of side effects: no I/O, no network, no clock.
 
 Bundled providers are ``reviewed=True`` because they ship with the core and went through review.
-Drop-in providers are read from the explicitly configured operator directory using a static
-``manifest.json`` when present (legacy packages get conservative metadata), marked
-``reviewed=False``, and imported only inside the selected child process. A drop-in is trusted code
-with the child process's filesystem/network/resource limits; discovery is metadata parsing, not a
-sandbox.
+Drop-in providers are read from the explicitly configured operator directory using a required
+static ``manifest.json``, marked ``reviewed=False``, and imported only inside the selected child
+process. A drop-in is trusted code with the child process's filesystem/network/resource limits;
+discovery is metadata parsing, not a sandbox.
 """
 
 from __future__ import annotations
 
-import ast
 import copy
 import importlib
 import importlib.util
@@ -85,19 +83,15 @@ class ProviderInfo:
     """Static settings schema; reading it never imports provider code."""
     rating_scales: tuple[Any, ...]
     """Host-owned rating declarations used by parent-side validation and writing."""
-    import_inference: str | None
-    """Name of a host-owned import metadata parser, never a provider callback."""
 
 
 def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
     """List installed providers using static manifests only.
 
     A provider package is extension code, not metadata. Discovery therefore reads host-owned
-    bundled manifests or a drop-in's manifest.json and never imports __init__.py. A legacy
-    drop-in without a manifest is listed with conservative metadata for compatibility, but remains
-    unreviewed and is imported only if an operator selects it for a child run. A malformed drop-in
-    is warned about and skipped on its own, so unrelated extension files cannot hide bundled or
-    otherwise valid providers.
+    bundled manifests or a drop-in's manifest.json and never imports __init__.py. A drop-in without
+    a manifest is warned about and skipped, and a malformed drop-in is quarantined on its own, so
+    unrelated extension files cannot hide bundled or otherwise valid providers.
 
     Returns:
         One ``ProviderInfo`` per bundled provider, sorted by ``id`` so the UI order is stable.
@@ -202,41 +196,17 @@ def _discover_drop_ins(drop_in_dir: Path | None) -> list[ProviderInfo]:
 
 def _drop_in_info(path: Path) -> ProviderInfo:
     manifest_path = path / "manifest.json"
-    if manifest_path.is_file():
-        try:
-            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"invalid drop-in provider manifest: {manifest_path}") from exc
-        return _manifest_info(
-            raw,
-            provider_id=path.name,
-            module=_drop_in_module_name(path),
-            reviewed=False,
-        )
-
-    # Keep old tutorial packages discoverable, but obtain only literal metadata from their source.
-    # Executing a package here would put arbitrary drop-in code in the API.
-    declared_version = _literal_module_value(path / "__init__.py", "provider_api_version", 1)
-    if declared_version != PROVIDER_API_VERSION:
-        warnings.warn(
-            f"drop-in provider {path.name!r} declares provider API {declared_version!r}; "
-            f"this host implements {PROVIDER_API_VERSION}. It may be incompatible.",
-            stacklevel=2,
-        )
-    return ProviderInfo(
-        id=path.name,
-        name=path.name,
+    if not manifest_path.is_file():
+        raise RuntimeError(f"manifest.json is required: {manifest_path}")
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid drop-in provider manifest: {manifest_path}") from exc
+    return _manifest_info(
+        raw,
+        provider_id=path.name,
         module=_drop_in_module_name(path),
-        media_types=frozenset(),
-        capabilities=frozenset(),
-        acquisition="export",
-        schema_version=1,
-        default_poll_interval=timedelta(hours=1),
         reviewed=False,
-        api_visible=True,
-        config_schema={"type": "object", "properties": {}, "additionalProperties": True},
-        rating_scales=(),
-        import_inference=None,
     )
 
 
@@ -332,27 +302,7 @@ def _manifest_info(raw: object, *, provider_id: str, module: str, reviewed: bool
         api_visible=bool(raw.get("api_visible", True)),
         config_schema=copy.deepcopy(raw["config_schema"]),
         rating_scales=tuple(raw.get("rating_scales", ())),
-        import_inference=(
-            raw.get("import_inference") if isinstance(raw.get("import_inference"), str) else None
-        ),
     )
-
-
-def _literal_module_value(path: Path, name: str, default: int) -> int:
-    """Read one integer assignment from a legacy drop-in without executing it."""
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (OSError, SyntaxError) as exc:
-        raise RuntimeError(f"cannot read drop-in provider metadata: {path}") from exc
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign | ast.AnnAssign):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(isinstance(target, ast.Name) and target.id == name for target in targets):
-                value = node.value
-                if isinstance(value, ast.Constant) and isinstance(value.value, int):
-                    return value.value
-                raise RuntimeError(f"drop-in metadata {name} must be a literal integer: {path}")
-    return default
 
 
 def _provider_object(module_path: str, expected_id: str) -> Provider:

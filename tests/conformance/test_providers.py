@@ -304,6 +304,9 @@ async def test_group6_cursor_round_trip(
     partway. A duplicate means the operator's history grows on every crash; a gap means it silently
     loses records, which is the failure  and  are about.
     """
+    if provider.acquisition is Acquisition.FEED:
+        pytest.skip("rolling RSS snapshots have no resumable cursor")
+
     full = [record.native_id for record in raw_records]
 
     consumed: list[str] = []

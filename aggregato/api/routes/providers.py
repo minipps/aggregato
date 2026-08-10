@@ -26,9 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
-from urllib.parse import urlsplit
 
-from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from fastapi import APIRouter, Body, File, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text, update
@@ -44,6 +42,7 @@ from aggregato.domain.enums import (
     Acquisition,
     Capability,
     ErrorClass,
+    FetchMode,
     MediaType,
     ProviderStatus,
     RunStatus,
@@ -64,6 +63,17 @@ class LastError(BaseModel):
     error_class: ErrorClass
     message: str
     action_required: str | None = None
+
+
+class LastCheck(BaseModel):
+    """The latest explicitly requested provider diagnostic, separate from sync health."""
+
+    status: Literal["pending", "success", "failure"]
+    lineage_id: uuid.UUID
+    requested_at: datetime | None = None
+    completed_at: datetime | None = None
+    detail: str | None = None
+    error_class: ErrorClass | None = None
 
 
 class ProviderView(BaseModel):
@@ -89,6 +99,7 @@ class ProviderView(BaseModel):
     file_pinned_settings: list[str] = Field(default_factory=list)
     #: Configured values that are safe to render.  Write-only and secret fields never leave the API.
     current_settings: dict[str, Any] = Field(default_factory=dict)
+    last_check: LastCheck | None = None
 
 
 class SyncQueued(BaseModel):
@@ -141,9 +152,10 @@ async def list_providers(request: Request) -> list[ProviderView]:
     config: Config = request.app.state.config
     engine: AsyncEngine = request.app.state.engine
     rows = await _provider_rows(engine)
+    checks = await _check_rows(engine)
 
     return [
-        _view(info, rows.get(info.id), config)
+        _view(info, rows.get(info.id), config, checks.get(info.id))
         for info in sorted(discover_providers(config.provider_dir), key=lambda i: i.id)
         if info.api_visible
     ]
@@ -270,7 +282,8 @@ async def update_provider_config(
                 )
 
     rows = await _provider_rows(engine)
-    return _view(info, rows.get(id), config)
+    checks = await _check_rows(engine)
+    return _view(info, rows.get(id), config, checks.get(id))
 
 
 @router.post("/providers/{id}/sync", status_code=202, response_model=SyncQueued)
@@ -396,7 +409,10 @@ async def latest_provider_run(request: Request, id: str) -> LastRunView:
         row = (
             await conn.execute(
                 select(sync_runs.c.status, sync_runs.c.error_class, sync_runs.c.error_message)
-                .where(sync_runs.c.provider_id == id)
+                .where(
+                    sync_runs.c.provider_id == id,
+                    sync_runs.c.mode != str(FetchMode.CHECK),
+                )
                 .order_by(sync_runs.c.started_at.desc(), sync_runs.c.id.desc())
                 .limit(1)
             )
@@ -413,6 +429,130 @@ async def latest_provider_run(request: Request, id: str) -> LastRunView:
         error_class=ErrorClass(row.error_class) if row.error_class else None,
         detail=detail,
     )
+
+
+@router.post("/providers/{id}/check", status_code=202, response_model=SyncQueued)
+async def check_provider(request: Request, id: str) -> SyncQueued:
+    """Queue an isolated provider diagnostic without enabling or rescheduling it."""
+    config: Config = request.app.state.config
+    engine: AsyncEngine = request.app.state.engine
+    info = _require_installed(id, config.provider_dir)
+    configured = config.providers.get(id)
+    now = request_now(request)
+    lineage = uuid.uuid4()
+
+    async with transaction(engine) as conn:
+        row = (
+            await conn.execute(
+                select(
+                    providers.c.enabled,
+                    providers.c.status,
+                    providers.c.config,
+                    provider_state.c.requested_mode,
+                )
+                .select_from(
+                    providers.outerjoin(
+                        provider_state, provider_state.c.provider_id == providers.c.id
+                    )
+                )
+                .where(providers.c.id == id)
+                .with_for_update()
+            )
+        ).first()
+        stored_settings = (
+            row.config
+            if row is not None and isinstance(row.config, dict) and row.config
+            else configured.settings
+            if configured is not None
+            else {}
+        )
+        validation_errors = _validate_settings(info.config_schema, stored_settings)
+        config_error = configured.error if configured is not None else None
+        if config_error is not None or validation_errors:
+            raise ProblemError(
+                status=422,
+                title="Provider configuration is invalid",
+                detail=config_error or "; ".join(validation_errors),
+                type=error_type("provider-config-invalid"),
+            )
+        if row is not None and (
+            row.status == str(ProviderStatus.SYNCING) or row.requested_mode is not None
+        ):
+            raise ProblemError(
+                status=409,
+                title="A provider operation is already pending",
+                detail=f"{id} is already syncing or has an explicit request pending",
+                type=error_type("provider-operation-in-flight"),
+            )
+        active = (
+            await conn.execute(
+                select(sync_runs.c.id)
+                .where(
+                    sync_runs.c.provider_id == id,
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                )
+                .limit(1)
+            )
+        ).first()
+        if active is not None:
+            raise ProblemError(
+                status=409,
+                title="A provider operation is already running",
+                detail=f"{id} already has a running operation",
+                type=error_type("provider-operation-in-flight"),
+            )
+
+        if row is None:
+            await conn.execute(
+                providers.insert().values(
+                    id=id,
+                    enabled=False,
+                    status=str(ProviderStatus.DISABLED),
+                    acquisition=info.acquisition,
+                    schema_version=info.schema_version,
+                    reviewed=info.reviewed,
+                    config={},
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(
+                provider_state.insert().values(
+                    provider_id=id,
+                    effective_interval_seconds=int(info.default_poll_interval.total_seconds()),
+                    consecutive_failures=0,
+                    retry_step=0,
+                    # The request predicate makes this due without changing the ordinary schedule.
+                    next_run_at=None,
+                    requested_mode=str(FetchMode.CHECK),
+                    requested_lineage_id=lineage,
+                    kv={},
+                )
+            )
+        else:
+            state_result = await conn.execute(
+                update(provider_state)
+                .where(provider_state.c.provider_id == id)
+                .values(
+                    requested_mode=str(FetchMode.CHECK),
+                    requested_lineage_id=lineage,
+                )
+            )
+            if state_result.rowcount != 1:
+                await conn.execute(
+                    provider_state.insert().values(
+                        provider_id=id,
+                        effective_interval_seconds=int(info.default_poll_interval.total_seconds()),
+                        consecutive_failures=0,
+                        retry_step=0,
+                        next_run_at=None,
+                        requested_mode=str(FetchMode.CHECK),
+                        requested_lineage_id=lineage,
+                        kv={},
+                    )
+                )
+
+    return SyncQueued(lineage_id=lineage)
 
 
 @router.post("/providers/{id}/import", status_code=202, response_model=SyncQueued)
@@ -477,13 +617,6 @@ async def import_file(
 
     stored = await _store_import(config.data_dir, id, file)
     try:
-        inferred_settings = await _settings_inferred_from_import(
-            info,
-            stored.temporary,
-            enabled=not any(
-                setting.startswith(f"providers.{id}.") for setting in config.file_pinned
-            ),
-        )
         lineage = uuid.uuid4()
         now = request_now(request)
         async with transaction(engine) as conn:
@@ -564,21 +697,6 @@ async def import_file(
                     type=error_type("import-total-quota-exceeded"),
                 )
             await asyncio.to_thread(stored.temporary.replace, stored.path)
-            if inferred_settings:
-                stored_config = (
-                    await conn.execute(select(providers.c.config).where(providers.c.id == id))
-                ).scalar_one_or_none()
-                merged_settings = dict(stored_config) if isinstance(stored_config, dict) else {}
-                # A value chosen explicitly in the UI always wins over a value discoverable in an
-                # export. This also avoids replacing an explicit RSS URL with a derived username
-                # URL.
-                for key, value in inferred_settings.items():
-                    merged_settings.setdefault(key, value)
-                await conn.execute(
-                    update(providers)
-                    .where(providers.c.id == id)
-                    .values(config=merged_settings, updated_at=now)
-                )
             await conn.execute(
                 import_jobs.insert().values(
                     provider_id=id,
@@ -663,41 +781,6 @@ async def _lock_import_quota(conn: AsyncConnection) -> None:
         )
 
 
-async def _settings_inferred_from_import(
-    info: ProviderInfo, path: Path, *, enabled: bool
-) -> dict[str, object]:
-    """Run a host-owned, manifest-selected metadata parser.
-
-    This best-effort step exists solely for optional settings, such as a public feed's account name.
-    It never imports or calls provider code. File-pinned settings remain authoritative and are never
-    copied into the database.
-    """
-    if not enabled or info.import_inference != "letterboxd_rss_username":
-        return {}
-    try:
-        payload = await asyncio.to_thread(path.read_bytes)
-        settings = _infer_letterboxd_username(payload)
-    except (OSError, ET.ParseError):
-        return {}
-    return {"username": settings} if settings is not None else {}
-
-
-def _infer_letterboxd_username(payload: bytes) -> str | None:
-    """Read only the public account link from a Letterboxd RSS export."""
-    root = ET.fromstring(payload)
-    link = root.findtext("./channel/link")
-    if not isinstance(link, str) or not link:
-        return None
-    parsed = urlsplit(link.strip())
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
-        "letterboxd.com",
-        "www.letterboxd.com",
-    }:
-        return None
-    parts = [part for part in parsed.path.split("/") if part]
-    return parts[0] if len(parts) == 1 and re.fullmatch(r"[A-Za-z0-9_]+", parts[0]) else None
-
-
 # --- internals ---------------------------------------------------------------------------------
 
 
@@ -727,6 +810,8 @@ async def _provider_rows(engine: AsyncEngine) -> dict[str, Any]:
                 provider_state.c.last_success_at,
                 provider_state.c.consecutive_failures,
                 provider_state.c.effective_interval_seconds,
+                provider_state.c.requested_mode,
+                provider_state.c.requested_lineage_id,
                 providers.c.config,
             ).join(
                 provider_state,
@@ -737,7 +822,34 @@ async def _provider_rows(engine: AsyncEngine) -> dict[str, Any]:
         return {row.id: row for row in result}
 
 
-def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
+async def _check_rows(engine: AsyncEngine) -> dict[str, Any]:
+    """Return the newest diagnostic row per provider without mixing it into sync history."""
+    async with transaction(engine) as conn:
+        result = await conn.execute(
+            select(
+                sync_runs.c.provider_id,
+                sync_runs.c.lineage_id,
+                sync_runs.c.status,
+                sync_runs.c.started_at,
+                sync_runs.c.finished_at,
+                sync_runs.c.error_class,
+                sync_runs.c.error_message,
+            )
+            .where(sync_runs.c.mode == str(FetchMode.CHECK))
+            .order_by(sync_runs.c.started_at.desc(), sync_runs.c.id.desc())
+        )
+        rows: dict[str, Any] = {}
+        for row in result:
+            rows.setdefault(row.provider_id, row)
+        return rows
+
+
+def _view(
+    info: ProviderInfo,
+    row: Any | None,
+    config: Config,
+    check_row: Any | None = None,
+) -> ProviderView:
     """Merge a provider's declaration with its database state into the contract's shape."""
     pinned = sorted(p for p in config.file_pinned if p.startswith(f"providers.{info.id}."))
     interval = int(info.default_poll_interval.total_seconds())
@@ -747,6 +859,7 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
         fallback = config.providers.get(info.id)
         settings = fallback.settings if fallback is not None else {}
     current_settings = _public_settings(info.config_schema, settings)
+    last_check = _last_check(row, check_row)
 
     if row is None:
         # Discovered but never enabled: the fresh-install state, and not an error.
@@ -762,6 +875,7 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
             poll_interval_seconds=interval,
             file_pinned_settings=pinned,
             current_settings=current_settings,
+            last_check=last_check,
         )
 
     return ProviderView(
@@ -780,268 +894,367 @@ def _view(info: ProviderInfo, row: Any | None, config: Config) -> ProviderView:
         last_error=LastError.model_validate(row.last_error) if row.last_error else None,
         file_pinned_settings=pinned,
         current_settings=current_settings,
+        last_check=last_check,
     )
 
 
-def _legacy_public_settings(model: type[BaseModel], settings: dict[str, Any]) -> dict[str, Any]:
-    """Return only configuration values that are explicitly safe to send to the browser.
+def _last_check(provider_row: Any | None, check_row: Any | None) -> LastCheck | None:
+    """Project a pending request or the latest completed check into the provider view."""
+    if provider_row is not None and provider_row.requested_mode == str(FetchMode.CHECK):
+        lineage = provider_row.requested_lineage_id
+        if lineage is not None:
+            return LastCheck(
+                status="pending",
+                lineage_id=lineage,
+            )
+    if check_row is None:
+        return None
+    status: Literal["pending", "success", "failure"] = (
+        "pending"
+        if check_row.status == str(RunStatus.RUNNING)
+        else ("success" if check_row.status == str(RunStatus.SUCCESS) else "failure")
+    )
+    return LastCheck(
+        status=status,
+        lineage_id=check_row.lineage_id,
+        requested_at=_aware(check_row.started_at),
+        completed_at=_aware(check_row.finished_at),
+        detail=check_row.error_message,
+        error_class=ErrorClass(check_row.error_class) if check_row.error_class else None,
+    )
 
-    Provider settings can contain credentials.  The provider-owned JSON Schema is the authority:
-    unknown keys are omitted, as are ``writeOnly``/password fields and conventionally named
-    credential fields.  Recursing through declared object fields keeps that guarantee true for
-    future nested provider settings too.
-    """
-    schema = model.model_json_schema()
-    properties = schema.get("properties", {})
-    if not isinstance(properties, dict):
-        return {}
-    public: dict[str, Any] = {}
-    for key, value in settings.items():
-        field_schema = properties.get(key)
-        if not isinstance(field_schema, dict) or _is_sensitive_setting(key, field_schema):
-            continue
-        public[key] = _public_value(value, field_schema)
-    return public
+
+@dataclass(frozen=True, slots=True)
+class _SettingField:
+    """One scalar field from the API's deliberately small provider-schema contract."""
+
+    schema: dict[str, Any]
+    nullable: bool
+    public: bool
 
 
-def _public_value(value: Any, schema: dict[str, Any]) -> Any:
-    """Remove secret descendants from a value described by one JSON Schema node."""
+class _UnsupportedProviderSchema(ValueError):
+    """A provider schema uses features the API does not implement."""
+
+
+_SCALAR_TYPES = frozenset({"string", "number", "integer", "boolean"})
+_ROOT_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "title",
+        "description",
+        "properties",
+        "required",
+        "additionalProperties",
+        "x-aggregato-public",
+    }
+)
+_FIELD_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "title",
+        "description",
+        "default",
+        "format",
+        "writeOnly",
+        "x-aggregato-public",
+        "enum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "anyOf",
+    }
+)
+
+
+def _setting_fields(schema: object) -> tuple[dict[str, _SettingField], frozenset[str]]:
+    """Read the supported flat schema without resolving or traversing JSON Schema."""
+    if not isinstance(schema, dict):
+        raise _UnsupportedProviderSchema("the schema must be an object")
+    _check_schema_keys(schema, _ROOT_SCHEMA_KEYS, "settings")
+    if schema.get("type") != "object":
+        raise _UnsupportedProviderSchema("settings must be a top-level object")
+    if schema.get("additionalProperties") is not False:
+        raise _UnsupportedProviderSchema(
+            "settings must set additionalProperties to false for a flat schema"
+        )
     properties = schema.get("properties")
-    if isinstance(value, dict) and isinstance(properties, dict):
-        return {
-            key: _public_value(child, child_schema)
-            for key, child in value.items()
-            if isinstance(key, str)
-            and isinstance(child_schema := properties.get(key), dict)
-            and not _is_sensitive_setting(key, child_schema)
-        }
-    if isinstance(value, list) and isinstance(schema.get("items"), dict):
-        return [_public_value(item, schema["items"]) for item in value]
-    return value
+    if not isinstance(properties, dict):
+        raise _UnsupportedProviderSchema("settings.properties must be an object")
+
+    required = schema.get("required", [])
+    if not isinstance(required, list) or not all(isinstance(name, str) for name in required):
+        raise _UnsupportedProviderSchema("settings.required must be a list of field names")
+    required_names = frozenset(required)
+    unknown_required = sorted(required_names - set(properties))
+    if unknown_required:
+        raise _UnsupportedProviderSchema(
+            f"settings.required names unknown field {unknown_required[0]!r}"
+        )
+
+    fields: dict[str, _SettingField] = {}
+    for name, node in properties.items():
+        if not isinstance(name, str):
+            raise _UnsupportedProviderSchema("settings.properties keys must be strings")
+        fields[name] = _setting_field(node, f"settings.{name}")
+    return fields, required_names
 
 
-def _is_sensitive_setting(name: str, schema: dict[str, Any]) -> bool:
-    """Recognise both schema-marked secrets and defensively named credential fields."""
-    normalized = name.lower().replace("-", "_")
-    sensitive_names = {"api_key", "apikey", "key", "password", "secret", "token", "credential"}
-    return (
-        bool(schema.get("writeOnly"))
-        or schema.get("format") == "password"
-        or normalized in sensitive_names
-    )
+def _setting_field(node: object, path: str) -> _SettingField:
+    if not isinstance(node, dict):
+        raise _UnsupportedProviderSchema(f"{path} must be a schema object")
+
+    if "anyOf" not in node:
+        _validate_scalar_schema(node, path)
+        _validate_default(node, node, nullable=False, path=path)
+        return _SettingField(node, False, _is_public_field(node, node))
+
+    nullable_keys = {"anyOf", "title", "description", "default", "writeOnly", "x-aggregato-public"}
+    _check_schema_keys(node, frozenset(nullable_keys), path)
+    choices = node["anyOf"]
+    if not isinstance(choices, list) or len(choices) != 2:
+        raise _UnsupportedProviderSchema(f"{path} supports only anyOf [scalar, {{'type': 'null'}}]")
+    scalar_choices = [
+        choice for choice in choices if isinstance(choice, dict) and choice.get("type") != "null"
+    ]
+    null_choices = [
+        choice for choice in choices if isinstance(choice, dict) and choice.get("type") == "null"
+    ]
+    if len(scalar_choices) != 1 or len(null_choices) != 1:
+        raise _UnsupportedProviderSchema(f"{path} supports only anyOf [scalar, {{'type': 'null'}}]")
+    if set(null_choices[0]) != {"type"}:
+        raise _UnsupportedProviderSchema(
+            f"{path} nullable anyOf null branch must be {{'type': 'null'}}"
+        )
+    scalar = scalar_choices[0]
+    _validate_scalar_schema(scalar, path)
+    _validate_default(node, scalar, nullable=True, path=path)
+    return _SettingField(scalar, True, _is_public_field(node, scalar))
+
+
+def _validate_scalar_schema(node: dict[str, Any], path: str) -> None:
+    kind = node.get("type")
+    if kind in {"object", "array"}:
+        raise _UnsupportedProviderSchema(
+            f"{path} uses unsupported type {kind!r}; nested objects and arrays are not supported"
+        )
+    _check_schema_keys(node, _FIELD_SCHEMA_KEYS - {"anyOf"}, path)
+    if not isinstance(kind, str) or kind not in _SCALAR_TYPES:
+        raise _UnsupportedProviderSchema(
+            f"{path} must declare one scalar type: string, number, integer, or boolean"
+        )
+
+    _validate_field_metadata(node, path)
+    enum = node.get("enum")
+    if enum is not None:
+        if not isinstance(enum, list) or not enum:
+            raise _UnsupportedProviderSchema(f"{path}.enum must be a non-empty list")
+        if not all(_matches_scalar_type(value, kind) for value in enum):
+            raise _UnsupportedProviderSchema(f"{path}.enum contains a value with the wrong type")
+
+    constraints = {
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+    }
+    if kind == "string":
+        for keyword in ("minLength", "maxLength"):
+            value = node.get(keyword)
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                raise _UnsupportedProviderSchema(f"{path}.{keyword} must be a non-negative integer")
+        pattern = node.get("pattern")
+        if pattern is not None:
+            if not isinstance(pattern, str):
+                raise _UnsupportedProviderSchema(f"{path}.pattern must be a string")
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise _UnsupportedProviderSchema(
+                    f"{path}.pattern is not a valid regular expression: {exc}"
+                ) from exc
+        invalid = constraints - {"minLength", "maxLength", "pattern"}
+    elif kind in {"number", "integer"}:
+        for keyword in constraints - {"minLength", "maxLength", "pattern"}:
+            value = node.get(keyword)
+            if value is not None and (
+                not isinstance(value, int | float) or isinstance(value, bool)
+            ):
+                raise _UnsupportedProviderSchema(f"{path}.{keyword} must be a number")
+        multiple = node.get("multipleOf")
+        if multiple is not None and multiple <= 0:
+            raise _UnsupportedProviderSchema(f"{path}.multipleOf must be greater than zero")
+        invalid = {"minLength", "maxLength", "pattern"}
+    else:
+        invalid = constraints
+    if any(keyword in node for keyword in invalid):
+        raise _UnsupportedProviderSchema(
+            f"{path} declares a constraint that does not apply to {kind!r}"
+        )
+
+
+def _validate_field_metadata(node: dict[str, Any], path: str) -> None:
+    for keyword in ("title", "description", "format"):
+        value = node.get(keyword)
+        if value is not None and not isinstance(value, str):
+            raise _UnsupportedProviderSchema(f"{path}.{keyword} must be a string")
+    for keyword in ("writeOnly", "x-aggregato-public"):
+        value = node.get(keyword)
+        if value is not None and not isinstance(value, bool):
+            raise _UnsupportedProviderSchema(f"{path}.{keyword} must be a boolean")
+
+
+def _validate_default(
+    wrapper: dict[str, Any], scalar: dict[str, Any], *, nullable: bool, path: str
+) -> None:
+    if "default" not in wrapper:
+        return
+    value = wrapper["default"]
+    if value is None and nullable:
+        return
+    if not _matches_scalar_type(value, scalar.get("type")):
+        raise _UnsupportedProviderSchema(f"{path}.default has the wrong type")
+
+
+def _is_public_field(wrapper: dict[str, Any], scalar: dict[str, Any]) -> bool:
+    """Use only manifest metadata as the redaction policy; absence is private by default."""
+    nodes = (wrapper, scalar)
+    if any(
+        node.get("writeOnly") is True
+        or node.get("format") == "password"
+        or node.get("x-aggregato-public") is False
+        for node in nodes
+    ):
+        return False
+    return any(node.get("x-aggregato-public") is True for node in nodes)
+
+
+def _check_schema_keys(node: dict[str, Any], allowed: frozenset[str], path: str) -> None:
+    unsupported = sorted(key for key in node if key not in allowed)
+    if unsupported:
+        raise _UnsupportedProviderSchema(
+            f"{path} uses unsupported schema keyword {unsupported[0]!r}"
+        )
 
 
 def _public_settings(schema: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """Project settings through the manifest schema without exposing secret descendants."""
-    public: dict[str, Any] = {}
-    properties = _schema_properties(schema, schema)
-    for key, value in settings.items():
-        node = properties.get(key)
-        if not isinstance(node, dict) or _schema_is_sensitive(key, node, schema):
-            continue
-        public[key] = _public_schema_value(value, node, schema)
-    return public
-
-
-def _public_schema_value(value: Any, node: dict[str, Any], root: dict[str, Any]) -> Any:
-    variants = _schema_variants(node, root)
-    if isinstance(value, dict):
-        properties: dict[str, dict[str, Any]] = {}
-        for variant in variants:
-            properties.update(_schema_properties(variant, root))
-        return {
-            key: _public_schema_value(child, child_schema, root)
-            for key, child in value.items()
-            if isinstance(key, str)
-            and isinstance(child_schema := properties.get(key), dict)
-            and not _schema_is_sensitive(key, child_schema, root)
-        }
-    if isinstance(value, list):
-        item_schema = next(
-            (
-                variant.get("items")
-                for variant in variants
-                if isinstance(variant.get("items"), dict)
-            ),
-            None,
-        )
-        if isinstance(item_schema, dict):
-            return [_public_schema_value(item, item_schema, root) for item in value]
-    return value
-
-
-def _schema_is_sensitive(name: str, node: dict[str, Any], root: dict[str, Any]) -> bool:
-    normalized = name.lower().replace("-", "_")
-    sensitive_names = {
-        "access_token",
-        "api_key",
-        "apikey",
-        "client_secret",
-        "credential",
-        "key",
-        "password",
-        "private_key",
-        "secret",
-        "session_cookie",
-        "token",
+    """Project flat settings through the manifest allowlist without exposing secrets."""
+    try:
+        fields, _ = _setting_fields(schema)
+    except _UnsupportedProviderSchema as exc:
+        raise ProblemError(
+            status=500,
+            title="Provider configuration schema is unsupported",
+            detail=str(exc),
+            type=error_type("provider-schema-unsupported"),
+        ) from exc
+    return {
+        key: value
+        for key, value in settings.items()
+        if (field := fields.get(key)) is not None
+        and field.public
+        and not _validate_field_value(value, field, f"settings.{key}")
     }
-    variants = _schema_variants(node, root)
-    if normalized in sensitive_names:
-        return True
-    if any(
-        bool(variant.get("writeOnly"))
-        or variant.get("format") == "password"
-        or variant.get("x-aggregato-public") is False
-        for variant in variants
-    ):
-        return True
-    # Public settings are an explicit manifest allowlist. This prevents a drop-in schema from
-    # accidentally reflecting a credential merely because its author chose a non-obvious name.
-    return not any(variant.get("x-aggregato-public") is True for variant in variants)
-
-
-def _schema_variants(node: dict[str, Any], root: dict[str, Any]) -> list[dict[str, Any]]:
-    if isinstance(ref := node.get("$ref"), str) and ref.startswith("#/"):
-        resolved: Any = root
-        for part in ref[2:].split("/"):
-            if not isinstance(resolved, dict):
-                return []
-            resolved = resolved.get(part.replace("~1", "/").replace("~0", "~"))
-        return _schema_variants(resolved, root) if isinstance(resolved, dict) else []
-    variants = [node]
-    for key in ("anyOf", "oneOf", "allOf"):
-        for child in node.get(key, []):
-            if isinstance(child, dict):
-                variants.extend(_schema_variants(child, root))
-    return variants
-
-
-def _schema_properties(node: dict[str, Any], root: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    properties: dict[str, dict[str, Any]] = {}
-    for variant in _schema_variants(node, root):
-        value = variant.get("properties")
-        if isinstance(value, dict):
-            properties.update(
-                {key: child for key, child in value.items() if isinstance(child, dict)}
-            )
-    return properties
 
 
 def _validate_settings(schema: dict[str, Any], value: object) -> list[str]:
-    """Validate the manifest subset needed by the API without importing provider code."""
-    errors = _validate_schema_node(value, schema, schema, path="settings")
+    """Validate flat provider settings without importing provider code or resolving refs."""
+    try:
+        fields, required = _setting_fields(schema)
+    except _UnsupportedProviderSchema as exc:
+        return [f"provider configuration schema is unsupported: {exc}"]
+    if not isinstance(value, dict):
+        return ["settings must be an object"]
+
+    errors = [f"settings.{key} is required" for key in sorted(required) if key not in value]
+    errors.extend(
+        f"settings.{key} is not a recognized setting" for key in value if key not in fields
+    )
+    for key, setting in value.items():
+        if isinstance(key, str) and (field := fields.get(key)) is not None:
+            errors.extend(_validate_field_value(setting, field, f"settings.{key}"))
     return errors
 
 
-def _validate_schema_node(
-    value: object, node: dict[str, Any], root: dict[str, Any], *, path: str
-) -> list[str]:
-    resolved = _resolve_schema(node, root)
-    if resolved is None:
-        return [f"{path} references an unknown schema"]
-
-    choices = [
-        child
-        for key in ("anyOf", "oneOf")
-        for child in resolved.get(key, [])
-        if isinstance(child, dict)
-    ]
-    if choices:
-        matches = [not _validate_schema_node(value, child, root, path=path) for child in choices]
-        if ("oneOf" in resolved and sum(matches) != 1) or (
-            "anyOf" in resolved and not any(matches)
-        ):
-            return [f"{path} does not match the provider schema"]
-        return []
-
-    all_of = [child for child in resolved.get("allOf", []) if isinstance(child, dict)]
-    all_errors = [
-        error for child in all_of for error in _validate_schema_node(value, child, root, path=path)
-    ]
-    if all_errors:
-        return all_errors
-
-    # Validate constraints declared alongside an allOf composition as well, without recursing
-    # back into the same composition.
-    node_without_composition = {
-        key: value for key, value in resolved.items() if key not in {"anyOf", "oneOf", "allOf"}
-    }
-    expected = node_without_composition.get("type")
-    if isinstance(expected, list):
-        expected_types = {item for item in expected if isinstance(item, str)}
-    else:
-        expected_types = {expected} if isinstance(expected, str) else set()
-    if expected_types and not _matches_json_type(value, expected_types):
-        return [f"{path} has an invalid type"]
-    if expected == "object":
-        if not isinstance(value, dict):
-            return [f"{path} must be an object"]
-        properties = _schema_properties(node_without_composition, root)
-        required = {
-            item for item in node_without_composition.get("required", []) if isinstance(item, str)
-        }
-        errors = [f"{path}.{key} is required" for key in sorted(required) if key not in value]
-        if node_without_composition.get("additionalProperties") is False:
-            errors.extend(
-                f"{path}.{key} is not a recognized setting"
-                for key in value
-                if key not in properties
-            )
-        for key, child in value.items():
-            if isinstance(key, str) and isinstance(child_schema := properties.get(key), dict):
-                errors.extend(
-                    _validate_schema_node(child, child_schema, root, path=f"{path}.{key}")
-                )
-        return errors
-    if expected == "array":
-        if not isinstance(value, list):
-            return [f"{path} must be an array"]
-        item_schema = node_without_composition.get("items")
-        if isinstance(item_schema, dict):
-            return [
-                error
-                for index, item in enumerate(value)
-                for error in _validate_schema_node(item, item_schema, root, path=f"{path}[{index}]")
-            ]
-    elif expected == "string":
+def _validate_field_value(value: object, field: _SettingField, path: str) -> list[str]:
+    if value is None:
+        return [] if field.nullable else [f"{path} must be {field.schema['type']}"]
+    kind = field.schema["type"]
+    enum = field.schema.get("enum")
+    if kind == "string":
         if not isinstance(value, str):
             return [f"{path} must be a string"]
-        minimum = node_without_composition.get("minLength")
+        if isinstance(enum, list) and not any(value == option for option in enum):
+            return [f"{path} must be one of {enum!r}"]
+        minimum = field.schema.get("minLength")
         if isinstance(minimum, int) and len(value) < minimum:
             return [f"{path} must contain at least {minimum} characters"]
-    elif expected == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
-        return [f"{path} must be an integer"]
-    elif expected == "number" and (not isinstance(value, int | float) or isinstance(value, bool)):
-        return [f"{path} must be a number"]
-    elif expected == "boolean" and not isinstance(value, bool):
-        return [f"{path} must be a boolean"]
-    elif expected == "null" and value is not None:
-        return [f"{path} must be null"]
+        maximum = field.schema.get("maxLength")
+        if isinstance(maximum, int) and len(value) > maximum:
+            return [f"{path} must contain at most {maximum} characters"]
+        pattern = field.schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
+            return [f"{path} does not match the provider pattern"]
+    elif kind in {"number", "integer"}:
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            message = "an integer" if kind == "integer" else "a number"
+            return [f"{path} must be {message}"]
+        if kind == "integer" and not isinstance(value, int):
+            return [f"{path} must be an integer"]
+        if isinstance(enum, list) and not any(value == option for option in enum):
+            return [f"{path} must be one of {enum!r}"]
+        minimum = field.schema.get("minimum")
+        if isinstance(minimum, int | float) and not isinstance(minimum, bool) and value < minimum:
+            return [f"{path} must be at least {minimum}"]
+        maximum = field.schema.get("maximum")
+        if isinstance(maximum, int | float) and not isinstance(maximum, bool) and value > maximum:
+            return [f"{path} must be at most {maximum}"]
+        exclusive_minimum = field.schema.get("exclusiveMinimum")
+        if (
+            isinstance(exclusive_minimum, int | float)
+            and not isinstance(exclusive_minimum, bool)
+            and value <= exclusive_minimum
+        ):
+            return [f"{path} must be greater than {exclusive_minimum}"]
+        exclusive_maximum = field.schema.get("exclusiveMaximum")
+        if (
+            isinstance(exclusive_maximum, int | float)
+            and not isinstance(exclusive_maximum, bool)
+            and value >= exclusive_maximum
+        ):
+            return [f"{path} must be less than {exclusive_maximum}"]
+        multiple = field.schema.get("multipleOf")
+        if isinstance(multiple, int | float) and not isinstance(multiple, bool):
+            quotient = value / multiple
+            if abs(quotient - round(quotient)) > 1e-9:
+                return [f"{path} must be a multiple of {multiple}"]
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            return [f"{path} must be a boolean"]
+        if isinstance(enum, list) and not any(value == option for option in enum):
+            return [f"{path} must be one of {enum!r}"]
+    else:
+        return [f"{path} has unsupported type {kind!r}"]
     return []
 
 
-def _resolve_schema(node: dict[str, Any], root: dict[str, Any]) -> dict[str, Any] | None:
-    reference = node.get("$ref")
-    if not isinstance(reference, str) or not reference.startswith("#/"):
-        return node
-    resolved: Any = root
-    for part in reference[2:].split("/"):
-        if not isinstance(resolved, dict):
-            return None
-        resolved = resolved.get(part.replace("~1", "/").replace("~0", "~"))
-    return resolved if isinstance(resolved, dict) else None
-
-
-def _matches_json_type(value: object, expected: set[str]) -> bool:
-    return any(
-        (kind == "object" and isinstance(value, dict))
-        or (kind == "array" and isinstance(value, list))
-        or (kind == "string" and isinstance(value, str))
+def _matches_scalar_type(value: object, kind: object) -> bool:
+    return (
+        (kind == "string" and isinstance(value, str))
+        or (kind == "number" and isinstance(value, int | float) and not isinstance(value, bool))
         or (kind == "integer" and isinstance(value, int) and not isinstance(value, bool))
-        or (kind == "number" and isinstance(value, (int, float)) and not isinstance(value, bool))
         or (kind == "boolean" and isinstance(value, bool))
-        or (kind == "null" and value is None)
-        for kind in expected
     )
 
 
@@ -1189,4 +1402,5 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
         )
 
     rows = await _provider_rows(engine)
-    return _view(info, rows.get(provider_id), config)
+    checks = await _check_rows(engine)
+    return _view(info, rows.get(provider_id), config, checks.get(provider_id))

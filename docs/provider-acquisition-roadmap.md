@@ -7,10 +7,9 @@ than creating a replacement provider or duplicating an archive.
 ## Goodreads
 
 Goodreads has no supported personal-library API. The provider uses the public
-`/review/list_rss/<user id>` feed as its automatic surface. The feed is a rolling 100-item snapshot,
-not a full-history backfill, so a Library Export CSV remains the preferred complete archive and
-preserves Goodreads `Book Id`, ISBN, ISBN13, ratings, reviews, shelves, and the distinction between
-`Date Read` and `Date Added`.
+`/review/list_rss/<user id>` feed as its sole bundled acquisition surface. The feed is a rolling
+100-item snapshot, not a full-history backfill; its records preserve Goodreads `Book Id`, ISBN,
+ISBN13, ratings, reviews, shelves, and the distinction between `Date Read` and `Date Added`.
 
 When Goodreads provides a supported personal-library feed or export endpoint, the provider will:
 
@@ -52,9 +51,10 @@ normalizer already files it (`mbid_recording`, `mbid_artist`) — record a fixtu
 
 ## Letterboxd
 
-Letterboxd already supports automatic recent synchronization through its public RSS feed. Configure
-either `username` (which derives the public RSS URL) or `rss_url`; the provider polls that feed at
-its declared six-hour interval. A supplied `.rss`/`.xml` file uses the same parser for history.
+Letterboxd already supports synchronization through its public RSS feed. Configure either
+`username` (which derives the public RSS URL) or `rss_url`; the provider polls that feed at its
+declared six-hour interval. The bundled provider does not add a second local-file reader for the
+same RSS payload.
 
 If Letterboxd offers a documented complete export endpoint or a richer official API later, its
 reader should replace only the acquisition adapter. Preserve `id="letterboxd"` and RSS GUIDs where

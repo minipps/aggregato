@@ -25,8 +25,9 @@ Your pull request MUST state which higher surfaces you evaluated and why each wa
 unobtainable for an ordinary account holder.
 
 Where a higher tier covers *part* of the data, combine tiers rather than dropping to the lowest
-one. Letterboxd is the worked example: RSS for recent activity, the user's CSV export for
-history — not a scraper for what the feed already provides.
+one. A provider may retain the generic host import path when a genuinely distinct local export is
+needed; Letterboxd's RSS already covers its bundled surface, so it does not expose a second import
+reader for the same payload.
 
 `acquisition` is declared on the provider and surfaced in the UI at the moment the operator
 enables it. It is a promise to the operator, so it must match what the code does.

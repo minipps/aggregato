@@ -187,6 +187,7 @@ class FetchMode(StrEnum):
     FULL = "full"
     IMPORT = "import"
     REPLAY = "replay"
+    CHECK = "check"
 
 
 class IngestStage(StrEnum):

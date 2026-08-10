@@ -114,6 +114,8 @@ aggregato/
 │   ├── scheduler.py            # due-queue poll loop, jitter, concurrency cap
 │   ├── runner.py               # spawns and supervises one child per run; wall-clock kill
 │   ├── child.py                # child entrypoint: fetch + normalize -> JSON lines on a pipe
+│   ├── jobs.py                 # typed import/replay leases and shared lifecycle transitions
+│   ├── dispatch.py              # RunPlan/RunFinalization orchestration and ingest boundary
 │   ├── retry.py                # backoff ladder, lineage, degraded state
 │   └── errors.py               # ErrorClass mapping and the never-retry set
 ├── providers/
@@ -123,8 +125,8 @@ aggregato/
 │   ├── fixture/                # M1 trivial provider — no network
 │   ├── listenbrainz/           # M2
 │   ├── anilist/                # M3
-│   ├── goodreads/              # M4 (import only)
-│   └── letterboxd/             # M5 (feed + import)
+│   ├── goodreads/              # M4 (public RSS feed)
+│   └── letterboxd/             # M5 (public RSS feed)
 ├── api/
 │   ├── deps.py                 # bearer auth, session cookie, CSRF
 │   ├── errors.py               # RFC 9457 problem+json

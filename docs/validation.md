@@ -144,9 +144,10 @@ credits are distinguishable from identifier-joined ones; a cross-family duplicat
 uv run pytest tests/integration/test_us5_file_import.py -v
 ```
 
-Expected: `POST /providers/goodreads/import` with a recorded CSV ingests entries with ISBN
-identifiers; re-uploading the same file adds nothing; an unrelated file is rejected with a problem
-document and leaves the archive unchanged.
+Expected: `POST /providers/fixture/import` with the recorded fixture log (uploaded using the host's
+accepted `.xml` extension) reaches the worker-owned import path; re-uploading the same file adds
+nothing; per-provider and total import quotas admit only the configured bytes; an unrelated file is
+rejected with a problem document; and completed import files are cleaned up.
 
 ###  — Adding support for a new platform
 

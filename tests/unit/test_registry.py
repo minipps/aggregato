@@ -22,7 +22,6 @@ from aggregato.domain.enums import Acquisition, Capability, FetchMode, MediaType
 from aggregato.domain.models import Checkpoint, Cursor, RawRecord
 from aggregato.providers.base import Provider, ProviderContext
 from aggregato.providers.registry import (
-    PROVIDER_API_VERSION,
     PROVIDER_ATTR,
     ProviderInfo,
     discover_providers,
@@ -81,8 +80,8 @@ def test_drop_in_provider_is_discovered_as_unreviewed(tmp_path: Path) -> None:
         "from aggregato.providers.fixture import FixtureProvider\n"
         "provider = FixtureProvider()\n"
         "provider.id = 'tutorial_provider'\n"
-        f"provider_api_version = {PROVIDER_API_VERSION}\n"
     )
+    _write_drop_in_manifest(package)
 
     info = next(info for info in discover_providers(tmp_path) if info.id == "tutorial_provider")
     assert info.reviewed is False
@@ -90,27 +89,21 @@ def test_drop_in_provider_is_discovered_as_unreviewed(tmp_path: Path) -> None:
     assert load_provider("tutorial_provider", tmp_path).id == "tutorial_provider"
 
 
-def test_drop_in_version_mismatch_warns_without_hiding_the_provider(tmp_path: Path) -> None:
-    package = tmp_path / "old_provider"
+def test_manifestless_drop_in_warns_skips_and_is_never_imported(tmp_path: Path) -> None:
+    package = tmp_path / "manifestless_provider"
     package.mkdir()
     (package / "__init__.py").write_text(
-        "from aggregato.providers.fixture import FixtureProvider\n"
-        "provider = FixtureProvider()\n"
-        "provider.id = 'old_provider'\n"
-        "provider_api_version = 999\n"
+        "raise AssertionError('manifest-less drop-in imported during discovery')\n",
+        encoding="utf-8",
     )
 
-    with pytest.warns(UserWarning, match="provider API 999"):
+    with pytest.warns(UserWarning, match=r"manifestless_provider.*manifest.json is required"):
         infos = discover_providers(tmp_path)
-    assert next(info for info in infos if info.id == "old_provider").reviewed is False
+    assert "manifestless_provider" not in {info.id for info in infos}
+    assert "aggregato.dropins.manifestless_provider" not in sys.modules
 
 
-def _write_manifest_drop_in(package: Path) -> None:
-    package.mkdir(parents=True)
-    # Discovery must not execute this package. A valid manifest is enough to list it.
-    (package / "__init__.py").write_text(
-        "raise AssertionError('drop-in imported during discovery')\n", encoding="utf-8"
-    )
+def _write_drop_in_manifest(package: Path) -> None:
     (package / "manifest.json").write_text(
         json.dumps(
             {
@@ -127,6 +120,15 @@ def _write_manifest_drop_in(package: Path) -> None:
     )
 
 
+def _write_manifest_drop_in(package: Path) -> None:
+    package.mkdir(parents=True)
+    # Discovery must not execute this package. A valid manifest is enough to list it.
+    (package / "__init__.py").write_text(
+        "raise AssertionError('drop-in imported during discovery')\n", encoding="utf-8"
+    )
+    _write_drop_in_manifest(package)
+
+
 def test_malformed_and_unrelated_drop_ins_do_not_block_valid_discovery(tmp_path: Path) -> None:
     malformed_manifest = tmp_path / "malformed_manifest"
     malformed_manifest.mkdir()
@@ -135,10 +137,11 @@ def test_malformed_and_unrelated_drop_ins_do_not_block_valid_discovery(tmp_path:
     )
     (malformed_manifest / "manifest.json").write_text("{", encoding="utf-8")
 
-    malformed_legacy = tmp_path / "malformed_legacy"
-    malformed_legacy.mkdir()
-    (malformed_legacy / "__init__.py").write_text(
-        "provider_api_version = 'not an integer'\n", encoding="utf-8"
+    missing_manifest = tmp_path / "missing_manifest"
+    missing_manifest.mkdir()
+    (missing_manifest / "__init__.py").write_text(
+        "raise AssertionError('manifest-less drop-in imported during discovery')\n",
+        encoding="utf-8",
     )
 
     unrelated = tmp_path / "unrelated"
@@ -155,11 +158,11 @@ def test_malformed_and_unrelated_drop_ins_do_not_block_valid_discovery(tmp_path:
 
     ids = {info.id for info in infos}
     assert {"fixture", "valid_provider"} <= ids
-    assert not {"malformed_manifest", "malformed_legacy", "unrelated", "nested"} & ids
+    assert not {"malformed_manifest", "missing_manifest", "unrelated", "nested"} & ids
     assert "aggregato.dropins.valid_provider" not in sys.modules
     messages = [str(warning.message) for warning in recorded]
     assert any("malformed_manifest" in message for message in messages)
-    assert any("malformed_legacy" in message for message in messages)
+    assert any("missing_manifest" in message for message in messages)
 
 
 def test_valid_drop_in_cannot_shadow_a_bundled_provider(tmp_path: Path) -> None:

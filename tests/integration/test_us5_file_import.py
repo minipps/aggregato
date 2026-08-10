@@ -13,15 +13,15 @@ from sqlalchemy import func, select
 
 from aggregato.config import Config, load_config
 from aggregato.db.engine import transaction
-from aggregato.db.schema import import_jobs, provider_items, providers
+from aggregato.db.schema import import_jobs, provider_items
 from aggregato.main import create_app
 from aggregato.sync.dispatch import build_dispatch
 from aggregato.sync.scheduler import claim, due_providers
 
 TOKEN = "phase-7-import-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
-EXPORT = Path("tests/fixtures/goodreads/library_export.csv")
-LETTERBOXD_EXPORT = Path("tests/fixtures/letterboxd/activity.rss")
+EXPORT = Path("tests/fixtures/fixture/log-two-pages.jsonl").resolve()
+UPLOAD_NAME = "fixture.xml"
 
 
 @pytest.fixture
@@ -109,6 +109,16 @@ def _all_import_files(client: httpx.AsyncClient) -> list[Path]:
     )
 
 
+async def _enable_fixture(client: httpx.AsyncClient) -> None:
+    configured = await client.put(
+        "/api/v1/providers/fixture/config",
+        json={"path": str(EXPORT)},
+    )
+    assert configured.status_code == 200
+    enabled = await client.post("/api/v1/providers/fixture/enable")
+    assert enabled.status_code == 200
+
+
 async def _count_items(engine: object) -> int:
     async with transaction(engine) as conn:  # type: ignore[arg-type]
         result = await conn.execute(select(func.count()).select_from(provider_items))
@@ -120,41 +130,56 @@ async def _run_queued_import(client: httpx.AsyncClient) -> None:
     now = datetime.now(UTC)
     due = await due_providers(engine, now=now)  # type: ignore[arg-type]
     assert len(due) == 1
-    assert await claim(engine, "goodreads", now=now)  # type: ignore[arg-type]
+    assert await claim(engine, "fixture", now=now)  # type: ignore[arg-type]
     transport = client._transport_for_url(httpx.URL("http://test/"))
     assert isinstance(transport, httpx.ASGITransport)
     await build_dispatch(engine, transport.app.state.config)(due[0])  # type: ignore[arg-type]
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        job = (
+            await conn.execute(
+                select(import_jobs.c.started_at, import_jobs.c.finished_at, import_jobs.c.failed_at)
+                .where(import_jobs.c.provider_id == "fixture")
+                .order_by(import_jobs.c.id.desc())
+                .limit(1)
+            )
+        ).first()
+    assert job is not None
+    assert job.started_at is not None
+    assert job.finished_at is not None
+    assert job.failed_at is None
 
 
 async def test_upload_imports_and_reupload_is_idempotent(client: httpx.AsyncClient) -> None:
-    assert (await client.post("/api/v1/providers/goodreads/enable")).status_code == 200
+    await _enable_fixture(client)
     content = await asyncio.to_thread(EXPORT.read_bytes)
     response = await client.post(
-        "/api/v1/providers/goodreads/import",
-        files={"file": ("library_export.csv", content, "text/csv")},
+        "/api/v1/providers/fixture/import",
+        files={"file": (UPLOAD_NAME, content, "application/xml")},
     )
     assert response.status_code == 202
     await _run_queued_import(client)
-    assert await _count_items(_engine(client)) == 2
+    assert await _count_items(_engine(client)) == 5
+    assert _all_import_files(client) == []
 
     response = await client.post(
-        "/api/v1/providers/goodreads/import",
-        files={"file": ("library_export.csv", content, "text/csv")},
+        "/api/v1/providers/fixture/import",
+        files={"file": (UPLOAD_NAME, content, "application/xml")},
     )
     assert response.status_code == 202
     await _run_queued_import(client)
-    assert await _count_items(_engine(client)) == 2
+    assert await _count_items(_engine(client)) == 5
+    assert _all_import_files(client) == []
 
 
 async def test_import_quota_includes_upload_and_serializes_concurrent_admission(
     quota_client: httpx.AsyncClient,
 ) -> None:
-    assert (await quota_client.post("/api/v1/providers/goodreads/enable")).status_code == 200
+    await _enable_fixture(quota_client)
     responses = await asyncio.gather(
         *(
             quota_client.post(
-                "/api/v1/providers/goodreads/import",
-                files={"file": ("library_export.csv", b"12345", "text/csv")},
+                "/api/v1/providers/fixture/import",
+                files={"file": (UPLOAD_NAME, b"12345", "application/xml")},
             )
             for _ in range(2)
         )
@@ -163,26 +188,25 @@ async def test_import_quota_includes_upload_and_serializes_concurrent_admission(
     async with transaction(_engine(quota_client)) as conn:  # type: ignore[arg-type]
         result = await conn.execute(select(func.count()).select_from(import_jobs))
         assert result.scalar_one() == 1
-    files = _import_files(quota_client, "goodreads")
+    files = _import_files(quota_client, "fixture")
     assert len(files) == 1
-    assert files[0].suffix == ".csv"
+    assert files[0].suffix == ".xml"
     assert files[0].stat().st_size == 5
 
 
-async def test_total_import_quota_serializes_admission_across_providers(
+async def test_total_import_quota_serializes_admission_across_fixture_uploads(
     total_quota_client: httpx.AsyncClient,
 ) -> None:
-    assert (await total_quota_client.post("/api/v1/providers/goodreads/enable")).status_code == 200
-    assert (await total_quota_client.post("/api/v1/providers/letterboxd/enable")).status_code == 200
+    await _enable_fixture(total_quota_client)
 
     responses = await asyncio.gather(
         total_quota_client.post(
-            "/api/v1/providers/goodreads/import",
-            files={"file": ("library_export.csv", b"12345", "text/csv")},
+            "/api/v1/providers/fixture/import",
+            files={"file": (UPLOAD_NAME, b"12345", "application/xml")},
         ),
         total_quota_client.post(
-            "/api/v1/providers/letterboxd/import",
-            files={"file": ("activity.csv", b"12345", "text/csv")},
+            "/api/v1/providers/fixture/import",
+            files={"file": (UPLOAD_NAME, b"12345", "application/xml")},
         ),
     )
 
@@ -196,9 +220,9 @@ async def test_total_import_quota_serializes_admission_across_providers(
 
 
 async def test_unrelated_upload_is_rejected_without_a_job(client: httpx.AsyncClient) -> None:
-    assert (await client.post("/api/v1/providers/goodreads/enable")).status_code == 200
+    await _enable_fixture(client)
     response = await client.post(
-        "/api/v1/providers/goodreads/import",
+        "/api/v1/providers/fixture/import",
         files={"file": ("not-an-export.txt", b"not an export", "text/plain")},
     )
     assert response.status_code == 422
@@ -207,31 +231,3 @@ async def test_unrelated_upload_is_rejected_without_a_job(client: httpx.AsyncCli
         result = await conn.execute(select(func.count()).select_from(import_jobs))
         assert result.scalar_one() == 0
     assert await _count_items(_engine(client)) == 0
-
-
-async def test_letterboxd_import_saves_the_username_for_later_rss_polls(
-    client: httpx.AsyncClient,
-) -> None:
-    assert (await client.post("/api/v1/providers/letterboxd/enable")).status_code == 200
-    content = await asyncio.to_thread(LETTERBOXD_EXPORT.read_bytes)
-
-    response = await client.post(
-        "/api/v1/providers/letterboxd/import",
-        files={"file": ("activity.rss", content, "application/rss+xml")},
-    )
-
-    assert response.status_code == 202
-    async with transaction(_engine(client)) as conn:  # type: ignore[arg-type]
-        settings = (
-            await conn.execute(select(providers.c.config).where(providers.c.id == "letterboxd"))
-        ).scalar_one()
-        path = (
-            await conn.execute(
-                select(import_jobs.c.path).where(import_jobs.c.provider_id == "letterboxd")
-            )
-        ).scalar_one()
-    assert settings == {"username": "fixture_user"}
-    import_path = Path(path)
-    assert await asyncio.to_thread(import_path.exists)
-    assert import_path.suffix == ".rss"
-    assert not await asyncio.to_thread(import_path.with_suffix(".rss.uploading").exists)

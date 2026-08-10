@@ -1,10 +1,4 @@
-"""Letterboxd provider: public RSS for automatic recent activity and RSS exports for history.
-
-The public RSS feed is the highest usable automatic surface for recent diary activity.  A supplied
-RSS/XML file uses the identical parser for older history, so both paths preserve the same native
-GUIDs and normalize into one stable provider id.  A future official export endpoint can therefore
-replace only ``_read_feed`` without splitting an archive into a second provider.
-"""
+"""Letterboxd public RSS provider."""
 
 from __future__ import annotations
 
@@ -14,9 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from html import unescape
-from pathlib import Path
 from typing import Any, ClassVar
-from urllib.parse import urlsplit
 
 from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
@@ -64,18 +56,13 @@ class LetterboxdConfig(BaseModel):
         default=None,
         description="Optional full public RSS URL; overrides the URL derived from username.",
     )
-    export_path: Path | None = Field(
-        default=None,
-        description="Optional local RSS/XML export for a manually requested full sync.",
-    )
 
-    @field_validator("username", "rss_url", "export_path", mode="before")
+    @field_validator("username", "rss_url", mode="before")
     @classmethod
     def _empty_optional_setting_is_unset(cls, value: object) -> object:
         """Normalize an unfilled optional form field to ``None``.
 
-        The UI serializes an empty text field as ``\"\"``.  That is not a valid optional URL and
-        ``pathlib.Path(\"\")`` means the current directory, which is never an export file.
+        The UI serializes an empty text field as ``\"\"``.  That is not a valid optional URL.
         """
         return None if isinstance(value, str) and not value.strip() else value
 
@@ -86,7 +73,6 @@ class LetterboxdProvider:
     media_types: set[MediaType] = {MediaType.FILM, MediaType.TV}  # noqa: RUF012
     capabilities: ClassVar[set[Capability]] = {
         Capability.POLL,
-        Capability.FILE_IMPORT,
         Capability.HAS_RATINGS,
         Capability.HAS_REVIEWS,
     }
@@ -112,28 +98,14 @@ class LetterboxdProvider:
         # only appear by fetching the feed again.  A snapshot has no position to resume from, so
         # it deliberately yields no Checkpoint; the writer's `(provider_id, native_id)` key makes
         # repeatedly observed GUIDs idempotent.
-        if mode is FetchMode.IMPORT:
-            if ctx.import_path is None:
-                raise ProviderError("Letterboxd import mode requires an RSS or XML export")
-            try:
-                payload = ctx.import_path.read_bytes()
-            except OSError as exc:
-                raise ProviderError(f"cannot read Letterboxd export: {exc}") from exc
-        else:
-            config = _config(ctx)
-            if config.export_path is not None:
-                try:
-                    payload = config.export_path.read_bytes()
-                except OSError as exc:
-                    raise ProviderError(f"cannot read Letterboxd export: {exc}") from exc
-            else:
-                url = _rss_url(config)
-                if url is None:
-                    return
-                response = await ctx.http.get(url)
-                if response.status_code != 200:
-                    raise ProviderError(f"Letterboxd RSS answered HTTP {response.status_code}")
-                payload = response.content
+        config = _config(ctx)
+        url = _rss_url(config)
+        if url is None:
+            return
+        response = await ctx.http.get(url)
+        if response.status_code != 200:
+            raise ProviderError(f"Letterboxd RSS answered HTTP {response.status_code}")
+        payload = response.content
         for item in _items(payload):
             yield RawRecord(native_id=item["guid"], payload=item)
 
@@ -189,27 +161,13 @@ class LetterboxdProvider:
 
     async def check(self, ctx: ProviderContext) -> CheckResult:
         config = _config(ctx)
-        if config.export_path is not None:
-            try:
-                _items(config.export_path.read_bytes())
-            except (OSError, ProviderError) as exc:
-                return CheckResult(ok=False, error_class=ErrorClass.PARSE, detail=str(exc))
-            return CheckResult(ok=True, detail="Letterboxd local RSS export is valid")
         if _rss_url(config) is None:
             return CheckResult(
-                ok=False, detail="set username or rss_url to enable automatic Letterboxd RSS sync"
+                ok=False,
+                error_class=ErrorClass.AUTH,
+                detail="set username or rss_url to enable automatic Letterboxd RSS sync",
             )
         return CheckResult(ok=True, detail="Letterboxd public RSS is configured")
-
-    def config_from_import(self, payload: bytes) -> dict[str, str]:
-        """Infer the public-feed settings available in an imported RSS document.
-
-        Imports are handled by the host, which persists the returned settings before queueing the
-        worker.  An absent or unfamiliar channel link is intentionally not an import error: the
-        archive can still be ingested, it simply cannot enable future polling automatically.
-        """
-        username = _username_from_rss(payload)
-        return {"username": username} if username is not None else {}
 
 
 def _config(ctx: ProviderContext) -> LetterboxdConfig:
@@ -224,31 +182,10 @@ def _rss_url(config: LetterboxdConfig) -> str | None:
     return f"https://letterboxd.com/{config.username}/rss" if config.username else None
 
 
-def _username_from_rss(payload: bytes) -> str | None:
-    """Read a Letterboxd account name from the RSS channel's canonical profile URL."""
-    try:
-        root = ET.fromstring(payload)
-    except (DefusedXmlException, ET.ParseError):
-        return None
-    link = root.findtext("./channel/link")
-    if not isinstance(link, str) or not link:
-        return None
-    parsed = urlsplit(link.strip())
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
-        "letterboxd.com",
-        "www.letterboxd.com",
-    }:
-        return None
-    parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) != 1 or not re.fullmatch(r"[A-Za-z0-9_]+", parts[0]):
-        return None
-    return parts[0]
-
-
 def _items(payload: bytes) -> list[dict[str, Any]]:
     try:
         root = ET.fromstring(payload)
-    except ET.ParseError as exc:
+    except (DefusedXmlException, ET.ParseError) as exc:
         raise StructureChangedError("Letterboxd export is not valid RSS/XML") from exc
     items = root.findall("./channel/item")
     if not items:

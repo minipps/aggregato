@@ -26,15 +26,16 @@ import signal
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from aggregato.domain.enums import ErrorClass, FetchMode, RunStatus
-from aggregato.domain.models import Cursor, NormalizedBatch, RawRecord
+from aggregato.domain.models import CheckResult, Cursor, NormalizedBatch, RawRecord
 from aggregato.sync.protocol import (
     MAX_LINE_BYTES,
     BatchMessage,
+    CheckMessage,
     CheckpointMessage,
     ErrorMessage,
     FailureMessage,
@@ -45,11 +46,6 @@ from aggregato.sync.protocol import (
 #: How long one run may take before it is killed. Generous, because a first backfill of a decade of
 #: history is legitimately slow; finite, because "no output and no exit" must not be forever (§6.7).
 DEFAULT_WALL_CLOCK_SECONDS = 60 * 5
-
-#: The kernel's cap on one argv entry (``MAX_ARG_STRLEN``, 32 pages). Not used by the spawn — the
-#: payload travels on stdin precisely so it does not have to be — but named here because it is the
-#: reason, and the reason is what a test asserts against.
-MAX_ARG_STRLEN = 128 * 1024
 
 #: Grace between SIGTERM and SIGKILL. A child mid-write gets a moment to finish its line; a child
 #: that is genuinely wedged does not get to ignore us.
@@ -79,6 +75,7 @@ class RunOutcome:
     error_message: str | None = None
     log_excerpt: str | None = None
     retry_after: timedelta | None = None
+    check_result: CheckResult | None = None
 
     @property
     def checkpointed(self) -> bool:
@@ -133,20 +130,17 @@ class RunRequest:
         return encoded
 
 
-async def execute_run(request: RunRequest, *, now: datetime | None = None) -> RunOutcome:
+async def execute_run(request: RunRequest) -> RunOutcome:
     """Spawn a child for one run, supervise it, and return what it produced.
 
     Args:
         request: What the child should do.
-        now: Unused by the supervision itself; accepted so callers can pass the injected clock's
-            value without the runner reaching for a clock of its own.
 
     Returns:
         A :class:`RunOutcome`. This function does not raise for provider failures — a failed run is
         an outcome to record, not an exception to propagate, or one bad provider would take down the
         scheduler loop .
     """
-    del now  # documented above; kept out of the body so no clock is read here
     spawn_options: dict[str, Any] = {
         "stdin": asyncio.subprocess.PIPE,
         "stdout": asyncio.subprocess.PIPE,
@@ -203,6 +197,19 @@ async def execute_run(request: RunRequest, *, now: datetime | None = None) -> Ru
     stderr = stderr_task.result() if stderr_task.done() and not stderr_task.cancelled() else ""
     if stderr:
         outcome.log_excerpt = _tail(stderr)
+
+    if request.mode is FetchMode.CHECK:
+        if outcome.check_result is not None and (
+            outcome.records or outcome.failures or outcome.cursor_after is not None
+        ):
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "credential check emitted non-diagnostic protocol messages"
+        elif outcome.check_result is None and outcome.error_class is None:
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "credential check emitted no result"
+    elif outcome.check_result is not None:
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = "sync emitted an unexpected credential-check result"
 
     if outcome.error_class is not None:
         # The child reported and exited cleanly. Partial if it had already checkpointed, because the
@@ -277,6 +284,10 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
                 outcome.cursor_after = message.cursor
             case FailureMessage():
                 outcome.failures.append(message)
+            case CheckMessage():
+                if outcome.check_result is not None:
+                    raise ProtocolViolation("credential check emitted more than one result")
+                outcome.check_result = message.result
             case ErrorMessage():
                 outcome.error_class = message.error_class
                 outcome.error_message = message.message

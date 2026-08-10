@@ -52,6 +52,7 @@ export type ErrorClass =
 
 export type ProviderStatus = 'disabled' | 'idle' | 'syncing' | 'degraded' | 'misconfigured'
 export type RunStatus = 'running' | 'success' | 'partial' | 'failed'
+export type ProviderCheckStatus = 'pending' | 'success' | 'failure'
 
 export type Acquisition = 'api' | 'feed' | 'export' | 'scrape'
 
@@ -212,6 +213,19 @@ export interface ProviderError {
   action_required?: string
 }
 
+export interface LastCheck {
+  status: ProviderCheckStatus
+  lineage_id: string
+  requested_at?: string | null
+  completed_at?: string | null
+  detail?: string | null
+  error_class?: ErrorClass | null
+}
+
+export interface QueuedOperation {
+  lineage_id: string
+}
+
 export interface Provider {
   id: string
   name: string
@@ -226,6 +240,7 @@ export interface Provider {
   last_success_at?: string | null
   consecutive_failures?: number
   last_error?: ProviderError | null
+  last_check: LastCheck | null
   file_pinned_settings?: string[]
   /** Configured values that the API has classified as safe to show; credentials are omitted. */
   current_settings?: Record<string, unknown>
@@ -304,7 +319,7 @@ export interface SyncRun {
   provider_id: string
   lineage_id: string
   attempt: number
-  mode: 'incremental' | 'full' | 'import'
+  mode: 'incremental' | 'full' | 'import' | 'check'
   status: RunStatus
   started_at: string
   finished_at?: string | null

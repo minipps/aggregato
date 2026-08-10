@@ -18,7 +18,7 @@ from aggregato.api.queries import fetch_page
 from aggregato.api.schemas import PageResponse
 from aggregato.db.engine import transaction
 from aggregato.db.schema import ingest_failures, provider_state, providers, replay_jobs, sync_runs
-from aggregato.domain.enums import ErrorClass, IngestStage, RunStatus
+from aggregato.domain.enums import ErrorClass, FetchMode, IngestStage, RunStatus
 
 router = APIRouter(tags=["operations"])
 
@@ -77,7 +77,10 @@ async def provider_runs(
     cursor: str | None = None,
 ) -> PageResponse[SyncRun]:
     """Return attempts newest-first; lineage and attempt make retry grouping explicit."""
-    query = select(sync_runs).where(sync_runs.c.provider_id == id)
+    query = select(sync_runs).where(
+        sync_runs.c.provider_id == id,
+        sync_runs.c.mode != str(FetchMode.CHECK),
+    )
     if status is not None:
         query = query.where(sync_runs.c.status == str(status))
     async with transaction(request.app.state.engine) as conn:

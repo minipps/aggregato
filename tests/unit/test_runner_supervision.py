@@ -23,11 +23,12 @@ from pathlib import Path
 
 import pytest
 
-from aggregato.domain.enums import ErrorClass, RunStatus
-from aggregato.domain.models import Cursor
+from aggregato.domain.enums import ErrorClass, FetchMode, RunStatus
+from aggregato.domain.models import CheckResult, Cursor
 from aggregato.sync import runner as runner_module
 from aggregato.sync.protocol import (
     BatchMessage,
+    CheckMessage,
     CheckpointMessage,
     ErrorMessage,
     FailureMessage,
@@ -45,6 +46,13 @@ def test_a_checkpoint_round_trips() -> None:
     decoded = decode(encode(message))
     assert isinstance(decoded, CheckpointMessage)
     assert decoded.cursor.state == {"next_page": 3}
+
+
+def test_a_check_result_round_trips() -> None:
+    message = CheckMessage(result=CheckResult(ok=False, error_class=ErrorClass.AUTH, detail="nope"))
+    decoded = decode(encode(message))
+    assert isinstance(decoded, CheckMessage)
+    assert decoded.result.error_class is ErrorClass.AUTH
 
 
 def test_every_message_serializes_to_exactly_one_line() -> None:
@@ -362,6 +370,26 @@ async def test_the_real_child_runs_the_fixture_provider(tmp_path: Path) -> None:
     assert outcome.cursor_after.state == {"next_page": 3}
 
 
+async def test_the_real_child_runs_a_credential_check_without_records() -> None:
+    """Check mode emits one diagnostic and never enters the fetch/normalize path."""
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="fixture",
+            mode=FetchMode.CHECK,
+            config={"path": str(FIXTURE_RECORDS)},
+            wall_clock_seconds=60,
+        )
+    )
+
+    assert outcome.status is RunStatus.SUCCESS, outcome.error_message
+    assert outcome.check_result == CheckResult(ok=True, detail="2 page(s) readable")
+    assert outcome.records == []
+    assert outcome.failures == []
+    assert outcome.cursor_after is None
+
+
 async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() -> None:
     """A replay run carries every retained payload, which argv cannot hold.
 
@@ -369,7 +397,7 @@ async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() ->
     ``E2BIG`` and the spawn raised before a run existed — the provider's lock was released but its
     ``sync_runs`` row stayed ``running``. The payload goes on stdin, which has no such limit.
     """
-    from aggregato.sync.runner import MAX_ARG_STRLEN, RunRequest, execute_run
+    from aggregato.sync.runner import RunRequest, execute_run
 
     seed = await execute_run(
         RunRequest(
@@ -383,7 +411,7 @@ async def test_the_real_child_takes_a_payload_larger_than_one_argv_argument() ->
         replay_records=records * 200,
         wall_clock_seconds=60,
     )
-    assert len(request.payload()) > MAX_ARG_STRLEN, "payload no longer exercises the limit"
+    assert len(request.payload()) > 128 * 1024, "payload no longer exercises the limit"
 
     outcome = await execute_run(request)
 
@@ -458,6 +486,20 @@ class EnvironmentProbeProvider(FixtureProvider):
 
 provider = EnvironmentProbeProvider()
 """,
+        encoding="utf-8",
+    )
+    (package / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "Environment probe",
+                "media_types": ["film"],
+                "capabilities": [],
+                "acquisition": "export",
+                "schema_version": 1,
+                "default_poll_interval_seconds": 3600,
+                "config_schema": {"type": "object", "properties": {}},
+            }
+        ),
         encoding="utf-8",
     )
 

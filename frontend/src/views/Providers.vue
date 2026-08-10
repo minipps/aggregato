@@ -15,6 +15,7 @@
 import { computed, ref } from 'vue'
 
 import {
+  checkProvider,
   importProviderFile,
   latestProviderRun,
   providerConfigSchema,
@@ -95,6 +96,14 @@ function sync(id: string): Promise<void> {
     await syncProvider(id)
     await list.reload()
     return 'Sync queued.'
+  })
+}
+
+function check(id: string): Promise<void> {
+  return act(id, 'Queueing a provider check', async () => {
+    await checkProvider(id)
+    await list.reload()
+    return 'Provider check queued.'
   })
 }
 
@@ -242,6 +251,42 @@ function saveConfiguration(id: string): Promise<void> {
           Last error ({{ provider.last_error.error_class }}): {{ provider.last_error.message }}
         </p>
 
+        <section
+          v-if="provider.last_check"
+          class="subsection"
+          :aria-label="`${provider.name} latest provider check`"
+        >
+          <h3>Latest provider check</h3>
+          <dl class="pairs">
+            <dt>Status</dt>
+            <dd><span class="badge">{{ provider.last_check.status }}</span></dd>
+            <dt>Lineage</dt>
+            <dd class="mono">{{ provider.last_check.lineage_id }}</dd>
+            <dt>Requested</dt>
+            <dd>
+              <LoggedAt
+                v-if="provider.last_check.requested_at"
+                :at="provider.last_check.requested_at"
+                precision="exact"
+              />
+              <span v-else class="muted">Not recorded</span>
+            </dd>
+            <dt>Completed</dt>
+            <dd>
+              <LoggedAt
+                v-if="provider.last_check.completed_at"
+                :at="provider.last_check.completed_at"
+                precision="exact"
+              />
+              <span v-else class="muted">Pending</span>
+            </dd>
+            <dt>Detail</dt>
+            <dd>{{ provider.last_check.detail ?? '—' }}</dd>
+            <dt>Error class</dt>
+            <dd>{{ provider.last_check.error_class ?? '—' }}</dd>
+          </dl>
+        </section>
+
         <dl class="pairs">
           <dt>Last success</dt>
           <dd>
@@ -292,6 +337,13 @@ function saveConfiguration(id: string): Promise<void> {
           <button type="button" :disabled="busy === provider.id" @click="toggle(provider.id, !provider.enabled)">
             {{ provider.enabled ? 'Disable' : 'Enable' }}
           </button>
+          <button
+            type="button"
+            :disabled="busy === provider.id || provider.last_check?.status === 'pending'"
+            @click="check(provider.id)"
+          >
+            Check provider
+          </button>
           <button type="button" :disabled="busy === provider.id || !provider.enabled" @click="sync(provider.id)">
             Sync now
           </button>
@@ -310,7 +362,7 @@ function saveConfiguration(id: string): Promise<void> {
 
         <p class="actions">
           <button type="button" :disabled="busy === provider.id" @click="showLatestRun(provider.id)">
-            Show latest run
+            Show latest sync run
           </button>
         </p>
 

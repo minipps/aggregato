@@ -44,18 +44,11 @@ def test_changed_letterboxd_item_is_rejected() -> None:
         _items(Path("tests/fixtures/letterboxd/structure-changed.rss").read_bytes())
 
 
-def test_imported_rss_derives_the_public_feed_username() -> None:
-    payload = Path("tests/fixtures/letterboxd/activity.rss").read_bytes()
-
-    assert LetterboxdProvider().config_from_import(payload) == {"username": "fixture_user"}
-
-
 def test_empty_optional_settings_are_unset() -> None:
-    """Unfilled fields from the schema form must not become a URL error or working directory."""
-    config = LetterboxdConfig(username=" ", rss_url="", export_path="")
+    """Unfilled fields from the schema form must not become a URL error."""
+    config = LetterboxdConfig(username=" ", rss_url="")
     assert config.username is None
     assert config.rss_url is None
-    assert config.export_path is None
 
 
 async def test_rss_is_refetched_on_every_automatic_poll() -> None:

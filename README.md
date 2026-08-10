@@ -33,8 +33,8 @@ platform yourself.
 | **Koito** | listens (tracks) | server URL + API key | its own API, every 5 minutes |
 | **ListenBrainz** | listens (tracks) | username + user token | its API, every 15 minutes. Also works against a compatible server such as Maloja via `base_url` |
 | **AniList** | anime + manga, with ratings | username, plus an OAuth token for private lists | its API, hourly |
-| **Letterboxd** | films + series, with ratings and reviews | your username (public RSS), or an exported `.rss`/`.xml` | public feed, every 6 hours |
-| **Goodreads** | books, with ratings and reviews | public profile/RSS URL; CSV export for a complete archive | [public RSS feed](docs/goodreads.md), daily; CSV import remains available |
+| **Letterboxd** | films + series, with ratings and reviews | your username or public RSS URL | public feed, every 6 hours |
+| **Goodreads** | books, with ratings and reviews | public profile/RSS URL | [public RSS feed](docs/goodreads.md), daily |
 
 Anything else is a plugin away: see [docs/writing-a-provider.md](docs/writing-a-provider.md).
 
@@ -93,9 +93,9 @@ Then, on the **Providers** screen:
 3. Press **Enable**, then **Sync now** for the first pass. After that the scheduler polls on its own
    at the platform's own interval, and you can leave it alone.
 
-For a local archive — a Goodreads CSV, or Letterboxd history older than its feed — enable it first,
-then use **Import personal export** on the same card to upload the CSV or `.rss`. The file stays
-local and is processed by the sync worker. Goodreads can also sync a configured bookshelf URL.
+Generic providers may expose **Import personal export** when their local export is a distinct,
+host-supported acquisition surface. The upload stays local and is processed by the sync worker;
+Goodreads and Letterboxd use their public RSS feeds as their sole bundled acquisition paths.
 
 Your log fills in as syncs land. **Log** is the timeline, **Stats** the summaries, **Sync history**
 what ran and when, and **Settings** holds retention, storage usage, and the archive download.
