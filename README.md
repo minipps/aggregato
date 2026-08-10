@@ -72,8 +72,8 @@ export AGGREGATO_TOKEN=$(openssl rand -hex 32)   # keep this — it is your logi
 docker compose -f docker/compose.yml up -d
 ```
 
-That pulls the published backend and frontend `0.2.2` images (amd64 and arm64); pin them explicitly with
-`AGGREGATO_VERSION=0.2.2`, or set `AGGREGATO_VERSION` to a newer release when upgrading. Use
+That pulls the published backend and frontend `0.2.3` images (amd64 and arm64); pin them explicitly with
+`AGGREGATO_VERSION=0.2.3`, or set `AGGREGATO_VERSION` to a newer release when upgrading. Use
 `docker compose -f docker/compose.yml pull && docker compose
 -f docker/compose.yml up -d`, and if you would rather build from your checkout, use `docker compose
 -f docker/compose.yml build`.
