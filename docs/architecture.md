@@ -10,7 +10,8 @@ Per-platform support is an in-repo plugin implementing a three-method contract; 
 scheduling, retrying, rate limiting, request pacing, ingest validation, identity resolution, and
 migrations.
 
-Technical approach: an async FastAPI application for the API, a **separate scheduler process** that
+Technical approach: an async FastAPI application for the API, including an authenticated HTTP API
+and websocket sync-status stream, plus a **separate scheduler process** that
 polls a database-backed due-queue and executes each sync run in a **short-lived child process** that
 streams normalized JSON batches back over a pipe. This provides crash/hang containment and ensures
 plugins never receive a database handle.
@@ -94,7 +95,7 @@ aggregato/
 ├── logging.py                  # stdlib logging + JSON formatter, run-scoped context
 ├── domain/
 │   ├── enums.py                # MediaType, MediaFamily, Role, EntryKind, Capability, Acquisition,
-│   │                           #   Confidence, ErrorClass, RunStatus — the closed vocabularies
+│   │                           #   Confidence, ErrorClass, RunStatus, RunPhase — closed vocabularies
 │   ├── models.py               # RawRecord, NormalizedBatch, Cursor, CheckResult (Pydantic)
 │   ├── subject_ref.py          # fixed-key validation (season/episode/track/disc/chapter/volume)
 │   ├── families.py             # MediaType -> MediaFamily mapping
@@ -153,6 +154,16 @@ tests/
 docker/                         # backend/frontend multi-stage images, Nginx config, Compose files
 CONTRIBUTING.md                 # acquisition + scraping policy (M1 deliverable, per the design)
 ```
+
+### Live sync observability
+
+The API process and scheduler do not share memory, so live status is durable. The parent process
+updates the open `sync_runs` row as it validates child messages, flushes checkpoints, and completes
+ingest. `GET /api/v1/sync/status` exposes the queue and latest run snapshot; the authenticated
+`/api/v1/ws/sync` websocket polls those same rows and sends a new snapshot only when it changes.
+The SPA uses that stream in Dashboard, Providers, and Sync History, with the HTTP endpoint as a
+reconnect fallback. A provider total may be unknown, in which case the UI shows an indeterminate
+progress state rather than inventing a percentage.
 
 **Structure Decision**: Single Python package plus a separate frontend package. Not the template's
 "web application" split, because there is no separate backend service boundary — one deployable, two

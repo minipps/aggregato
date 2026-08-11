@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from starlette.requests import Request
+from starlette.requests import HTTPConnection
 
 from aggregato.domain.clock import SYSTEM_CLOCK
 
 
-def now(request: Request) -> datetime:
+def now(request: HTTPConnection) -> datetime:
     """Return the app's current UTC instant, with the system clock as a direct-app fallback."""
     clock = getattr(request.app.state, "clock", SYSTEM_CLOCK)
     return clock.now()

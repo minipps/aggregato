@@ -283,9 +283,20 @@ next_run_at <= now()`. Index `(next_run_at)`.
 
 `id` bigint pk · `provider_id` text · `lineage_id` uuid (groups retries of the same work — ) ·
 `attempt` int · `mode` text (`incremental` | `full` | `import`) · `status` enum ·
-`started_at`, `finished_at` ts · `items_seen`, `items_written`, `items_failed` int ·
+`phase` enum (`starting` | `checking` | `replaying` | `fetching` | `ingesting` | `finalizing` |
+`finished` | `failed`) · `started_at`, `finished_at`, `updated_at` ts ·
+`items_seen`, `items_written`, `items_failed` int · `progress_total` int null (unknown for providers
+that cannot declare a total) · `checkpoint_count` int · `last_checkpoint_at` ts null ·
+`progress_revision` int ·
 `error_class` enum null · `error_message` text null · `log_excerpt` text null (application logs, per
 the spec's naming note) · `cursor_before`, `cursor_after` json null.
+
+`items_seen`, the phase, checkpoint metadata, and `updated_at` are written by the API-side parent
+while a child is running; provider code never receives a database handle. `progress_total` is
+nullable because a live acquisition may not know its eventual size. The authenticated
+`GET /api/v1/sync/status` endpoint returns the queue plus each provider's latest non-diagnostic
+run, and `/api/v1/ws/sync` sends the same snapshot whenever the durable state changes. A reconnect
+therefore gets a complete state rather than depending on an in-memory event history.
 
 Indexes `(provider_id, started_at desc)`, `(lineage_id)`.
 
@@ -376,6 +387,10 @@ editing history. See the recovery runbook in [operations.md](operations.md).
 running ─────────┼─────────► partial   (cursor advances to last checkpoint; retry ladder continues)
                  └─────────► failed    (cursor unchanged)
 ```
+
+The operational phase moves through `starting` → `checking`/`replaying`/`fetching` → `ingesting`
+→ `finalizing`, then ends at `finished` or `failed`. It is observability state, not a second outcome
+state: `status` remains the durable retry/outcome vocabulary above.
 
 ### Provider status
 

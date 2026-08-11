@@ -24,6 +24,7 @@ import json
 import os
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -37,6 +38,7 @@ from aggregato.sync.protocol import (
     BatchMessage,
     CheckMessage,
     CheckpointMessage,
+    ChildMessage,
     ErrorMessage,
     FailureMessage,
     ProtocolViolation,
@@ -130,11 +132,17 @@ class RunRequest:
         return encoded
 
 
-async def execute_run(request: RunRequest) -> RunOutcome:
+async def execute_run(
+    request: RunRequest,
+    *,
+    on_message: Callable[[ChildMessage], Awaitable[None]] | None = None,
+) -> RunOutcome:
     """Spawn a child for one run, supervise it, and return what it produced.
 
     Args:
         request: What the child should do.
+        on_message: Optional callback invoked after each child message is validated and before it
+            is added to the returned outcome. A callback failure aborts the run.
 
     Returns:
         A :class:`RunOutcome`. This function does not raise for provider failures — a failed run is
@@ -162,7 +170,7 @@ async def execute_run(request: RunRequest) -> RunOutcome:
     )
 
     outcome = RunOutcome(status=RunStatus.RUNNING)
-    consume_task = asyncio.create_task(_consume(process, outcome))
+    consume_task = asyncio.create_task(_consume(process, outcome, on_message=on_message))
     stderr_task = asyncio.create_task(_read_stderr(process))
     try:
         async with asyncio.timeout(request.wall_clock_seconds):
@@ -252,7 +260,12 @@ async def _send_payload(process: asyncio.subprocess.Process, payload: str) -> No
     process.stdin.close()
 
 
-async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> None:
+async def _consume(
+    process: asyncio.subprocess.Process,
+    outcome: RunOutcome,
+    *,
+    on_message: Callable[[ChildMessage], Awaitable[None]] | None = None,
+) -> None:
     """Read and validate the child's stdout, message by message.
 
     Every line is validated here, in the parent, before anything derived from it is kept: the
@@ -277,6 +290,8 @@ async def _consume(process: asyncio.subprocess.Process, outcome: RunOutcome) -> 
         if messages > MAX_PROTOCOL_MESSAGES:
             raise ProtocolViolation(f"child sent over the {MAX_PROTOCOL_MESSAGES} message limit")
         message = decode(line)
+        if on_message is not None:
+            await on_message(message)
         match message:
             case BatchMessage():
                 outcome.records.append((message.raw, message.batch))

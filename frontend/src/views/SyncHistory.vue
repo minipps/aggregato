@@ -2,18 +2,36 @@
 import { computed, ref } from 'vue'
 
 import { providerRuns, providers } from '@/api/client'
+import { useSyncStream } from '@/api/syncStream'
 import { usePaged, useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
+import SyncProgress from '@/components/SyncProgress.vue'
 
 const available = useRequest(providers)
+const sync = useSyncStream()
 const providerId = ref('')
 const history = usePaged(() => providerRuns(providerId.value))
+const currentRun = computed(() =>
+  sync.snapshot.value?.runs.find(
+    (run) => run.provider_id === providerId.value && run.status === 'running',
+  ),
+)
+const queued = computed(() =>
+  sync.snapshot.value?.providers.find((provider) => provider.id === providerId.value)?.requested_mode,
+)
+const visibleRuns = computed(() => {
+  const live = sync.snapshot.value?.runs.find((run) => run.provider_id === providerId.value)
+  if (!live) return history.items.value
+  const existing = history.items.value.findIndex((run) => run.id === live.id)
+  if (existing < 0) return [live, ...history.items.value]
+  return history.items.value.map((run, index) => (index === existing ? live : run))
+})
 const grouped = computed(() => {
-  const groups = new Map<string, typeof history.items.value>()
-  for (const run of history.items.value) groups.set(run.lineage_id, [...(groups.get(run.lineage_id) ?? []), run])
+  const groups = new Map<string, typeof visibleRuns.value>()
+  for (const run of visibleRuns.value) groups.set(run.lineage_id, [...(groups.get(run.lineage_id) ?? []), run])
   return [...groups.values()]
 })
 
@@ -50,6 +68,13 @@ async function select(): Promise<void> { await history.restart() }
     </div>
 
     <template v-if="providerId">
+      <section v-if="currentRun" class="card" aria-labelledby="current-sync-heading">
+        <h2 id="current-sync-heading">Sync in progress</h2>
+        <SyncProgress :run="currentRun" />
+      </section>
+      <p v-else-if="queued" class="card note" role="status">
+        {{ queued }} sync queued; waiting for the scheduler to start.
+      </p>
       <LoadingState v-if="history.loading.value" label="Loading sync history…" />
       <ErrorState v-else-if="history.error.value" :problem="history.error.value" retryable @retry="history.restart()" />
       <EmptyState v-else-if="grouped.length === 0" title="No sync attempts" detail="Attempts appear here once this provider runs." />
@@ -66,7 +91,9 @@ async function select(): Promise<void> { await history.restart() }
             <li v-for="run in attempts" :key="run.id">
               <strong>{{ run.status }}</strong> · attempt {{ run.attempt }} ·
               <LoggedAt :at="run.started_at" precision="exact" /> ·
-              {{ run.items_written }} written, {{ run.items_failed }} failed
+              {{ run.items_seen }} seen · {{ run.items_written }} written, {{ run.items_failed }} failed ·
+              {{ run.checkpoint_count }} checkpoints
+              <span v-if="run.phase !== 'finished' && run.phase !== 'failed'"> · {{ run.phase }}</span>
               <p v-if="run.error_message" class="muted">{{ run.error_class }}: {{ run.error_message }}</p>
             </li>
           </ul>

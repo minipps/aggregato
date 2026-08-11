@@ -215,6 +215,56 @@ async def test_enabling_an_unknown_provider_is_a_404_problem(client: httpx.Async
 # --- Sync now ----------------------------------------------------------------------------------
 
 
+async def test_sync_status_reports_queue_and_live_run_progress(
+    client: httpx.AsyncClient,
+) -> None:
+    await client.post("/api/v1/providers/fixture/enable")
+    await client.post("/api/v1/providers/fixture/sync")
+    queued = (await client.get("/api/v1/sync/status")).json()
+    fixture_state = next(item for item in queued["providers"] if item["id"] == "fixture")
+    assert fixture_state["requested_mode"] == "incremental"
+    assert fixture_state["requested_lineage_id"]
+    assert queued["runs"] == []
+
+    engine = await _engine_for(client)
+    run_id = uuid4()
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id == "fixture")
+            .values(status=str(ProviderStatus.SYNCING))
+        )
+        await conn.execute(
+            sync_runs.insert().values(
+                provider_id="fixture",
+                lineage_id=run_id,
+                attempt=1,
+                mode=str(FetchMode.INCREMENTAL),
+                status=str(RunStatus.RUNNING),
+                phase="fetching",
+                started_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 8, 11, 12, 0, 1, tzinfo=UTC),
+                items_seen=7,
+                items_written=0,
+                items_failed=1,
+                progress_total=None,
+                checkpoint_count=2,
+                last_checkpoint_at=datetime(2026, 8, 11, 12, 0, 1, tzinfo=UTC),
+                cursor_after={"page": 2},
+            )
+        )
+
+    body = (await client.get("/api/v1/sync/status")).json()
+    run = next(item for item in body["runs"] if item["provider_id"] == "fixture")
+    assert run["status"] == "running"
+    assert run["phase"] == "fetching"
+    assert run["items_seen"] == 7
+    assert run["items_failed"] == 1
+    assert run["checkpoint_count"] == 2
+    assert run["cursor_after"] == {"page": 2}
+    assert run["progress_percent"] is None
+
+
 async def test_sync_now_queues_and_returns_a_lineage(client: httpx.AsyncClient) -> None:
     """202, because the run is queued rather than performed — the API cannot spawn it ."""
     await client.post("/api/v1/providers/fixture/enable")

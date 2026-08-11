@@ -43,7 +43,14 @@ from aggregato.db.schema import (
     sync_runs,
 )
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
-from aggregato.domain.enums import Capability, ErrorClass, FetchMode, ProviderStatus, RunStatus
+from aggregato.domain.enums import (
+    Capability,
+    ErrorClass,
+    FetchMode,
+    ProviderStatus,
+    RunPhase,
+    RunStatus,
+)
 from aggregato.logging import bind_run
 from aggregato.providers.registry import discover_providers
 from aggregato.sync.errors import action_required
@@ -351,6 +358,9 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
                 finished_at=now,
                 error_class=str(ErrorClass.INTERNAL),
                 error_message="worker stopped before this sync completed; it will be retried",
+                phase=str(RunPhase.FAILED),
+                updated_at=now,
+                progress_revision=sync_runs.c.progress_revision + 1,
             )
         )
         await conn.execute(
@@ -367,6 +377,9 @@ async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> lis
                 finished_at=now,
                 error_class=str(ErrorClass.INTERNAL),
                 error_message="worker stopped before this credential check completed",
+                phase=str(RunPhase.FAILED),
+                updated_at=now,
+                progress_revision=sync_runs.c.progress_revision + 1,
             )
         )
         await conn.execute(
@@ -416,6 +429,7 @@ async def release(
     error_message: str | None = None,
     log_excerpt: str | None = None,
     cursor_after: dict[str, object] | None = None,
+    phase: RunPhase | None = None,
     requested_lineage_id: UUID | object | None = _UNSET,
 ) -> None:
     """Record a run's outcome and reschedule.
@@ -441,6 +455,16 @@ async def release(
                     error_message=error_message,
                     log_excerpt=log_excerpt,
                     cursor_after=cursor_after,
+                    phase=str(
+                        phase
+                        or (
+                            RunPhase.FINISHED
+                            if run_status is not RunStatus.FAILED
+                            else RunPhase.FAILED
+                        )
+                    ),
+                    updated_at=now,
+                    progress_revision=sync_runs.c.progress_revision + 1,
                 )
             )
             if run_result.rowcount != 1:

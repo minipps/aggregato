@@ -57,7 +57,8 @@ async def test_failed_child_is_contained_while_another_provider_and_the_api_cont
                 )
             )
 
-    async def fake_execute(request: RunRequest) -> RunOutcome:
+    async def fake_execute(request: RunRequest, **kwargs: object) -> RunOutcome:
+        del kwargs
         if request.provider_id == "fixture":
             return RunOutcome(
                 RunStatus.FAILED, error_class=ErrorClass.INTERNAL, error_message="SIGKILL"
