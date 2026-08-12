@@ -160,6 +160,19 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class RunPhase(StrEnum):
+    """The host-owned stage currently being performed by a sync run."""
+
+    STARTING = "starting"
+    CHECKING = "checking"
+    REPLAYING = "replaying"
+    FETCHING = "fetching"
+    INGESTING = "ingesting"
+    FINALIZING = "finalizing"
+    FINISHED = "finished"
+    FAILED = "failed"
+
+
 class ProviderStatus(StrEnum):
     DISABLED = "disabled"
     IDLE = "idle"

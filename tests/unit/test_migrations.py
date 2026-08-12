@@ -359,6 +359,61 @@ def test_0015_preserves_every_work_related_row_during_the_rebuild(tmp_path: Path
         assert snapshot == {"works": [{"id": "w", "media_type": "other"}]}
 
 
+def test_0016_preserves_existing_sync_history_and_backfills_progress_defaults(
+    tmp_path: Path,
+) -> None:
+    """The live-progress columns are additive to runs already recorded by older versions."""
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0015")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO sync_runs "
+            "(id, provider_id, lineage_id, attempt, mode, status, started_at, items_seen, "
+            "items_written, items_failed, error_message) "
+            "VALUES (7, 'legacy', ?, 2, 'incremental', 'success', '2026-01-01', 4, 3, 1, "
+            "'retained')",
+            ("7" * 32,),
+        )
+        conn.execute(
+            "INSERT INTO ingest_failures "
+            "(id, provider_id, sync_run_id, raw_payload, error, stage, created_at) "
+            "VALUES (8, 'legacy', 7, ?, 'retained failure', 'normalize', '2026-01-01')",
+            (json.dumps({"id": "payload"}),),
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        row = conn.execute(
+            "SELECT provider_id, lineage_id, attempt, mode, status, items_seen, items_written, "
+            "items_failed, error_message, phase, progress_total, checkpoint_count, "
+            "progress_revision, updated_at FROM sync_runs WHERE id = 7"
+        ).fetchone()
+        failure = conn.execute(
+            "SELECT sync_run_id, raw_payload, error FROM ingest_failures WHERE id = 8"
+        ).fetchone()
+
+    assert row == (
+        "legacy",
+        "7" * 32,
+        2,
+        "incremental",
+        "success",
+        4,
+        3,
+        1,
+        "retained",
+        "finished",
+        None,
+        0,
+        0,
+        "2026-01-01",
+    )
+    assert failure == (7, json.dumps({"id": "payload"}), "retained failure")
+
+
 def test_0005_keeps_the_log_it_retypes(tmp_path: Path) -> None:
     """A season's entries must survive the rebuild.
 

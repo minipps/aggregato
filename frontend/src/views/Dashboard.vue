@@ -10,6 +10,7 @@
 import { computed } from 'vue'
 
 import { entries, health } from '@/api/client'
+import { useSyncStream } from '@/api/syncStream'
 import { usePaged, useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
 import EntryList from '@/components/EntryList.vue'
@@ -17,20 +18,30 @@ import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
 import ProviderStatus from '@/components/ProviderStatus.vue'
+import SyncProgress from '@/components/SyncProgress.vue'
 
 const RECENT_LIMIT = 10
 
 // One cursor page is exactly what "recent" means here; there is no second page to walk.
 const recent = usePaged(() => entries({ limit: RECENT_LIMIT }))
 const status = useRequest(health)
+const sync = useSyncStream()
 
 const allProviders = computed(() => status.data.value?.providers ?? [])
+const activeRuns = computed(() => sync.snapshot.value?.runs.filter((run) => run.status === 'running') ?? [])
+const queuedProviders = computed(
+  () => sync.snapshot.value?.providers.filter((provider) => provider.requested_mode !== null) ?? [],
+)
 
 const unhealthy = computed(() =>
   allProviders.value.filter(
     (provider) => provider.status === 'degraded' || provider.status === 'misconfigured',
   ),
 )
+
+function liveProvider(id: string | undefined) {
+  return sync.snapshot.value?.providers.find((provider) => provider.id === id)
+}
 </script>
 
 <template>
@@ -90,6 +101,30 @@ const unhealthy = computed(() =>
       </template>
     </section>
 
+    <section class="card span-4" aria-labelledby="live-sync-heading">
+      <div class="card__head">
+        <span class="card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M4 12a8 8 0 0 1 14-5l2 2m0-5v5h-5M20 12a8 8 0 0 1-14 5l-2-2m0 5v-5h5" />
+          </svg>
+        </span>
+        <h2 id="live-sync-heading">Live sync activity</h2>
+        <span v-if="sync.connected.value" class="badge badge--ok">live</span>
+      </div>
+      <div v-if="activeRuns.length" class="live-sync-list">
+        <article v-for="run in activeRuns" :key="run.id" class="subsection">
+          <h3>{{ run.provider_id }} · {{ run.mode }} sync</h3>
+          <SyncProgress :run="run" />
+        </article>
+      </div>
+      <div v-else-if="queuedProviders.length" class="note" role="status">
+        <p>{{ queuedProviders.map((provider) => provider.id).join(', ') }} queued; waiting for the scheduler to start.</p>
+      </div>
+      <p v-else-if="sync.snapshot.value" class="note note--ok">No sync is running.</p>
+      <p v-else class="muted" role="status">Connecting to live sync updates…</p>
+      <p v-if="sync.error.value" class="muted">{{ sync.error.value.detail ?? sync.error.value.title }}</p>
+    </section>
+
     <!-- Primary content, and the widest tile on the screen: the whole row, so a run of entries is
          readable without scrolling a narrow column. -->
     <section class="card card--scroll span-4" aria-labelledby="recent-heading">
@@ -130,7 +165,14 @@ const unhealthy = computed(() =>
             <th scope="row">
               <RouterLink :to="{ name: 'providers' }">{{ provider.id ?? 'unknown' }}</RouterLink>
             </th>
-            <td><ProviderStatus v-if="provider.status" :status="provider.status" /><span v-else>unknown</span></td>
+            <td>
+              <ProviderStatus
+                v-if="liveProvider(provider.id)?.status"
+                :status="liveProvider(provider.id)!.status"
+              />
+              <ProviderStatus v-else-if="provider.status" :status="provider.status" />
+              <span v-else>unknown</span>
+            </td>
             <td>
               <LoggedAt
                 v-if="provider.last_success_at"

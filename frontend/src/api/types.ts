@@ -52,6 +52,15 @@ export type ErrorClass =
 
 export type ProviderStatus = 'disabled' | 'idle' | 'syncing' | 'degraded' | 'misconfigured'
 export type RunStatus = 'running' | 'success' | 'partial' | 'failed'
+export type RunPhase =
+  | 'starting'
+  | 'checking'
+  | 'replaying'
+  | 'fetching'
+  | 'ingesting'
+  | 'finalizing'
+  | 'finished'
+  | 'failed'
 export type ProviderCheckStatus = 'pending' | 'success' | 'failure'
 
 export type Acquisition = 'api' | 'feed' | 'export' | 'scrape'
@@ -321,15 +330,39 @@ export interface SyncRun {
   attempt: number
   mode: 'incremental' | 'full' | 'import' | 'check'
   status: RunStatus
+  phase: RunPhase
   started_at: string
   finished_at?: string | null
+  updated_at: string
   items_seen: number
   items_written: number
   items_failed: number
+  progress_total?: number | null
+  progress_percent?: number | null
+  checkpoint_count: number
+  last_checkpoint_at?: string | null
+  cursor_before?: Record<string, unknown> | null
+  cursor_after?: Record<string, unknown> | null
   error_class?: ErrorClass | null
   error_message?: string | null
   next_retry_at?: string | null
   log_excerpt?: string | null
+}
+
+export interface SyncProviderState {
+  id: string
+  enabled: boolean
+  status: ProviderStatus
+  requested_mode?: 'incremental' | 'full' | 'import' | 'replay' | 'check' | null
+  requested_lineage_id?: string | null
+  next_run_at?: string | null
+}
+
+export interface SyncSnapshot {
+  type: 'snapshot'
+  generated_at: string
+  providers: SyncProviderState[]
+  runs: SyncRun[]
 }
 
 export interface IngestFailure {

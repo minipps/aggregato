@@ -39,6 +39,7 @@ from aggregato.domain.enums import (
     FetchMode,
     IngestStage,
     ProviderStatus,
+    RunPhase,
     RunStatus,
 )
 from aggregato.domain.models import Cursor, RawRecord
@@ -56,6 +57,7 @@ from aggregato.sync.jobs import (
     finish_import,
     finish_replay,
 )
+from aggregato.sync.progress import RunProgress
 from aggregato.sync.retry import plan_after_failure, plan_after_success
 from aggregato.sync.runner import RunOutcome, RunRequest, execute_run
 from aggregato.sync.sanity import assess_window
@@ -138,6 +140,7 @@ class RunFinalization:
             error_message=self.error_message,
             log_excerpt=self.log_excerpt,
             cursor_after=self.cursor_after,
+            phase=RunPhase.FINISHED if self.run_status is not RunStatus.FAILED else RunPhase.FAILED,
             requested_lineage_id=self.requested_lineage_id,
         )
 
@@ -525,8 +528,13 @@ async def _run_opened(
         provider_dir=config.provider_dir,
         host_state_dir=config.data_dir / "http-host-state",
     )
+    progress = RunProgress(engine=engine, run_id=run_id, clock=clock)
     if mode is FetchMode.CHECK:
-        outcome = await execute_run(replace(common_plan, mode=FetchMode.CHECK).request())
+        await progress.set_phase(RunPhase.CHECKING)
+        outcome = await execute_run(
+            replace(common_plan, mode=FetchMode.CHECK).request(),
+            on_message=progress.observe,
+        )
         outcome = _validate_check_outcome(outcome)
         await _finalize_check(
             engine,
@@ -547,7 +555,10 @@ async def _run_opened(
         )
     )
     replay_outcome: RunOutcome | None = None
+    if replay_only and not stored_replay_records:
+        await progress.set_phase(RunPhase.REPLAYING, total=0)
     if stored_replay_records:
+        await progress.set_phase(RunPhase.REPLAYING, total=len(stored_replay_records))
         replay_plan = RunPlan(
             provider_id=common_plan.provider_id,
             mode=common_plan.mode,
@@ -557,7 +568,7 @@ async def _run_opened(
             host_state_dir=common_plan.host_state_dir,
             replay_records=tuple(stored_replay_records),
         )
-        replay_outcome = await execute_run(replay_plan.request())
+        replay_outcome = await execute_run(replay_plan.request(), on_message=progress.observe)
         if replay_outcome.status is RunStatus.SUCCESS:
             await tombstone_replay_derivatives(
                 engine,
@@ -577,6 +588,7 @@ async def _run_opened(
             error_message="replay job had no retained payload",
         )
     else:
+        await progress.set_phase(RunPhase.FETCHING)
         fetch_plan = RunPlan(
             provider_id=common_plan.provider_id,
             mode=common_plan.mode,
@@ -587,7 +599,7 @@ async def _run_opened(
             cursor=cursor,
             import_path=import_path,
         )
-        outcome = await execute_run(fetch_plan.request())
+        outcome = await execute_run(fetch_plan.request(), on_message=progress.observe)
 
     fetched_count = 0 if replay_only else len(outcome.records) + len(outcome.failures)
     if (
@@ -598,9 +610,11 @@ async def _run_opened(
         outcome.records = replay_outcome.records + outcome.records
         outcome.failures = replay_outcome.failures + outcome.failures
 
+    await progress.set_phase(RunPhase.INGESTING, total=progress.progress_total)
     written, failed = await _ingest(
         engine, provider, outcome, provider_id=provider_id, run_id=run_id, now=now
     )
+    await progress.record_ingest(items_written=written, items_failed=failed)
     if not replay_only and (replay_outcome is None or replay_outcome.status is RunStatus.SUCCESS):
         await _record_provider_schema_version(
             engine,
@@ -608,6 +622,7 @@ async def _run_opened(
             schema_version=provider.schema_version,
             now=now,
         )
+    await progress.set_phase(RunPhase.FINALIZING, total=progress.progress_total)
     await _apply_full_run_guards(
         engine,
         provider=provider,
@@ -690,6 +705,11 @@ async def _finalize_check(
                 error_message=outcome.error_message,
                 log_excerpt=outcome.log_excerpt,
                 cursor_after=None,
+                phase=str(
+                    RunPhase.FINISHED if outcome.status is RunStatus.SUCCESS else RunPhase.FAILED
+                ),
+                updated_at=now,
+                progress_revision=sync_runs.c.progress_revision + 1,
             )
         )
         if result.rowcount != 1:
@@ -751,9 +771,9 @@ async def _finalize_host_failure(
                 finished_at=now,
                 error_class=str(ErrorClass.INTERNAL),
                 error_message=message,
-                items_seen=0,
-                items_written=0,
-                items_failed=0,
+                phase=str(RunPhase.FAILED),
+                updated_at=now,
+                progress_revision=sync_runs.c.progress_revision + 1,
             )
         )
         if run_result.rowcount != 1:
@@ -810,7 +830,9 @@ async def _open_run(
                 attempt=attempt,
                 mode=str(mode),
                 status=str(RunStatus.RUNNING),
+                phase=str(RunPhase.STARTING),
                 started_at=now,
+                updated_at=now,
                 cursor_before=cursor_before.state if cursor_before else None,
             )
         )

@@ -163,7 +163,8 @@ async def test_failure_matrix_records_the_outcome_and_an_operator_action(
 ) -> None:
     """One parameter row per quickstart failure; inject child behaviour at its boundary."""
 
-    async def fake_execute(_: object) -> RunOutcome:
+    async def fake_execute(_: object, **kwargs: object) -> RunOutcome:
+        del kwargs
         return outcome
 
     monkeypatch.setattr("aggregato.sync.dispatch.execute_run", fake_execute)

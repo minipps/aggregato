@@ -36,6 +36,12 @@ const mocks = vi.hoisted(() => {
     latestProviderRun: vi.fn(),
     providerConfigSchema: vi.fn(),
     setProviderEnabled: vi.fn(),
+    syncStatus: vi.fn().mockResolvedValue({
+      type: 'snapshot',
+      generated_at: '2026-08-08T10:00:00Z',
+      providers: [],
+      runs: [],
+    }),
     syncProvider: vi.fn(),
     updateProviderConfig: vi.fn(),
   }
@@ -48,6 +54,7 @@ vi.mock('@/api/client', () => ({
   providerConfigSchema: mocks.providerConfigSchema,
   providers: mocks.providers,
   setProviderEnabled: mocks.setProviderEnabled,
+  syncStatus: mocks.syncStatus,
   syncProvider: mocks.syncProvider,
   toProblem: (error: unknown) => ({
     type: 'about:blank',

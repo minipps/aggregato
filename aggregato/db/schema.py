@@ -48,6 +48,7 @@ from aggregato.domain.enums import (
     ResolutionSubject,
     ReviewFormat,
     Role,
+    RunPhase,
     RunStatus,
     ScaleKind,
     check_constraint,
@@ -516,11 +517,20 @@ sync_runs = Table(
     Column("attempt", Integer, nullable=False),
     Column("mode", String(16), nullable=False),
     Column("status", String(16), nullable=False),
+    Column("phase", String(16), nullable=False, server_default=text("'starting'")),
     Column("started_at", TIMESTAMP, nullable=False),
     Column("finished_at", TIMESTAMP),
+    # ``items_seen`` is updated while the child is still running.  A provider may not know its
+    # total up front, so ``progress_total`` is intentionally nullable and the UI renders an
+    # indeterminate progress bar in that case.
     Column("items_seen", Integer, nullable=False, server_default=text("0")),
     Column("items_written", Integer, nullable=False, server_default=text("0")),
     Column("items_failed", Integer, nullable=False, server_default=text("0")),
+    Column("progress_total", Integer),
+    Column("checkpoint_count", Integer, nullable=False, server_default=text("0")),
+    Column("last_checkpoint_at", TIMESTAMP),
+    Column("updated_at", TIMESTAMP),
+    Column("progress_revision", Integer, nullable=False, server_default=text("0")),
     Column("error_class", String(32)),
     Column("error_message", Text),
     # Application logs, not user log data — the spec is explicit about the naming collision.
@@ -528,6 +538,7 @@ sync_runs = Table(
     Column("cursor_before", JSON_COL),
     Column("cursor_after", JSON_COL),
     check_constraint("status", RunStatus),
+    check_constraint("phase", RunPhase),
     check_constraint("error_class", ErrorClass),
     Index("ix_sync_runs_provider_id_started_at", "provider_id", text("started_at DESC")),
     Index("ix_sync_runs_lineage_id", "lineage_id"),

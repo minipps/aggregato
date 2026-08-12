@@ -26,6 +26,7 @@ import {
   updateProviderConfig,
 } from '@/api/client'
 import { readonlyAccess } from '@/api/session'
+import { useSyncStream } from '@/api/syncStream'
 import type { JsonSchema, Problem } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -34,8 +35,10 @@ import LoadingState from '@/components/LoadingState.vue'
 import LoggedAt from '@/components/LoggedAt.vue'
 import ProviderStatus from '@/components/ProviderStatus.vue'
 import SchemaForm from '@/components/SchemaForm.vue'
+import SyncProgress from '@/components/SyncProgress.vue'
 
 const list = useRequest(providers)
+const syncStream = useSyncStream()
 
 /** Enabled providers first — those are the ones actually feeding the archive. Array.prototype.sort
  *  is stable, so within each group the server's order is preserved. */
@@ -58,6 +61,14 @@ const configSchemas = ref<Record<string, JsonSchema | undefined>>({})
 const configSchemaFailure = ref<{ id: string; problem: Problem } | undefined>(undefined)
 type ConfigValues = Record<string, string | number | boolean | null>
 const configValues = ref<Record<string, ConfigValues>>({})
+
+function liveRun(id: string) {
+  return syncStream.snapshot.value?.runs.find((run) => run.provider_id === id && run.status === 'running')
+}
+
+function liveProvider(id: string) {
+  return syncStream.snapshot.value?.providers.find((provider) => provider.id === id)
+}
 
 function formatSetting(value: unknown): string {
   if (value === null) return 'None'
@@ -222,7 +233,7 @@ function saveConfiguration(id: string): Promise<void> {
           <h2>{{ provider.name }}</h2>
           <!-- : an unreviewed drop-in provider is labelled as such, always. -->
           <span v-if="!provider.reviewed" class="badge badge--warn">unreviewed</span>
-          <ProviderStatus :status="provider.status" />
+          <ProviderStatus :status="liveProvider(provider.id)?.status ?? provider.status" />
         </div>
 
         <p class="muted">
@@ -285,6 +296,18 @@ function saveConfiguration(id: string): Promise<void> {
             <dt>Error class</dt>
             <dd>{{ provider.last_check.error_class ?? '—' }}</dd>
           </dl>
+        </section>
+
+        <section
+          v-if="liveRun(provider.id) || liveProvider(provider.id)?.requested_mode"
+          class="subsection"
+          :aria-label="`${provider.name} current sync progress`"
+        >
+          <h3>Current sync</h3>
+          <SyncProgress v-if="liveRun(provider.id)" :run="liveRun(provider.id)!" />
+          <p v-else class="muted" role="status">
+            {{ liveProvider(provider.id)?.requested_mode }} sync queued; waiting for the scheduler…
+          </p>
         </section>
 
         <dl class="pairs">

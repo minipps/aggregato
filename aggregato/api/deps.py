@@ -40,12 +40,13 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import timedelta
 from hashlib import sha256
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocketException
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
+from starlette.websockets import WebSocket
 
 from aggregato.api.clock import now as request_now
 from aggregato.api.errors import ProblemError, error_type
@@ -64,6 +65,7 @@ __all__ = [
     "register_auth",
     "require_auth",
     "require_bearer",
+    "require_websocket_auth",
     "token_fingerprint",
 ]
 
@@ -148,11 +150,16 @@ def register_auth(
         app.state.clock = SYSTEM_CLOCK
 
 
-async def require_auth(request: Request) -> AuthContext:
-    """Authenticate any request: bearer token or session cookie, plus CSRF on cookie writes.
+async def require_auth(connection: HTTPConnection) -> AuthContext:
+    """Authenticate any HTTP or websocket connection.
 
-    Inputs: the request. Declared app-wide as a dependency, and returned so a route can tell how it
-    was authenticated.
+    HTTP requests use the bearer/session and CSRF rules below.  FastAPI also applies this
+    application-wide dependency to websocket routes, where it injects the same Starlette
+    ``HTTPConnection`` base type; dispatching here keeps the no-forgotten-auth guarantee intact
+    without making the HTTP-only CSRF checks pretend a websocket has an HTTP method.
+
+    Inputs: the connection. Declared app-wide as a dependency, and returned so a route can tell how
+    it was authenticated.
 
     Failure modes: :class:`~aggregato.api.errors.ProblemError` 401 when no credential is present,
     the bearer token does not match, or the session is unknown, expired, or was issued under a
@@ -164,6 +171,15 @@ async def require_auth(request: Request) -> AuthContext:
     cross-site cookie to an image load. The path carries a sha256, which cannot be enumerated, and
     the bytes are artwork the source platform already serves publicly. Nothing else is exempt.
     """
+    if isinstance(connection, WebSocket):
+        try:
+            return await require_websocket_auth(connection)
+        except ProblemError as exc:
+            # The app-wide dependency runs before the websocket endpoint's own guard. Translate
+            # the HTTP-shaped auth problem into the ASGI close handshake understood by Starlette.
+            raise WebSocketException(code=1008, reason="authentication required") from exc
+
+    request = cast(Request, connection)
     if _is_public_image(request):
         return AuthContext(via="bearer", readonly=True)
     _check_auth_rate(request)
@@ -213,6 +229,39 @@ async def require_bearer(request: Request) -> None:
         _record_auth_failure(request)
         raise _unauthorized("POST /auth/session requires the API token as a bearer credential.")
     _clear_auth_failures(request)
+
+
+async def require_websocket_auth(websocket: WebSocket) -> AuthContext:
+    """Authenticate a websocket handshake with the same bearer or session credentials as HTTP.
+
+    Browsers attach the HttpOnly session cookie to a same-origin websocket automatically.  Bearer
+    clients may still send ``Authorization`` during the handshake; query-string credentials are
+    deliberately not supported.
+    """
+    _check_auth_rate(websocket)
+    presented = _bearer(websocket)
+    if presented is not None:
+        matched = _match_credential(websocket, presented)
+        if matched is None:
+            _record_auth_failure(websocket)
+            raise _unauthorized("The bearer token is not valid.")
+        _clear_auth_failures(websocket)
+        _, readonly = matched
+        return AuthContext(via="bearer", readonly=readonly)
+
+    cookie = websocket.cookies.get(SESSION_COOKIE)
+    if cookie is None:
+        _record_auth_failure(websocket)
+        raise _unauthorized(
+            "This websocket needs an Authorization bearer header or a session cookie."
+        )
+    try:
+        session_id, _credential, readonly = await _valid_session(websocket, cookie)
+    except ProblemError:
+        _record_auth_failure(websocket)
+        raise
+    _clear_auth_failures(websocket)
+    return AuthContext(via="cookie", session_id=session_id, readonly=readonly)
 
 
 async def issue_session(request: Request) -> tuple[str, str]:
@@ -277,30 +326,30 @@ async def _lock_session_issuance(conn: AsyncConnection) -> None:
         )
 
 
-def _token(request: Request) -> str:
-    config: Config = request.app.state.config
+def _token(connection: HTTPConnection) -> str:
+    config: Config = connection.app.state.config
     return config.api.token.get_secret_value()
 
 
-def _readonly_token(request: Request) -> str | None:
-    config: Config = request.app.state.config
+def _readonly_token(connection: HTTPConnection) -> str | None:
+    config: Config = connection.app.state.config
     secret = config.api.readonly_token
     return None if secret is None else secret.get_secret_value()
 
 
-def _credentials(request: Request) -> list[tuple[str, bool]]:
+def _credentials(connection: HTTPConnection) -> list[tuple[str, bool]]:
     """Every accepted bearer credential, most-privileged first, paired with its read-only flag."""
-    readonly = _readonly_token(request)
-    pairs = [(_token(request), False)]
+    readonly = _readonly_token(connection)
+    pairs = [(_token(connection), False)]
     if readonly is not None:
         pairs.append((readonly, True))
     return pairs
 
 
-def _match_credential(request: Request, presented: str) -> tuple[str, bool] | None:
+def _match_credential(connection: HTTPConnection, presented: str) -> tuple[str, bool] | None:
     """The configured credential ``presented`` equals, or ``None``. Every candidate is compared in
     constant time, and the full token wins if both are somehow the same string."""
-    for candidate in _credentials(request):
+    for candidate in _credentials(connection):
         if _matches(presented, candidate[0]):
             return candidate
     return None
@@ -329,18 +378,18 @@ def _is_public_image(request: Request) -> bool:
     )
 
 
-def _engine(request: Request) -> AsyncEngine:
-    engine: AsyncEngine = request.app.state.engine
+def _engine(connection: HTTPConnection) -> AsyncEngine:
+    engine: AsyncEngine = connection.app.state.engine
     return engine
 
 
-def _auth_client_key(request: Request) -> str:
-    return request.client.host if request.client is not None else "unknown"
+def _auth_client_key(connection: HTTPConnection) -> str:
+    return connection.client.host if connection.client is not None else "unknown"
 
 
-def _check_auth_rate(request: Request) -> None:
+def _check_auth_rate(connection: HTTPConnection) -> None:
     now = time.monotonic()
-    key = _auth_client_key(request)
+    key = _auth_client_key(connection)
     failures = _auth_failures.get(key)
     if failures is None:
         return
@@ -357,9 +406,9 @@ def _check_auth_rate(request: Request) -> None:
         )
 
 
-def _record_auth_failure(request: Request) -> None:
+def _record_auth_failure(connection: HTTPConnection) -> None:
     now = time.monotonic()
-    key = _auth_client_key(request)
+    key = _auth_client_key(connection)
     failures = _auth_failures.setdefault(key, deque())
     while failures and now - failures[0] >= AUTH_FAILURE_WINDOW_SECONDS:
         failures.popleft()
@@ -369,13 +418,13 @@ def _record_auth_failure(request: Request) -> None:
         _auth_failures.pop(oldest, None)
 
 
-def _clear_auth_failures(request: Request) -> None:
-    _auth_failures.pop(_auth_client_key(request), None)
+def _clear_auth_failures(connection: HTTPConnection) -> None:
+    _auth_failures.pop(_auth_client_key(connection), None)
 
 
-def _bearer(request: Request) -> str | None:
+def _bearer(connection: HTTPConnection) -> str | None:
     """The token from an ``Authorization: Bearer`` header, or ``None`` if there is no such."""
-    header = request.headers.get("Authorization")
+    header = connection.headers.get("Authorization")
     if header is None:
         return None
     scheme, _, value = header.partition(" ")
@@ -399,7 +448,7 @@ def _csrf_token(token: str, session_id: str) -> str:
     return _sign(token, f"csrf:{session_id}")
 
 
-async def _valid_session(request: Request, cookie: str) -> tuple[str, str, bool]:
+async def _valid_session(connection: HTTPConnection, cookie: str) -> tuple[str, str, bool]:
     """Verify the cookie's signature, then the session row.
 
     Returns ``(session_id, signing_credential, readonly)``. Which credential's HMAC verifies is what
@@ -410,7 +459,7 @@ async def _valid_session(request: Request, cookie: str) -> tuple[str, str, bool]
     session_id, _, signature = cookie.rpartition(".")
     matched = None
     if session_id:
-        for candidate, readonly in _credentials(request):
+        for candidate, readonly in _credentials(connection):
             if _matches(signature, _sign(candidate, session_id)):
                 matched = (candidate, readonly)
                 break
@@ -419,11 +468,11 @@ async def _valid_session(request: Request, cookie: str) -> tuple[str, str, bool]
     credential, readonly = matched
     # Expiry and fingerprint are both filters, not fetched values: SQLite returns naive datetimes,
     # and the fingerprint predicate is what makes token rotation invalidate the session .
-    async with transaction(_engine(request)) as conn:
+    async with transaction(_engine(connection)) as conn:
         found = await conn.scalar(
             select(sessions.c.id).where(
                 sessions.c.id == session_id,
-                sessions.c.expires_at > request_now(request),
+                sessions.c.expires_at > request_now(connection),
                 sessions.c.token_fingerprint == token_fingerprint(credential),
             )
         )

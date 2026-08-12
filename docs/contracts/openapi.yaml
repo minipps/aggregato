@@ -28,6 +28,9 @@ info:
       * Sync, import, and provider-check requests return 202 after queueing work. The `lineage_id`
         groups the resulting attempts; inspect provider runs for sync status and `Provider.last_check`
         for the latest provider diagnostic.
+      * `GET /sync/status` is the HTTP snapshot for live operations. The same snapshot is streamed by
+        the authenticated websocket at `/api/v1/ws/sync`; websocket clients should reconnect and use
+        the full snapshot as their source of truth.
       * Retained provider payloads and ingest-failure payloads can contain private platform data.
         They are returned only through authenticated endpoints and follow the local retention and
         export rules described by the operator guide.
@@ -288,6 +291,28 @@ paths:
                   - $ref: "#/components/schemas/Page"
                   - properties:
                       items: { type: array, items: { $ref: "#/components/schemas/SyncRun" } }
+
+  /sync/status:
+    get:
+      tags: [operations]
+      summary: Read the current sync queue and latest run state
+      description: >-
+        Returns scheduler state plus the newest non-diagnostic run for each provider. While a run is
+        open, its phase, counts, checkpoints, and cursor checkpoint are updated in place. This is
+        also the initial/reconnect shape sent by the authenticated `/api/v1/ws/sync` websocket.
+      parameters:
+        - name: provider_id
+          in: query
+          schema: { type: string }
+        - name: lineage_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Current durable sync state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncSnapshot" }
 
   /providers/{id}/sync:
     post:
@@ -974,7 +999,8 @@ components:
 
     SyncRun:
       type: object
-      required: [id, provider_id, lineage_id, attempt, status, started_at]
+      required: [id, provider_id, lineage_id, attempt, status, phase, started_at, updated_at,
+                 items_seen, items_written, items_failed, checkpoint_count]
       properties:
         id: { type: integer, format: int64 }
         provider_id: { type: string }
@@ -982,15 +1008,49 @@ components:
         attempt: { type: integer }
         mode: { type: string, enum: [incremental, full, import, check] }
         status: { $ref: "#/components/schemas/RunStatus" }
+        phase:
+          type: string
+          enum: [starting, checking, replaying, fetching, ingesting, finalizing, finished, failed]
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
         items_seen: { type: integer }
         items_written: { type: integer }
         items_failed: { type: integer }
+        progress_total: { type: integer, nullable: true, description: Null when the provider cannot announce a total }
+        progress_percent: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+        checkpoint_count: { type: integer }
+        last_checkpoint_at: { type: string, format: date-time, nullable: true }
+        cursor_before: { type: object, nullable: true, additionalProperties: true }
+        cursor_after: { type: object, nullable: true, additionalProperties: true }
         error_class: { $ref: "#/components/schemas/ErrorClass" }
         error_message: { type: string, nullable: true }
         next_retry_at: { type: string, format: date-time, nullable: true }
         log_excerpt: { type: string, nullable: true, description: Application logs, not user log data }
+
+    SyncProviderState:
+      type: object
+      required: [id, enabled, status]
+      properties:
+        id: { type: string }
+        enabled: { type: boolean }
+        status: { $ref: "#/components/schemas/ProviderStatus" }
+        requested_mode: { type: string, enum: [incremental, full, import, replay, check], nullable: true }
+        requested_lineage_id: { type: string, format: uuid, nullable: true }
+        next_run_at: { type: string, format: date-time, nullable: true }
+
+    SyncSnapshot:
+      type: object
+      required: [type, generated_at, providers, runs]
+      properties:
+        type: { type: string, enum: [snapshot] }
+        generated_at: { type: string, format: date-time }
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/SyncProviderState" }
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/SyncRun" }
 
     ProviderCheckStatus: { type: string, enum: [pending, success, failure] }
     LastCheck:
