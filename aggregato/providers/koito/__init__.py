@@ -65,6 +65,7 @@ from aggregato.domain.models import (
     NormalizedEntry,
     NormalizedExternalId,
     NormalizedWork,
+    NowPlayingItem,
     RawRecord,
 )
 from aggregato.domain.ratings import RatingScale
@@ -137,6 +138,7 @@ class KoitoProvider:
     capabilities: set[Capability] = {  # noqa: RUF012
         Capability.POLL,
         Capability.BACKFILL,
+        Capability.NOW_PLAYING,
         Capability.HAS_CREDITS,
     }
     acquisition: Acquisition = Acquisition.API
@@ -251,20 +253,12 @@ class KoitoProvider:
         """
         listen = raw.payload
         track = _as_mapping(listen.get("track"))
-        title = _as_text(track.get("title"))
-        if title is None:
-            raise StructureChangedError(
-                f"listen {raw.native_id!r} has no track.title: a listen without a track is not a "
-                "listen"
-            )
-        artists = [
-            artist for artist in _as_list(track.get("artists")) if _as_text(artist.get("name"))
-        ]
+        work, credits, external_ids, creator_external_ids = _normalize_track(
+            track, missing_title=f"listen {raw.native_id!r}"
+        )
 
         return NormalizedBatch(
-            work=NormalizedWork(
-                media_type=MediaType.TRACK, title=title, image_url=_image_url(track)
-            ),
+            work=work,
             entries=[
                 NormalizedEntry(
                     kind=EntryKind.LISTEN,
@@ -277,31 +271,43 @@ class KoitoProvider:
                     native_id=raw.native_id,
                 )
             ],
-            credits=[
-                NormalizedCredit(
-                    creator_name=_require_text(artist.get("name")),
-                    # Koito does not say whether an artist is a person or a band, and guessing from
-                    # the name is exactly the kind of invention  forbids.
-                    creator_kind=CreatorKind.UNKNOWN,
-                    role=Role.PERFORMER,
-                    # Koito's own term for this field, verbatim : it has no word for the
-                    # relationship beyond the key it files the names under.
-                    role_raw="artists",
-                    position=position,
-                )
-                for position, artist in enumerate(artists)
-            ],
-            external_ids=_ids(track, "koito_track", "mbid_recording"),
-            creator_external_ids=[
-                NormalizedCreatorId(
-                    creator_name=_require_text(artist.get("name")),
-                    namespace=namespace,
-                    value=value,
-                    confidence=confidence,
-                )
-                for artist in artists
-                for namespace, value, confidence in _ids_raw(artist, "koito_artist", "mbid_artist")
-            ],
+            credits=credits,
+            external_ids=external_ids,
+            creator_external_ids=creator_external_ids,
+        )
+
+    async def now_playing(self, ctx: ProviderContext) -> NowPlayingItem | None:
+        """Return Koito's current track, or ``None`` when the server is idle.
+
+        The endpoint's ``currently_playing`` flag is authoritative: an idle response may omit
+        ``track`` entirely, while an active response must carry the same valid track shape used by
+        historical listens. Artwork is resolved while the configured origin is still available,
+        matching ``fetch`` before the shared normalization path is reused.
+        """
+        config = _config(ctx)
+        body = await self._now_playing_page(ctx, config)
+        if not isinstance(body, dict):
+            raise StructureChangedError("now-playing response is not a JSON object")
+        currently_playing = body.get("currently_playing")
+        if not isinstance(currently_playing, bool):
+            raise StructureChangedError(
+                "now-playing response has no boolean `currently_playing` flag"
+            )
+        if not currently_playing:
+            return None
+
+        track = body.get("track")
+        if not isinstance(track, dict):
+            raise StructureChangedError("active now-playing response has no `track` object")
+        _absolutize_track_image(config, track)
+        work, credits, external_ids, creator_external_ids = _normalize_track(
+            track, missing_title="active now-playing response"
+        )
+        return NowPlayingItem(
+            work=work,
+            credits=credits,
+            external_ids=external_ids,
+            creator_external_ids=creator_external_ids,
         )
 
     async def check(self, ctx: ProviderContext) -> CheckResult:
@@ -365,6 +371,21 @@ class KoitoProvider:
             raise ProviderError(f"{url} answered HTTP {response.status_code}")
         return response.json()
 
+    async def _now_playing_page(self, ctx: ProviderContext, config: KoitoConfig) -> object:
+        """Fetch and classify Koito's current-playback response."""
+        url = now_playing_url(config)
+        response = await ctx.http.get(url, headers=_auth_headers(config))
+        if response.status_code == 401:
+            raise AuthError(f"{url} rejected the configured API key (HTTP 401)")
+        if response.status_code == 429:
+            raise RateLimited(f"{url} is rate-limiting (HTTP 429)")
+        if response.status_code != 200:
+            raise ProviderError(f"{url} answered HTTP {response.status_code}")
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise StructureChangedError(f"{url} returned invalid JSON") from exc
+
 
 def _config(ctx: ProviderContext) -> KoitoConfig:
     """Narrow ``ctx.config`` at the boundary rather than assuming the host got it right."""
@@ -380,6 +401,11 @@ def listens_url(config: KoitoConfig) -> str:
     and the one thing a test can assert exactly.
     """
     return f"{config.base_url}/apis/web/v1/listens"
+
+
+def now_playing_url(config: KoitoConfig) -> str:
+    """Build Koito's current-playback endpoint for the configured server."""
+    return f"{config.base_url}/apis/web/v1/now-playing"
 
 
 def _auth_headers(config: KoitoConfig) -> dict[str, str]:
@@ -493,8 +519,12 @@ def _absolutize_image(config: KoitoConfig, listen: Mapping[str, Any]) -> None:
     ``normalize`` is what reports a missing *title*, and a missing image is no structural failure.
     """
     track = listen.get("track")
-    if not isinstance(track, dict):
-        return
+    if isinstance(track, dict):
+        _absolutize_track_image(config, track)
+
+
+def _absolutize_track_image(config: KoitoConfig, track: Mapping[str, Any]) -> None:
+    """Resolve every stated artwork path on one Koito track in place."""
     image = track.get("image")
     if not isinstance(image, dict):
         return
@@ -502,6 +532,53 @@ def _absolutize_image(config: KoitoConfig, listen: Mapping[str, Any]) -> None:
         path = _as_text(value)
         if path is not None:
             image[size] = _absolute(config.base_url, path)
+
+
+def _normalize_track(
+    track: Mapping[str, Any], *, missing_title: str
+) -> tuple[
+    NormalizedWork,
+    list[NormalizedCredit],
+    list[NormalizedExternalId],
+    list[NormalizedCreatorId],
+]:
+    """Normalize a Koito track once for both history and now-playing."""
+    title = _as_text(track.get("title"))
+    if title is None:
+        raise StructureChangedError(
+            f"{missing_title} has no track.title: a listen without a track is not a listen"
+        )
+    artists = [artist for artist in _as_list(track.get("artists")) if _as_text(artist.get("name"))]
+    credits = [
+        NormalizedCredit(
+            creator_name=_require_text(artist.get("name")),
+            # Koito does not say whether an artist is a person or a band, and guessing from
+            # the name is exactly the kind of invention  forbids.
+            creator_kind=CreatorKind.UNKNOWN,
+            role=Role.PERFORMER,
+            # Koito's own term for this field, verbatim: it has no word for the relationship beyond
+            # the key it files the names under.
+            role_raw="artists",
+            position=position,
+        )
+        for position, artist in enumerate(artists)
+    ]
+    creator_external_ids = [
+        NormalizedCreatorId(
+            creator_name=_require_text(artist.get("name")),
+            namespace=namespace,
+            value=value,
+            confidence=confidence,
+        )
+        for artist in artists
+        for namespace, value, confidence in _ids_raw(artist, "koito_artist", "mbid_artist")
+    ]
+    return (
+        NormalizedWork(media_type=MediaType.TRACK, title=title, image_url=_image_url(track)),
+        credits,
+        _ids(track, "koito_track", "mbid_recording"),
+        creator_external_ids,
+    )
 
 
 def _absolute(base_url: str, path: str) -> str:

@@ -244,6 +244,17 @@ class NormalizedBatch(BaseModel):
         return self
 
 
+class NowPlayingItem(BaseModel):
+    """The current work a provider reports, without turning playback into history."""
+
+    model_config = _STRICT
+
+    work: NormalizedWork
+    credits: list[NormalizedCredit] = Field(default_factory=list)
+    external_ids: list[NormalizedExternalId] = Field(default_factory=list)
+    creator_external_ids: list[NormalizedCreatorId] = Field(default_factory=list)
+
+
 class CheckResult(BaseModel):
     """The outcome of a provider's credential and reachability self-test.
 

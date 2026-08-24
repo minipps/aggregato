@@ -74,6 +74,7 @@ delete inference is how an archive gets erased .
 | Every identifier in a payload is extracted, including ones Aggregato has no use for |  — the single largest lever on match quality, because Aggregato never enriches from third-party metadata sources |
 | `logged_precision` is required on every entry, with no default | A default would silently fabricate exactness  |
 | `role_raw` carries the platform's own word verbatim, always |  — the vocabulary widens later and the raw term is what replay re-derives from |
+| `now_playing` is an explicit optional capability | A provider returns one normalized current item or `None`; playback is transient and never becomes history |
 
 ---
 
@@ -85,6 +86,9 @@ delete inference is how an archive gets erased .
 - [ ] Fixtures recorded per [tests/fixtures/README.md](tests/fixtures/README.md), redacted, no credentials
 - [ ] `config_model` fields documented; secrets marked so the settings form renders them write-only
 - [ ] New behaviour has a test that failed before the change (testing guidance)
+- [ ] If `now_playing` is declared, static/runtime capability parity, active/idle/structure-change
+      fixtures, deterministic normalization, and classified rate-limit/auth tests are present; the
+      monitor/WebSocket tests use injected clocks and never sleep or open sockets
 - [ ] Any migration follows [data-model.md §6](docs/data-model.md#migrations):
       foreign keys off around a SQLite table rebuild, a test that seeds rows at the previous revision
       and asserts they survive, and no edits to a revision that has already been applied

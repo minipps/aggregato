@@ -1,0 +1,9 @@
+{
+  "payload": {
+    "playing_now": true,
+    "listens": [
+      {"track_metadata": {"track_name": "First Fixture Track"}},
+      {"track_metadata": {"track_name": "Second Fixture Track"}}
+    ]
+  }
+}

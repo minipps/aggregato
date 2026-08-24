@@ -92,6 +92,31 @@ Import errors affect the selected operation and do not make an unrelated provide
 
 The inheritance above is only a compact illustration. A real provider implements the three methods in the contract: `fetch`, pure synchronous `normalize`, and asynchronous `check`.
 
+### Optional current playback
+
+If the platform exposes current playback, opt in explicitly in both the provider object and the
+static manifest:
+
+```python
+from aggregato.domain.models import NowPlayingItem
+from aggregato.providers.base import NowPlayingProvider
+
+
+class ExampleProvider(FixtureProvider, NowPlayingProvider):
+    capabilities = {Capability.POLL, Capability.NOW_PLAYING}
+
+    async def now_playing(self, ctx: ProviderContext) -> NowPlayingItem | None:
+        response = await ctx.http.get("/playing-now")
+        # Validate the envelope; return None only for a documented idle response.
+        return self._normalize_current(response.json())
+```
+
+The manifest must include `"now_playing"` in `capabilities`. Return one normalized
+`NowPlayingItem` or `None`; do not create an entry, include playback progress/duration, or retain a
+raw response. Reuse the historical normalization path where the platform's current and historical
+payloads describe the same work. Ship recorded active, idle, malformed, and rate-limited responses;
+providers without this capability need none of these fixtures.
+
 ## 3. Keep the boundary strict
 
 `fetch(ctx, cursor, mode)` yields `RawRecord` and `Checkpoint` values. Use only `ctx.http`; do not construct an HTTP client. `normalize(raw)` is pure and returns one `NormalizedBatch`; extract every identifier in the raw payload and use only the project’s closed media-type, role, and subject-reference vocabularies. `check(ctx)` returns `CheckResult` for both success and actionable failure.
@@ -100,7 +125,9 @@ Use flat Pydantic configuration fields with descriptions. Mark secrets `writeOnl
 
 ## 4. Test it offline
 
-Record representative fixtures, including invalid credentials and (for a scraper) changed HTML. Register the provider with the nine conformance assertion groups and run:
+Record representative fixtures, including invalid credentials and (for a scraper) changed HTML. If
+the provider declares `now_playing`, also record active and idle responses plus a structure-change
+case. Register the provider with the conformance assertion groups and run:
 
 ```bash
 uv run pytest tests/conformance

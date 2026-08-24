@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
@@ -56,6 +56,7 @@ from aggregato.domain.models import (
     NormalizedEntry,
     NormalizedExternalId,
     NormalizedWork,
+    NowPlayingItem,
     RawRecord,
 )
 from aggregato.domain.ratings import RatingScale
@@ -161,6 +162,7 @@ class ListenBrainzProvider:
     capabilities: set[Capability] = {  # noqa: RUF012
         Capability.POLL,
         Capability.BACKFILL,
+        Capability.NOW_PLAYING,
         Capability.HAS_CREDITS,
     }
     acquisition: Acquisition = Acquisition.API
@@ -238,6 +240,23 @@ class ListenBrainzProvider:
             # re-emits nothing that was already ingested .
             yield Checkpoint(cursor=Cursor(state={"newest_ts": newest_ts, "max_ts": max_ts}))
 
+    async def now_playing(self, ctx: ProviderContext) -> NowPlayingItem | None:
+        """Return the one current ListenBrainz listen, or ``None`` while idle.
+
+        The playing-now endpoint intentionally omits ``listened_at``. It therefore uses the same
+        track/artist/identifier mapping as :meth:`normalize` without manufacturing a history entry.
+        """
+        config = _config(ctx)
+        url = playing_now_url(config)
+        response = await ctx.http.get(url, headers=_auth_headers(config))
+        _raise_for_status(response, url, config)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise StructureChangedError(f"{url} returned invalid JSON") from exc
+        listen = _playing_listen(body)
+        return None if listen is None else _normalize_item(listen)
+
     def normalize(self, raw: RawRecord) -> NormalizedBatch:
         """Map one listen onto the host vocabulary. Pure: no clock, no I/O, no randomness.
 
@@ -259,33 +278,11 @@ class ListenBrainzProvider:
             ValueError: The payload is a listen but a value does not validate.
         """
         listen = raw.payload
-        meta = _as_mapping(listen.get("track_metadata"))
-        # Absent for a listen ListenBrainz has not matched to MusicBrainz, and absent from most
-        # compatible servers entirely. Normal, not a structure change.
-        additional = _as_mapping(meta.get("additional_info"))
-        mapping = _as_mapping(meta.get("mbid_mapping"))
-
-        track_name = _as_text(meta.get("track_name"))
-        if track_name is None:
-            raise StructureChangedError(
-                f"listen {raw.native_id!r} has no track_metadata.track_name: a listen without a "
-                "track is not a listen"
-            )
+        item = _normalize_item(listen, native_id=raw.native_id)
         listened_at = _listened_at(listen)
-        release_name = _as_text(meta.get("release_name"))
-
-        artist_names, artist_field = _artist_names(meta, additional)
-        artist_mbids = _artist_mbids(additional, mapping)
 
         return NormalizedBatch(
-            work=NormalizedWork(
-                media_type=MediaType.TRACK,
-                title=track_name,
-                sequence_number=_track_number(additional),
-                # The release is context for the track, not a work of its own: emitting an album
-                # entry per listen would invent an event the operator never logged .
-                metadata={"release_name": release_name} if release_name else {},
-            ),
+            work=item.work,
             entries=[
                 NormalizedEntry(
                     kind=EntryKind.LISTEN,
@@ -297,25 +294,9 @@ class ListenBrainzProvider:
                     native_id=raw.native_id,
                 )
             ],
-            credits=[
-                NormalizedCredit(
-                    creator_name=name,
-                    # ListenBrainz does not say whether an artist is a person or a band, and
-                    # guessing from the name is exactly the kind of invention  forbids.
-                    creator_kind=CreatorKind.UNKNOWN,
-                    role=Role.PERFORMER,
-                    # The platform's own term for this field, verbatim : ListenBrainz has no
-                    # word for the relationship beyond the key it files the name under.
-                    role_raw=artist_field,
-                    position=position,
-                )
-                for position, name in enumerate(artist_names)
-            ],
-            external_ids=[
-                NormalizedExternalId(namespace=namespace, value=value, confidence=confidence)
-                for namespace, value, confidence in _work_identifiers(listen, additional, mapping)
-            ],
-            creator_external_ids=_creator_ids(artist_names, artist_mbids),
+            credits=item.credits,
+            external_ids=item.external_ids,
+            creator_external_ids=item.creator_external_ids,
         )
 
     async def check(self, ctx: ProviderContext) -> CheckResult:
@@ -375,15 +356,7 @@ class ListenBrainzProvider:
             params["min_ts"] = min_ts
 
         response = await ctx.http.get(url, params=params, headers=_auth_headers(config))
-        if response.status_code == 401:
-            raise AuthError(
-                f"{url} rejected the configured token (HTTP 401); check the token for user "
-                f"{config.username}"
-            )
-        if response.status_code == 429:
-            raise RateLimited(f"{url} is rate-limiting (HTTP 429)")
-        if response.status_code != 200:
-            raise ProviderError(f"{url} answered HTTP {response.status_code}")
+        _raise_for_status(response, url, config)
         return response.json()
 
 
@@ -407,13 +380,108 @@ def listens_url(config: ListenBrainzConfig) -> str:
         ``{base_url}/1/user/{username}/listens`` — so a base carrying a port and a path prefix
         (``http://maloja.lan:42010/apis/listenbrainz``) keeps both.
     """
-    return f"{config.base_url}/1/user/{quote(config.username, safe='')}/listens"
+    return _user_url(config, "listens")
+
+
+def playing_now_url(config: ListenBrainzConfig) -> str:
+    """Build the documented current-playback endpoint for the configured user."""
+    return _user_url(config, "playing-now")
+
+
+def _user_url(config: ListenBrainzConfig, endpoint: str) -> str:
+    return f"{config.base_url}/1/user/{quote(config.username, safe='')}/{endpoint}"
 
 
 def _auth_headers(config: ListenBrainzConfig) -> dict[str, str]:
     """The ListenBrainz auth header. Omitted when no token is set, since listens are public."""
     token = config.token.get_secret_value()
     return {"Authorization": f"Token {token}"} if token else {}
+
+
+def _raise_for_status(response: Any, url: str, config: ListenBrainzConfig) -> None:
+    """Classify the statuses shared by history and playing-now requests."""
+    if response.status_code == 401:
+        raise AuthError(
+            f"{url} rejected the configured token (HTTP 401); check the token for user "
+            f"{config.username}"
+        )
+    if response.status_code == 429:
+        raise RateLimited(f"{url} is rate-limiting (HTTP 429)")
+    if response.status_code != 200:
+        raise ProviderError(f"{url} answered HTTP {response.status_code}")
+
+
+def _playing_listen(body: object) -> dict[str, Any] | None:
+    """Validate the playing-now envelope and return its sole listen, if active."""
+    if not isinstance(body, dict):
+        raise StructureChangedError("playing-now response is not a JSON object")
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        raise StructureChangedError("playing-now response has no `payload` object")
+    active = payload.get("playing_now")
+    if not isinstance(active, bool):
+        raise StructureChangedError("playing-now payload has no boolean `playing_now`")
+    listens = payload.get("listens")
+    if not isinstance(listens, list):
+        raise StructureChangedError("playing-now payload has no `listens` list")
+    if len(listens) > 1:
+        raise StructureChangedError("playing-now response contains multiple current listens")
+    if any(not isinstance(listen, dict) for listen in listens):
+        raise StructureChangedError("playing-now payload holds something that is not a listen")
+    if not active:
+        return None
+    if not listens:
+        raise StructureChangedError("playing-now payload is active but has no current listen")
+    return cast(dict[str, Any], listens[0])
+
+
+def _normalize_item(listen: Mapping[str, Any], *, native_id: str | None = None) -> NowPlayingItem:
+    """Normalize track metadata shared by historical and current ListenBrainz listens."""
+    meta = _as_mapping(listen.get("track_metadata"))
+    # Absent for a listen ListenBrainz has not matched to MusicBrainz, and absent from most
+    # compatible servers entirely. Normal, not a structure change.
+    additional = _as_mapping(meta.get("additional_info"))
+    mapping = _as_mapping(meta.get("mbid_mapping"))
+
+    track_name = _as_text(meta.get("track_name"))
+    if track_name is None:
+        subject = f"listen {native_id!r}" if native_id is not None else "playing-now listen"
+        raise StructureChangedError(
+            f"{subject} has no track_metadata.track_name: a listen without a track is not a listen"
+        )
+    release_name = _as_text(meta.get("release_name"))
+    artist_names, artist_field = _artist_names(meta, additional)
+    artist_mbids = _artist_mbids(additional, mapping)
+
+    return NowPlayingItem(
+        work=NormalizedWork(
+            media_type=MediaType.TRACK,
+            title=track_name,
+            sequence_number=_track_number(additional),
+            # The release is context for the track, not a work of its own: emitting an album
+            # entry per listen would invent an event the operator never logged .
+            metadata={"release_name": release_name} if release_name else {},
+        ),
+        credits=[
+            NormalizedCredit(
+                creator_name=name,
+                # ListenBrainz does not say whether an artist is a person or a band, and guessing
+                # from the name is exactly the kind of invention  forbids.
+                creator_kind=CreatorKind.UNKNOWN,
+                role=Role.PERFORMER,
+                # The platform's own term for this field, verbatim : ListenBrainz has no word for
+                # the relationship beyond the key it files the name under.
+                role_raw=artist_field,
+                position=position,
+            )
+            for position, name in enumerate(artist_names)
+        ],
+        external_ids=[
+            NormalizedExternalId(namespace=namespace, value=value, confidence=confidence)
+            for namespace, value, confidence in _work_identifiers(listen, additional, mapping)
+        ],
+        creator_external_ids=_creator_ids(artist_names, artist_mbids),
+    )
 
 
 def _listens(body: object) -> list[dict[str, Any]]:

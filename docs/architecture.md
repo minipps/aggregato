@@ -11,7 +11,7 @@ scheduling, retrying, rate limiting, request pacing, ingest validation, identity
 migrations.
 
 Technical approach: an async FastAPI application for the API, including an authenticated HTTP API
-and websocket sync-status stream, plus a **separate scheduler process** that
+and websocket sync-status and now-playing streams, plus a **separate scheduler process** that
 polls a database-backed due-queue and executes each sync run in a **short-lived child process** that
 streams normalized JSON batches back over a pipe. This provides crash/hang containment and ensures
 plugins never receive a database handle.
@@ -53,6 +53,10 @@ plugin tree.
 | Creator resolution | ≥ 20,000 credit lookups/minute, batched, O(1) amortized per credit |
 | Clean start to first browsable sync | < 15 min wall clock, operator time < 5 min |
 | Fresh install outbound requests | exactly 0 |
+| Now-playing acquisition cadence | each enabled capable provider is checked every 15 s on success |
+| Now-playing API polling | WebSocket reads durable state every 500 ms |
+| Now-playing visibility | provider changes reach the WebSocket within 16 s in normal operation |
+| Now-playing freshness | items checked more than 45 s ago are omitted |
 
 **Constraints**: no outbound request to any non-platform host except images from platform-supplied
 URLs; authentication is required by default, with an explicit read-only public mode for GET/HEAD;
@@ -114,6 +118,7 @@ aggregato/
 │   └── failures.py             # poison-record capture and replay
 ├── sync/
 │   ├── scheduler.py            # due-queue poll loop, jitter, concurrency cap
+│   ├── now_playing.py          # transient playback monitor and durable state transitions
 │   ├── runner.py               # spawns and supervises one child per run; wall-clock kill
 │   ├── child.py                # child entrypoint: fetch + normalize -> JSON lines on a pipe
 │   ├── jobs.py                 # typed import/replay leases and shared lifecycle transitions
@@ -134,7 +139,8 @@ aggregato/
 │   ├── errors.py               # RFC 9457 problem+json
 │   ├── pagination.py           # keyset cursor codec
 │   └── routes/                 # works, entries, opinions, creators, providers, stats,
-│                               #   resolution, failures, images, health, export, auth
+│                               #   resolution, failures, images, health, export, auth,
+│                               #   now-playing websocket
 ├── images/cache.py             # content-addressed lazy fetch and store
 └── export.py                   # portable backup artefact
 
@@ -165,6 +171,16 @@ ingest. `GET /api/v1/sync/status` exposes the queue and latest run snapshot; the
 The SPA uses that stream in Dashboard, Providers, and Sync History, with the HTTP endpoint as a
 reconnect fallback. A provider total may be unknown, in which case the UI shows an indeterminate
 progress state rather than inventing a percentage.
+
+Current playback uses the same durable-boundary principle without entering the history pipeline. The
+scheduler process runs a separate now-playing monitor beside normal sync scheduling; it discovers
+only static manifests declaring `now_playing`, starts the existing isolated child for one result
+(maximum three concurrent children, 30-second wall-clock limit), and stores at most one
+parent-validated item per provider in `provider_state`. The API process reads that
+state through authenticated `/api/v1/ws/now-playing`, sends a complete initial snapshot, then polls
+the database every 500 ms and sends only semantic changes. It omits disabled or failed providers and
+items whose last completed check is older than 45 seconds. No playback event, progress, history, or
+HTTP fallback is created by this path.
 
 **Structure Decision**: Single Python package plus a separate frontend package. Not the template's
 "web application" split, because there is no separate backend service boundary — one deployable, two

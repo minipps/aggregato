@@ -41,6 +41,22 @@ class Provider(Protocol):
 run resumes from there . A provider whose pagination cannot support mid-fetch resumption
 declares only `full` and accepts full resyncs.
 
+The optional `Capability.NOW_PLAYING` capability adds a runtime-checkable protocol:
+
+```python
+class NowPlayingProvider(Protocol):
+    async def now_playing(self, ctx: ProviderContext) -> NowPlayingItem | None: ...
+```
+
+The method returns one normalized current work or `None` for a valid idle response. A provider must
+declare `now_playing` in both its static manifest and runtime capability set before the host will
+call it; providers without the capability remain valid and unchanged. This is presence, not a
+history fetch mode, and the result contains no playback progress, duration, logged event, or raw
+payload.
+
+This additive capability does not change provider API version 1.0; existing providers need no method
+or fixture change unless they opt in.
+
 ### Hard rules
 
 | Rule | Why | How it is enforced |
@@ -51,6 +67,7 @@ declares only `full` and accepts full resyncs.
 | A provider may not invent a `media_type`, `role`, or `subject_ref` key |  | Parent-side validation at the ingest boundary; violations become `ingest_failures`, not writes |
 | Every identifier present in a payload is extracted, including ones Aggregato has no use for | ; the single largest lever on match quality under the no-enrichment rule | Conformance suite asserts identifiers visible in the fixture appear in the output |
 | No CAPTCHA or anti-bot circumvention, in any form |  — a hard line, not a default | Raise `BlockedError`; the run stops and the provider goes to `degraded` immediately |
+| An optional now-playing method returns only normalized presence | Keeps current playback source-specific and out of history | The child validates one `NowPlayingItem` or `None`; the parent persists it and never sends it through ingest |
 
 ---
 
@@ -68,8 +85,8 @@ declares only `full` and accepts full resyncs.
 | `import_path` | Set only in `import` mode |
 
 The host owns, and a provider must not reimplement: scheduling, jitter, the retry ladder, rate
-limiting, cursor persistence, idempotency, identity resolution, storage, migrations, and image
-caching .
+limiting, cursor persistence, idempotency, identity resolution, storage, migrations, image caching,
+and the 15-second now-playing poll schedule .
 
 ---
 
@@ -101,6 +118,23 @@ Rules that catch real mistakes:
 
 ---
 
+### Optional current-playback result
+
+`NowPlayingItem` is the normalized, transient counterpart to `NormalizedBatch`:
+
+```python
+class NowPlayingItem(BaseModel):
+    work: NormalizedWork
+    credits: list[NormalizedCredit] = []
+    external_ids: list[NormalizedExternalId] = []
+    creator_external_ids: list[NormalizedCreatorId] = []
+```
+
+The host stores at most one item per provider. An equal item refreshes its checked time without
+changing its semantic change time; an idle result or any failed attempt clears it. Artwork remains a
+provider-supplied source URL at this boundary and is served through the host's local image cache at
+the API edge. Providers do not construct a second client, read playback history, or emit progress.
+
 ## 4. Error signalling
 
 Raise, don't return. The host classifies and decides retry policy:
@@ -114,6 +148,10 @@ Raise, don't return. The host classifies and decides retry policy:
 | `httpx` transport errors, 5xx | `transport` | Retried in-run, then the ladder across runs |
 | Validation failure on one record | `parse` | That record goes to `ingest_failures`; the run continues |
 | Anything else | `internal` | Ladder; full traceback in the run's `log_excerpt` |
+
+The same classifications apply to `now_playing`. A transient failure clears the stored item and
+uses the host retry ladder; `auth`, `blocked`, and `structure_changed` suspend the independent
+presence schedule until configuration, provider schema, or enablement changes.
 
 ---
 
@@ -137,6 +175,9 @@ Asserted for every provider:
 9. **Scraping providers additionally**: recorded HTML fixtures present; a fixture with a changed
    structure raises `StructureChangedError` rather than returning empty; no solver dependency in the
    import graph.
+10. Providers declaring `now_playing` implement the optional method, ship recorded active and idle
+    responses, return deterministic normalized output, and classify malformed or rate-limited
+    responses correctly. Providers without the capability are not required to ship those fixtures.
 
 Tests run offline with no credentials. A network call in a conformance test is a failure, not a slow
 test.

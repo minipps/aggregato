@@ -41,7 +41,14 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from aggregato.domain.enums import Acquisition, Capability, FetchMode, MediaType
-from aggregato.domain.models import Checkpoint, CheckResult, Cursor, NormalizedBatch, RawRecord
+from aggregato.domain.models import (
+    Checkpoint,
+    CheckResult,
+    Cursor,
+    NormalizedBatch,
+    NowPlayingItem,
+    RawRecord,
+)
 from aggregato.domain.ratings import RatingScale
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -227,4 +234,13 @@ class Provider(Protocol):
             ``CheckResult(ok=True)``, or ``ok=False`` with the ``ErrorClass`` and a detail message
             written for an operator reading it in the UI.
         """
+        ...
+
+
+@runtime_checkable
+class NowPlayingProvider(Protocol):
+    """Optional provider capability for reporting the work currently being played."""
+
+    async def now_playing(self, ctx: ProviderContext) -> NowPlayingItem | None:
+        """Return the current normalized item, or ``None`` when playback is idle."""
         ...

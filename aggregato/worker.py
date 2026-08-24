@@ -34,6 +34,7 @@ from aggregato.db.retention import cleanup
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 from aggregato.logging import configure_logging
 from aggregato.sync.dispatch import build_dispatch
+from aggregato.sync.now_playing import NowPlayingMonitor
 from aggregato.sync.scheduler import Scheduler, max_concurrent_runs, recover_interrupted_runs
 
 log = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ async def serve(config: Config, *, clock: Clock = SYSTEM_CLOCK) -> None:
     retention_task = asyncio.create_task(
         _retention_loop(engine, config.data_dir, clock=clock), name="retention-cleanup"
     )
+    now_playing = NowPlayingMonitor(engine, config, clock=clock)
+    now_playing_task = asyncio.create_task(now_playing.run_forever(), name="now-playing-monitor")
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -81,6 +84,10 @@ async def serve(config: Config, *, clock: Clock = SYSTEM_CLOCK) -> None:
     try:
         await scheduler.run_forever()
     finally:
+        await now_playing.stop()
+        now_playing_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await now_playing_task
         retention_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await retention_task

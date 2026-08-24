@@ -1,0 +1,20 @@
+{
+  "currently_playing": true,
+  "track": {
+    "id": 412,
+    "title": "Weightless",
+    "artists": [
+      {
+        "id": 88,
+        "name": "Marconi Union"
+      }
+    ],
+    "image": {
+      "xs": "/image/3f6a1c4e-0000-4000-8000-000000000001/xs.webp",
+      "small": "/image/3f6a1c4e-0000-4000-8000-000000000001/small.webp",
+      "medium": "/image/3f6a1c4e-0000-4000-8000-000000000001/medium.webp",
+      "large": "/image/3f6a1c4e-0000-4000-8000-000000000001/large.webp",
+      "xl": "/image/3f6a1c4e-0000-4000-8000-000000000001/xl.webp"
+    }
+  }
+}

@@ -214,6 +214,40 @@ intact and browsable.
 
 ---
 
+### Product Journey 8: Seeing what is playing now (Priority: P2)
+
+An authenticated client can subscribe to the current playback reported by enabled providers that
+support it. Playback is transient, source-specific state: it is not added to the media log and is not
+merged across providers.
+
+**Independent Test**: Seed recorded active and idle responses for Koito and ListenBrainz, run the
+worker monitor with an injected clock, and connect to the authenticated WebSocket. Confirm that the
+durable snapshot contains only fresh active sources and changes are delivered without duplicate
+messages.
+
+**Acceptance Scenarios**:
+
+1. **Given** an enabled, configured provider reports an active item, **When** the monitor completes
+   its poll, **Then** `/api/v1/ws/now-playing` includes that provider's normalized work and local
+   artwork path in the next snapshot.
+2. **Given** Koito and ListenBrainz report playback at the same time, **When** a client reads the
+   snapshot, **Then** it receives two source-specific items, even when their works appear identical.
+3. **Given** a capable provider reports no playback, **When** its poll completes, **Then** its prior
+   item is cleared and no log entry, provider item, opinion, or sync run is created for that result.
+4. **Given** a poll fails transiently, **When** the failure is recorded, **Then** the current item is
+   cleared immediately and the monitor retries using the existing 1m/5m/15m/1h ladder, honouring a
+   longer `Retry-After`.
+5. **Given** credentials are rejected, access is blocked, or the provider structure changes, **When**
+   the monitor records the failure, **Then** it suspends now-playing polling until configuration,
+   provider schema, or enablement changes reactivate it.
+6. **Given** a provider is disabled or its last check is older than 45 seconds, **When** a client
+   reads a snapshot, **Then** that provider is omitted.
+7. **Given** an authenticated client connects or reconnects, **When** the handshake succeeds, **Then**
+   it receives a complete current snapshot; subsequent messages are sent only when the semantic item
+   set changes.
+
+---
+
 ### Edge Cases
 
 - A platform returns an empty result: distinguishing "nothing was logged this week" from "this
@@ -241,6 +275,10 @@ intact and browsable.
   degrade with depth.
 - The archive outgrows the default embedded database: the operator can move to a server database
   without a change to the data model or a loss of features.
+- A provider reports the same normalized item on consecutive polls: the host refreshes its checked
+  time but preserves `changed_at`, so the WebSocket does not emit a duplicate snapshot.
+- A worker or API process is unavailable: playback state is durable, but the API omits an item after
+  45 seconds rather than presenting known-stale presence.
 
 ## Requirements *(mandatory)*
 
@@ -306,6 +344,13 @@ intact and browsable.
   platform, the browsing experience, or service startup.
 - ****: System MUST flag, rather than silently accept, a sync returning fewer items than a
   configurable proportion of what the previous run returned for the same window.
+- ****: System MUST poll enabled providers declaring `now_playing` independently of history syncs,
+  using a 15-second host interval and no more than three concurrent isolated children.
+- ****: System MUST persist at most one parent-validated transient now-playing item per capable
+  provider, refresh its checked time on every completed attempt, and never write playback to history.
+- ****: System MUST clear an active now-playing item on an idle result or failed attempt; auth,
+  blocked, and structure-change failures MUST suspend polling until configuration, schema, or
+  enablement changes.
 
 **Reading the archive**
 
@@ -326,6 +371,10 @@ intact and browsable.
 - ****: System MUST serve platform-supplied images through a local cache rather than linking to
   the third-party host, MUST fetch them lazily so image availability never affects a sync, and MUST
   show a placeholder rather than falling back to third-party linking when caching is off.
+- ****: System MUST expose current playback through an authenticated `/api/v1/ws/now-playing`
+  WebSocket that sends a complete initial snapshot and change-only updates, omitting disabled,
+  failed, or stale providers; it MUST accept API/read-only bearer and session-cookie authentication
+  and reject an unauthenticated handshake with close code `1008`.
 
 **Platform integrations**
 
@@ -360,6 +409,11 @@ intact and browsable.
   acceptance.
 - ****: When a platform later offers a better data surface, the integration MUST be able to
   migrate to it without duplicating already-ingested entries where identifiers permit.
+- ****: A platform MAY declare the optional `now_playing` capability and implement
+  `now_playing(ctx) -> NowPlayingItem | None`; providers that do not declare it remain valid and
+  unchanged.
+- ****: A now-playing result MUST contain only normalized work, credits, and external identifiers;
+  it MUST NOT contain playback progress, duration, a logged event, or a raw provider payload.
 
 **Operation**
 
@@ -377,6 +431,8 @@ intact and browsable.
   each of which MUST be independently switchable.
 - ****: Sync-history retention MUST be configurable, keeping failures longer than successes by
   default.
+- ****: The service MUST keep now-playing state transient and bounded to one item per provider; it
+  MUST NOT retain playback history, add an event broker, or require a persistent provider worker.
 
 ### Key Entities
 
@@ -441,6 +497,9 @@ intact and browsable.
 - ****: A fresh install with no platform enabled makes zero outbound network requests.
 - ****: No inferred deletion ever occurs for a platform that does not report deletions, verified
   against a platform that exposes only recent activity.
+- ****: Under normal operation, a provider change is visible on the now-playing WebSocket within
+  16 seconds of the 15-second acquisition interval plus the 500-ms API polling interval, and an
+  item older than 45 seconds is never served as current.
 
 ## Out of Scope
 
@@ -498,4 +557,5 @@ are not derivable from the requirements alone.
   tracking. Either way the UI is designed for typography and density rather than assuming
   third-party artwork exists.
 - **Two features have reserved surface area and need no further design now**: platform-pushed updates
-  instead of polling, and the local write path.
+  instead of polling and the local write path. Current playback uses host polling only; playback
+  progress/history, an HTTP fallback, and a dedicated frontend panel are outside this version.

@@ -13,8 +13,13 @@ from pydantic import ValidationError
 from aggregato.domain.enums import FetchMode, Role
 from aggregato.domain.models import Checkpoint, Cursor, RawRecord
 from aggregato.providers.base import ProviderContext
-from aggregato.providers.errors import StructureChangedError
-from aggregato.providers.koito import KoitoConfig, KoitoProvider, listens_url
+from aggregato.providers.errors import AuthError, ProviderError, RateLimited, StructureChangedError
+from aggregato.providers.koito import (
+    KoitoConfig,
+    KoitoProvider,
+    listens_url,
+    now_playing_url,
+)
 
 _FIXTURES = Path("tests/fixtures/koito")
 
@@ -34,6 +39,7 @@ def test_base_url_is_trimmed_and_the_api_path_is_appended() -> None:
 
     assert config.base_url == "http://koito.lan:4110"
     assert listens_url(config) == "http://koito.lan:4110/apis/web/v1/listens"
+    assert now_playing_url(config) == "http://koito.lan:4110/apis/web/v1/now-playing"
 
 
 def test_base_url_rejects_the_api_path() -> None:
@@ -192,3 +198,84 @@ def test_a_relative_path_is_never_handed_to_the_image_cache() -> None:
     assert (
         KoitoProvider().normalize(RawRecord(native_id="x", payload=listen)).work.image_url is None
     )
+
+
+async def test_now_playing_uses_the_authenticated_endpoint_and_existing_track_normalization() -> (
+    None
+):
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json=json.loads((_FIXTURES / "now-playing-active.json").read_text())
+        )
+
+    item = await KoitoProvider().now_playing(_ctx(respond))
+
+    assert item is not None
+    assert str(seen[0].url) == "https://koito.fixture/apis/web/v1/now-playing"
+    assert seen[0].headers["Authorization"] == "Token valid"
+    assert dict(seen[0].url.params) == {}
+    assert item.work.title == "Weightless"
+    assert item.work.image_url == (
+        "https://koito.fixture/image/3f6a1c4e-0000-4000-8000-000000000001/large.webp"
+    )
+    assert [(credit.creator_name, credit.position) for credit in item.credits] == [
+        ("Marconi Union", 0)
+    ]
+    assert [(external_id.namespace, external_id.value) for external_id in item.external_ids] == [
+        ("koito_track", "412")
+    ]
+    assert [
+        (external_id.namespace, external_id.value) for external_id in item.creator_external_ids
+    ] == [("koito_artist", "88")]
+
+
+async def test_now_playing_returns_none_for_an_idle_response() -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=json.loads((_FIXTURES / "now-playing-idle.json").read_text())
+        )
+
+    assert await KoitoProvider().now_playing(_ctx(respond)) is None
+
+
+async def test_now_playing_rejects_a_malformed_active_response() -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=json.loads((_FIXTURES / "now-playing-structure-changed.json").read_text())
+        )
+
+    with pytest.raises(StructureChangedError, match=r"active now-playing response.*track"):
+        await KoitoProvider().now_playing(_ctx(respond))
+
+
+async def test_now_playing_requires_a_boolean_activity_flag() -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"currently_playing": "true"})
+
+    with pytest.raises(StructureChangedError, match="boolean `currently_playing`"):
+        await KoitoProvider().now_playing(_ctx(respond))
+
+
+async def test_now_playing_rejects_invalid_json_as_a_structure_change() -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json")
+
+    with pytest.raises(StructureChangedError, match="returned invalid JSON"):
+        await KoitoProvider().now_playing(_ctx(respond))
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [(401, AuthError), (429, RateLimited), (503, ProviderError)],
+)
+async def test_now_playing_classifies_http_failures(
+    status: int, error: type[ProviderError]
+) -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status)
+
+    with pytest.raises(error):
+        await KoitoProvider().now_playing(_ctx(respond))

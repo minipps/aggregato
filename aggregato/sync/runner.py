@@ -29,10 +29,10 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from aggregato.domain.enums import ErrorClass, FetchMode, RunStatus
-from aggregato.domain.models import CheckResult, Cursor, NormalizedBatch, RawRecord
+from aggregato.domain.models import CheckResult, Cursor, NormalizedBatch, NowPlayingItem, RawRecord
 from aggregato.sync.protocol import (
     MAX_LINE_BYTES,
     BatchMessage,
@@ -41,6 +41,7 @@ from aggregato.sync.protocol import (
     ChildMessage,
     ErrorMessage,
     FailureMessage,
+    NowPlayingMessage,
     ProtocolViolation,
     ResponseMessage,
     decode,
@@ -81,6 +82,8 @@ class RunOutcome:
     raw_responses: list[dict[str, object]] = field(default_factory=list)
     retry_after: timedelta | None = None
     check_result: CheckResult | None = None
+    now_playing: NowPlayingItem | None = None
+    now_playing_result_received: bool = False
 
     @property
     def checkpointed(self) -> bool:
@@ -93,6 +96,7 @@ class RunRequest:
 
     provider_id: str
     mode: FetchMode = FetchMode.INCREMENTAL
+    operation: Literal["sync", "now_playing"] = "sync"
     cursor: Cursor | None = None
     config: dict[str, Any] = field(default_factory=dict)
     secrets: dict[str, str] = field(default_factory=dict)
@@ -115,6 +119,7 @@ class RunRequest:
             )
         payload: dict[str, Any] = {
             "mode": str(self.mode),
+            "operation": self.operation,
             "cursor": self.cursor.state if self.cursor else None,
             "config": self.config,
             "secrets": self.secrets,
@@ -210,9 +215,31 @@ async def execute_run(
         outcome.log = stderr
         outcome.log_excerpt = _tail(stderr)
 
-    if request.mode is FetchMode.CHECK:
+    if request.operation == "now_playing":
+        # Host-owned response snapshots are diagnostics and may accompany the one result (or one
+        # classified error); provider protocol messages still must not.
+        has_other_messages = bool(
+            outcome.records
+            or outcome.failures
+            or outcome.cursor_after is not None
+            or outcome.check_result is not None
+        )
+        if outcome.error_class is not None:
+            if outcome.now_playing_result_received or has_other_messages:
+                outcome.error_class = ErrorClass.INTERNAL
+                outcome.error_message = "now-playing emitted a result and another protocol message"
+        elif has_other_messages:
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "now-playing emitted an unexpected protocol message"
+        elif not outcome.now_playing_result_received:
+            outcome.error_class = ErrorClass.INTERNAL
+            outcome.error_message = "now-playing emitted no result"
+    elif request.mode is FetchMode.CHECK:
         if outcome.check_result is not None and (
-            outcome.records or outcome.failures or outcome.cursor_after is not None
+            outcome.records
+            or outcome.failures
+            or outcome.cursor_after is not None
+            or outcome.now_playing_result_received
         ):
             outcome.error_class = ErrorClass.INTERNAL
             outcome.error_message = "credential check emitted non-diagnostic protocol messages"
@@ -222,6 +249,9 @@ async def execute_run(
     elif outcome.check_result is not None:
         outcome.error_class = ErrorClass.INTERNAL
         outcome.error_message = "sync emitted an unexpected credential-check result"
+    elif outcome.now_playing_result_received:
+        outcome.error_class = ErrorClass.INTERNAL
+        outcome.error_message = "sync emitted an unexpected now-playing result"
 
     if outcome.error_class is not None:
         # The child reported and exited cleanly. Partial if it had already checkpointed, because the
@@ -307,6 +337,11 @@ async def _consume(
                 if outcome.check_result is not None:
                     raise ProtocolViolation("credential check emitted more than one result")
                 outcome.check_result = message.result
+            case NowPlayingMessage():
+                if outcome.now_playing_result_received:
+                    raise ProtocolViolation("now-playing emitted more than one result")
+                outcome.now_playing = message.result
+                outcome.now_playing_result_received = True
             case ErrorMessage():
                 outcome.error_class = message.error_class
                 outcome.error_message = message.message

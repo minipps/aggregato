@@ -124,6 +124,21 @@ an action .
 | provider child hangs | killed at the wall-clock timeout, classified, ladder applies |
 | provider config invalid | `misconfigured`, service starts, other providers sync |
 
+###  — Seeing what is playing now
+
+```bash
+uv run pytest tests/unit/test_now_playing.py tests/contract/test_now_playing_websocket.py -v
+uv run pytest tests/conformance -v
+```
+
+The monitor tests use recorded provider outcomes and an injected clock. Assert that an active result
+is stored without touching history, an equal result preserves `changed_at`, idle and failed results
+clear the item, transient failures follow the 1m/5m/15m/1h ladder, and auth/blocked/structure-change
+failures suspend polling until reactivation. The WebSocket contract tests assert API/read-only bearer
+and cookie authentication, close `1008` for an unauthenticated handshake, sorted source-specific initial
+snapshots, local image paths, stale/disabled omission, and change-only updates. No test opens a
+network socket or sleeps.
+
 ###  — Fixing identity by hand
 
 ```bash
@@ -186,6 +201,7 @@ uv run python -m tests.bench.seed --entries 1000000   # generates the fixture da
 | `test_creator_resolution_meets_budget_and_stays_flat` | ≥ 20,000 lookups/min at 200 and 2,000 creators; large stays at least half the small rate | a per-credit query or table-size regression appears |
 | `test_live_entry_keyset_sorts_use_composite_indexes` | both timestamp sorts use their composite active-entry index | a query plan falls back to a table scan |
 | `test_live_score_facts_use_provider_item_composite_index` | score aggregation uses the provider-item/rating index | score filtering loses its indexed path |
+| now-playing acquisition and visibility | 15 s provider interval + 500 ms WebSocket polling; ≤16 s normal visibility; 45 s stale cutoff | a provider change is delayed beyond the declared budget or stale playback is served |
 
 The operator harness can seed a 1M-entry database for larger measurements. Record any resulting
 baseline in `tests/bench/baseline.json`; a change worsening a recorded metric by more than 10% needs
