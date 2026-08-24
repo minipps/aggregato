@@ -5,7 +5,7 @@
 # each resulting image.
 
 # --- Stage 1: resolve Python dependencies into a venv ------------------------------------------
-FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS deps
+FROM python:3.14-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4 AS deps
 COPY --from=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -16,7 +16,7 @@ COPY README.md ./
 RUN uv sync --frozen --no-dev
 
 # --- Stage 2: runtime — venv and code, no toolchain -------------------------------------------
-FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS runtime
+FROM python:3.14-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4 AS runtime
 
 RUN useradd --create-home --uid 10001 aggregato
 COPY --from=deps /opt/venv /opt/venv
