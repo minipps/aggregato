@@ -43,8 +43,8 @@ docker compose -f docker/compose.yml -f docker/compose.dev.yml up --build
 The overlay selects the frontend image's Node development target, bind-mounts `frontend/`, and
 enables Vite HMR. It also bind-mounts backend Python code and enables the API reloader.
 
-`api.token` is the only fatal configuration error: startup fails without it, because there is no
-unauthenticated mode . A missing or invalid *provider* configuration never blocks startup —
+`api.token` is the only fatal configuration error: startup fails without it, including when public
+read-only access is enabled. A missing or invalid *provider* configuration never blocks startup —
 that provider is marked `misconfigured` and everything else runs .
 
 ---

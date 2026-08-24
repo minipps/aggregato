@@ -22,6 +22,7 @@ import type {
   QueuedOperation,
   Session,
   SyncRun,
+  SyncRunDiagnostics,
   SyncSnapshot,
   IngestFailure,
   LastRun,
@@ -333,6 +334,10 @@ export function topStats(
 
 export function providerRuns(id: string): Pager<SyncRun> {
   return pager<SyncRun>(`/providers/${encodeURIComponent(id)}/runs`)
+}
+
+export function syncRunDiagnostics(providerId: string, runId: number): Promise<SyncRunDiagnostics> {
+  return request<SyncRunDiagnostics>('GET', `/providers/${encodeURIComponent(providerId)}/runs/${runId}/diagnostics`)
 }
 
 /** Read the same durable queue/latest-run snapshot that the sync websocket streams. */

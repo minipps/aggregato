@@ -101,7 +101,8 @@ async def test_the_served_api_answers_after_a_cold_start(data_dir: Path) -> None
                 "/api/v1/health", headers={"Authorization": f"Bearer {TOKEN}"}
             )
 
-    # : no unauthenticated mode, and the refusal is problem+json like every other failure.
+    # Default configuration remains authenticated, and the refusal is problem+json like every
+    # other failure.
     assert unauthenticated.status_code == 401
     assert unauthenticated.headers["content-type"] == "application/problem+json"
 

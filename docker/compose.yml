@@ -29,6 +29,8 @@ services:
       # A second token that can only read: every write is refused with 403, so it can be handed to
       # someone who should browse the archive but not change it. Must differ from AGGREGATO_TOKEN.
       AGGREGATO_READONLY_TOKEN: ${AGGREGATO_READONLY_TOKEN:-}
+      # Allow credential-free frontend/API reads; writes and websockets remain protected.
+      AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY: ${AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY:-false}
       # Browser origins allowed to call the API cross-origin, comma-separated. Empty — the default —
       # mounts no CORS middleware, which is what a same-origin deployment wants.
       AGGREGATO_CORS_ORIGINS: ${AGGREGATO_CORS_ORIGINS:-}

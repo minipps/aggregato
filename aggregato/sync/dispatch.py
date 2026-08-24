@@ -113,6 +113,8 @@ class RunFinalization:
     error_class: ErrorClass | None
     error_message: str | None
     log_excerpt: str | None
+    log: str | None
+    raw_responses: list[dict[str, object]]
     cursor_after: dict[str, object] | None
     requested_lineage_id: uuid.UUID | None
 
@@ -139,6 +141,8 @@ class RunFinalization:
             error_class=self.error_class,
             error_message=self.error_message,
             log_excerpt=self.log_excerpt,
+            log=self.log,
+            raw_responses=self.raw_responses,
             cursor_after=self.cursor_after,
             phase=RunPhase.FINISHED if self.run_status is not RunStatus.FAILED else RunPhase.FAILED,
             requested_lineage_id=self.requested_lineage_id,
@@ -704,6 +708,8 @@ async def _finalize_check(
                 error_class=str(outcome.error_class) if outcome.error_class else None,
                 error_message=outcome.error_message,
                 log_excerpt=outcome.log_excerpt,
+                log=outcome.log,
+                raw_responses=outcome.raw_responses,
                 cursor_after=None,
                 phase=str(
                     RunPhase.FINISHED if outcome.status is RunStatus.SUCCESS else RunPhase.FAILED
@@ -1017,6 +1023,8 @@ async def _reschedule(
         error_class=outcome.error_class,
         error_message=outcome.error_message,
         log_excerpt=outcome.log_excerpt,
+        log=outcome.log,
+        raw_responses=outcome.raw_responses,
         cursor_after=outcome.cursor_after.state if outcome.cursor_after else None,
         requested_lineage_id=(
             requested_lineage_id if preserve_requested_request else decision.lineage_id

@@ -81,7 +81,7 @@ def test_the_contract_is_valid_yaml_and_declares_its_version(contract: dict[str,
 
 
 def test_the_contract_has_no_unauthenticated_endpoint(contract: dict[str, Any]) -> None:
-    """at the document level: a global ``security`` block, and nothing opting out to nothing.
+    """At the document level, auth is the default and no operation opts out unconditionally.
 
     ``POST /auth/session`` narrows to bearer only — which is not an exemption, it is the one
     endpoint a session cookie cannot authenticate because it is what issues the cookie.

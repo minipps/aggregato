@@ -314,7 +314,7 @@ export interface TopStats {
 
 /** `GET /auth/session`: how this browser is authenticated, and whether it may write. */
 export interface Session {
-  via: 'bearer' | 'cookie'
+  via: 'bearer' | 'cookie' | 'public'
   readonly: boolean
 }
 
@@ -347,6 +347,12 @@ export interface SyncRun {
   error_message?: string | null
   next_retry_at?: string | null
   log_excerpt?: string | null
+}
+
+export interface SyncRunDiagnostics {
+  run_id: number
+  log?: string | null
+  raw_responses: { method: string; url: string; status: number; headers: Record<string, string>; body: string }[]
 }
 
 export interface SyncProviderState {

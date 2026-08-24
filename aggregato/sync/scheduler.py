@@ -428,6 +428,8 @@ async def release(
     error_class: ErrorClass | None = None,
     error_message: str | None = None,
     log_excerpt: str | None = None,
+    log: str | None = None,
+    raw_responses: list[dict[str, object]] | None = None,
     cursor_after: dict[str, object] | None = None,
     phase: RunPhase | None = None,
     requested_lineage_id: UUID | object | None = _UNSET,
@@ -454,6 +456,8 @@ async def release(
                     error_class=str(error_class) if error_class else None,
                     error_message=error_message,
                     log_excerpt=log_excerpt,
+                    log=log,
+                    raw_responses=raw_responses,
                     cursor_after=cursor_after,
                     phase=str(
                         phase

@@ -3,9 +3,11 @@ info:
   title: Aggregato API
   version: 1.0.0
   description: |
-    Single-user, self-hosted media log aggregator. Every endpoint requires authentication
-    : either `Authorization: Bearer <api.token>` or the session cookie issued by
-    `POST /auth/session`. There is no unauthenticated mode.
+    Single-user, self-hosted media log aggregator. Every endpoint requires authentication by
+    default: either `Authorization: Bearer <api.token>` or the session cookie issued by
+    `POST /auth/session`. When `api.allow_unauthenticated_readonly` is enabled, credential-free
+    GET/HEAD requests are allowed as read-only requests; writes and websockets still require a
+    credential.
 
     An optional second credential, `api.readonly_token`, authenticates reads only: any
     POST/PUT/PATCH/DELETE it presents — directly or through the session cookie it exchanges
@@ -77,7 +79,7 @@ paths:
                 type: object
                 required: [via, readonly]
                 properties:
-                  via: { type: string, enum: [bearer, cookie] }
+                  via: { type: string, enum: [bearer, cookie, public] }
                   readonly: { type: boolean }
         "401": { $ref: "#/components/responses/Problem" }
 
@@ -291,6 +293,20 @@ paths:
                   - $ref: "#/components/schemas/Page"
                   - properties:
                       items: { type: array, items: { $ref: "#/components/schemas/SyncRun" } }
+
+  /providers/{id}/runs/{run_id}/diagnostics:
+    get:
+      tags: [operations]
+      summary: Read retained diagnostics for one sync attempt
+      parameters:
+        - $ref: "#/components/parameters/providerId"
+        - { name: run_id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: Full child log and bounded raw HTTP responses
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRunDiagnostics" }
 
   /sync/status:
     get:
@@ -1027,6 +1043,16 @@ components:
         error_message: { type: string, nullable: true }
         next_retry_at: { type: string, format: date-time, nullable: true }
         log_excerpt: { type: string, nullable: true, description: Application logs, not user log data }
+
+    SyncRunDiagnostics:
+      type: object
+      required: [run_id, raw_responses]
+      properties:
+        run_id: { type: integer, format: int64 }
+        log: { type: string, nullable: true }
+        raw_responses:
+          type: array
+          items: { type: object, additionalProperties: true }
 
     SyncProviderState:
       type: object
