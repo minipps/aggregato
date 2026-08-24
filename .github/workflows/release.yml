@@ -21,7 +21,7 @@ jobs:
     needs: gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # `--generate-notes` diffs against the previous tag, so the tags have to be present.
           fetch-depth: 0
@@ -96,7 +96,7 @@ jobs:
             suffix: -frontend
             file: docker/frontend.Dockerfile
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # arm64 is emulated, which makes the SPA stage slow — minutes, on a tag-only workflow. Worth
       # it: a self-hosted single-user service lands on Raspberry Pis and Apple silicon at least as
