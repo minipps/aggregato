@@ -236,7 +236,7 @@ intact and browsable.
 - An image host is slow or unreachable: image handling never fails or delays a sync.
 - Configuration for one platform is invalid: that platform is disabled with a clear error and the
   service still starts. The only configuration error that prevents startup is a missing access
-  token, because there is no unauthenticated mode.
+  token; public read-only mode still requires the server's token for protected requests.
 - A very large history (hundreds of thousands of entries) browsed to its far end: paging must not
   degrade with depth.
 - The archive outgrows the default embedded database: the operator can move to a server database
@@ -320,8 +320,9 @@ intact and browsable.
   a large history.
 - ****: The web UI MUST consume only the same public read interface available to any other
   client; if a screen needs data the interface cannot express, the interface is extended.
-- ****: System MUST require authentication for all access, with no unauthenticated mode, and
-  MUST NOT place the operator's token in browser URLs or page source.
+- ****: System MUST require authentication for state-changing access and by default for reads;
+  an explicit public read-only setting MAY allow credential-free GET/HEAD requests. It MUST NOT
+  place the operator's token in browser URLs or page source.
 - ****: System MUST serve platform-supplied images through a local cache rather than linking to
   the third-party host, MUST fetch them lazily so image availability never affects a sync, and MUST
   show a placeholder rather than falling back to third-party linking when caching is off.

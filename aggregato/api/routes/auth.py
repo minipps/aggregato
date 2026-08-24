@@ -1,8 +1,8 @@
-"""``/auth/session`` — exchange the API token for a browser session, and describe it .
+"""``/auth/session`` — exchange a token for a browser session, and describe it.
 
-The token itself must never reach page source or a URL , so the SPA calls this once with
-the operator's token and works from cookies afterwards. ``GET`` reports back what the current
-credential is, which is how the SPA knows to render itself read-only.
+The token itself must never reach page source or a URL, so the SPA calls this once with
+the operator's token and works from cookies afterwards. With public read-only access enabled,
+``GET`` also reports an unauthenticated browser as read-only.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ router = APIRouter(tags=["operations"])
 class SessionView(BaseModel):
     """How the caller is authenticated, exactly the object ``contracts/openapi.yaml`` declares."""
 
-    via: Literal["bearer", "cookie"]
+    via: Literal["bearer", "cookie", "public"]
     readonly: bool
 
 
@@ -79,6 +79,6 @@ async def read_session(ctx: Annotated[AuthContext, Depends(require_auth)]) -> Se
     Inputs: none beyond authentication — the app-wide dependency has already run, and FastAPI hands
     back its cached result rather than authenticating twice.
 
-    Failure modes: 401 problem+json without credentials, like every other route.
+    Failure modes: 401 problem+json without credentials unless public read-only access is enabled.
     """
     return SessionView(via=ctx.via, readonly=ctx.readonly)

@@ -1,4 +1,4 @@
-"""No endpoint is reachable without credentials (, , research.md ).
+"""Authentication contract, including the optional public read-only mode.
 
 The app assembled here is the one ``main.py`` builds: the app-level ``require_auth`` dependency,
 the real error handlers, the real ``POST /auth/session``, and two throwaway routes standing in for
@@ -104,7 +104,7 @@ def _assert_problem(response: httpx.Response, status: int) -> None:
 async def test_no_endpoint_is_reachable_unauthenticated(
     client: httpx.AsyncClient, method: str, path: str
 ) -> None:
-    """: there is no unauthenticated mode, and no 401 escapes as FastAPI's default shape."""
+    """: the default remains authenticated, and no 401 escapes as FastAPI's default shape."""
     _assert_problem(await client.request(method, path), 401)
 
 
@@ -116,6 +116,32 @@ async def test_cached_image_reads_without_credentials(client: httpx.AsyncClient)
 
 async def test_the_image_exemption_is_reads_only(client: httpx.AsyncClient) -> None:
     _assert_problem(await client.post(f"/media/image/{'a' * 64}"), 401)
+
+
+async def test_public_readonly_mode_allows_reads_but_not_writes(
+    client: httpx.AsyncClient, app: FastAPI, data_dir: Path
+) -> None:
+    register_auth(
+        app,
+        config=load_config(
+            env={
+                "AGGREGATO_TOKEN": TOKEN,
+                "AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY": "true",
+                "AGGREGATO_DATA": str(data_dir),
+            }
+        ),
+        engine=app.state.engine,
+    )
+
+    response = await client.get("/probe")
+    assert response.status_code == 200
+    assert response.json() == {"via": "public"}
+    session = await client.get("/auth/session")
+    assert session.json() == {"via": "public", "readonly": True}
+    client.cookies.set(SESSION_COOKIE, "stale-session")
+    assert (await client.get("/probe")).json() == {"via": "public"}
+    _assert_problem(await client.post("/probe"), 401)
+    _assert_problem(await client.post("/auth/session"), 401)
 
 
 async def test_valid_bearer_authenticates(client: httpx.AsyncClient) -> None:
