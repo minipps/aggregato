@@ -1,9 +1,9 @@
-"""Authentication for every request (, research.md , ).
+"""Authentication for every request, with an optional public read-only mode.
 
-There is no unauthenticated mode. A request carries either ``Authorization: Bearer <api.token>``
-or the ``aggregato_session`` cookie; anything else is a 401 problem detail.  also forbids the
-token appearing in a URL or in page source, which is why the browser gets a cookie instead of the
-token itself.
+By default a request carries either ``Authorization: Bearer <api.token>`` or the
+``aggregato_session`` cookie; anything else is a 401 problem detail. When
+``api.allow_unauthenticated_readonly`` is enabled, credential-free GET and HEAD requests are
+allowed as read-only requests. The token still never appears in a URL or page source.
 
 Design decisions worth stating once:
 
@@ -26,6 +26,9 @@ Design decisions worth stating once:
   set, authenticates reads and refuses every ``POST``/``PUT``/``PATCH``/``DELETE`` with a 403 — so
   it cannot change settings, trigger a sync, or exchange itself for a session cookie. Every
   mutating endpoint is an unsafe method, so the gate is the method rather than a per-route list.
+* **Public read-only access is method-gated.** ``api.allow_unauthenticated_readonly`` permits only
+  credential-free GET and HEAD requests; writes and websocket connections still require a token or
+  session cookie.
 * **``Secure`` only over TLS.** Setting it unconditionally would break a plain-HTTP LAN install,
   which is a supported deployment.
 """
@@ -108,12 +111,12 @@ class AuthContext:
     """How the current request authenticated.
 
     Attributes:
-        via: ``"bearer"`` or ``"cookie"``.
-        session_id: The session row's id for cookie auth, ``None`` for bearer.
-        readonly: The request presented ``api.readonly_token``, so it may only read.
+        via: ``"bearer"``, ``"cookie"``, or ``"public"``.
+        session_id: The session row's id for cookie auth, ``None`` for bearer and public access.
+        readonly: The request may only read, including public requests.
     """
 
-    via: Literal["bearer", "cookie"]
+    via: Literal["bearer", "cookie", "public"]
     session_id: str | None = None
     readonly: bool = False
 
@@ -137,7 +140,8 @@ def register_auth(
 
     Args:
         app: The application to mutate.
-        config: Resolved configuration; ``config.api.token`` is the only credential.
+        config: Resolved configuration; ``config.api.token`` remains the protected credential, and
+            public read-only access is controlled by ``config.api.allow_unauthenticated_readonly``.
         engine: The async engine the ``sessions`` table is read and written through.
         clock: Optional request timestamp source; direct ``FastAPI`` test assemblies default to the
             system clock, while :func:`aggregato.main.create_app` supplies the app clock.
@@ -161,15 +165,18 @@ async def require_auth(connection: HTTPConnection) -> AuthContext:
     Inputs: the connection. Declared app-wide as a dependency, and returned so a route can tell how
     it was authenticated.
 
-    Failure modes: :class:`~aggregato.api.errors.ProblemError` 401 when no credential is present,
-    the bearer token does not match, or the session is unknown, expired, or was issued under a
-    rotated token; 403 when a cookie-authenticated state-changing request has no valid CSRF token.
+    Failure modes: :class:`~aggregato.api.errors.ProblemError` 401 when no credential is present
+    for a protected request, the bearer token does not match, or the session is unknown, expired,
+    or was issued under a rotated token; 403 when a cookie-authenticated state-changing request has
+    no valid CSRF token.
     Never FastAPI's default ``{"detail": ...}`` 401 shape.
 
     One exception: reading a cached image is unauthenticated, so a page can embed
     ``<img src=".../media/image/...">`` — a browser attaches neither a bearer header nor a
     cross-site cookie to an image load. The path carries a sha256, which cannot be enumerated, and
-    the bytes are artwork the source platform already serves publicly. Nothing else is exempt.
+    the bytes are artwork the source platform already serves publicly. When configured, other
+    credential-free GET and HEAD requests are also read-only; websocket requests remain
+    authenticated.
     """
     if isinstance(connection, WebSocket):
         try:
@@ -198,6 +205,8 @@ async def require_auth(connection: HTTPConnection) -> AuthContext:
 
     cookie = request.cookies.get(SESSION_COOKIE)
     if cookie is None:
+        if _is_public_read(request):
+            return AuthContext(via="public", readonly=True)
         _record_auth_failure(request)
         raise _unauthorized(
             "This request needs an Authorization: Bearer header or a session cookie."
@@ -205,6 +214,8 @@ async def require_auth(connection: HTTPConnection) -> AuthContext:
     try:
         session_id, credential, readonly = await _valid_session(request, cookie)
     except ProblemError:
+        if _is_public_read(request):
+            return AuthContext(via="public", readonly=True)
         _record_auth_failure(request)
         raise
     _clear_auth_failures(request)
@@ -375,6 +386,15 @@ def _is_public_image(request: Request) -> bool:
     return (
         request.method in {"GET", "HEAD"}
         and _PUBLIC_IMAGE_ROUTE.fullmatch(request.url.path) is not None
+    )
+
+
+def _is_public_read(request: Request) -> bool:
+    """Whether this credential-free request may use configured public read-only access."""
+    return (
+        request.method in {"GET", "HEAD"}
+        and request.headers.get("Authorization") is None
+        and request.app.state.config.api.allow_unauthenticated_readonly
     )
 
 

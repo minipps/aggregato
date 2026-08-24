@@ -314,7 +314,7 @@ export interface TopStats {
 
 /** `GET /auth/session`: how this browser is authenticated, and whether it may write. */
 export interface Session {
-  via: 'bearer' | 'cookie'
+  via: 'bearer' | 'cookie' | 'public'
   readonly: boolean
 }
 

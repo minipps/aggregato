@@ -2,8 +2,8 @@
 
 The precedence and every rule below come from research.md :
 
-* ``api.token`` is the only fatal configuration error — there is no unauthenticated mode
-  , so a missing token raises :class:`MissingTokenError` and startup stops.
+* ``api.token`` is the only fatal configuration error. Public read-only mode may expose reads
+  without a caller token, but the server still needs the operator token for protected requests.
 * An invalid *provider* block disables that provider and records the error. It never stops
   startup and never touches another provider . That is the important behaviour here.
 * Secrets are read from the environment at read time and never written back to disk or returned
@@ -42,7 +42,7 @@ class ConfigError(Exception):
 
 
 class MissingTokenError(ConfigError):
-    """``api.token`` is unset. The only fatal configuration error ."""
+    """``api.token`` is unset. The only fatal configuration error."""
 
 
 # The operator-facing environment variables (.env.example is the contract) mapped onto the dotted
@@ -50,6 +50,7 @@ class MissingTokenError(ConfigError):
 ENV_SETTINGS: Mapping[str, str] = {
     "AGGREGATO_TOKEN": "api.token",
     "AGGREGATO_READONLY_TOKEN": "api.readonly_token",
+    "AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY": "api.allow_unauthenticated_readonly",
     "AGGREGATO_CORS_ORIGINS": "api.cors_origins",
     "AGGREGATO_IMPORT_QUOTA_BYTES": "api.import_quota_bytes",
     "AGGREGATO_IMPORT_TOTAL_QUOTA_BYTES": "api.import_total_quota_bytes",
@@ -89,7 +90,7 @@ class ProviderConfig(BaseModel):
 
 
 class ApiSettings(BaseModel):
-    """The HTTP surface's settings. ``token`` is required ."""
+    """The HTTP surface's settings. ``token`` is required."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -98,6 +99,8 @@ class ApiSettings(BaseModel):
     #: refused. For exposing the archive in a public or shared environment without handing over
     #: the credential that can edit settings or trigger syncs.
     readonly_token: SecretStr | None = None
+    #: Permit credential-free GET and HEAD requests while keeping writes and websockets protected.
+    allow_unauthenticated_readonly: bool = False
     #: Browser origins allowed to call the API cross-origin, as a comma-separated list.
     #:
     #: Empty — the default — mounts no CORS middleware at all, which is what the supported
@@ -234,7 +237,7 @@ def load_config(
 
     if not tree.get("api", {}).get("token"):
         raise MissingTokenError(
-            "api.token is unset: set AGGREGATO_TOKEN. There is no unauthenticated mode "
+            "api.token is unset: set AGGREGATO_TOKEN; it remains required for protected requests"
         )
     api = tree["api"]
     if api.get("readonly_token") and api["readonly_token"] == api["token"]:

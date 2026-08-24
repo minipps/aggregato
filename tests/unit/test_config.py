@@ -69,7 +69,7 @@ def test_import_quotas_are_configurable_and_nonnegative() -> None:
 
 
 def test_missing_token_is_fatal_and_names_the_setting() -> None:
-    """The only fatal configuration error: there is no unauthenticated mode ."""
+    """The server token remains required even when reads may be public."""
     with pytest.raises(MissingTokenError) as exc:
         load_config(env={})
     assert "api.token" in str(exc.value)
@@ -80,6 +80,18 @@ def test_empty_token_counts_as_unset() -> None:
     """Copying .env.example leaves `AGGREGATO_TOKEN=`; that must not pass as a token."""
     with pytest.raises(MissingTokenError):
         load_config(env={"AGGREGATO_TOKEN": ""})
+
+
+def test_unauthenticated_readonly_mode_is_configurable() -> None:
+    cfg = load_config(
+        env={
+            "AGGREGATO_TOKEN": TOKEN,
+            "AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY": "true",
+        }
+    )
+
+    assert cfg.api.allow_unauthenticated_readonly is True
+    assert cfg.public_dict()["api"]["allow_unauthenticated_readonly"] is True
 
 
 def test_invalid_provider_block_disables_only_that_provider(tmp_path: Path) -> None:

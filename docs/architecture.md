@@ -55,8 +55,9 @@ plugin tree.
 | Fresh install outbound requests | exactly 0 |
 
 **Constraints**: no outbound request to any non-platform host except images from platform-supplied
-URLs; no unauthenticated mode; one bad provider must never block startup or
-another provider; provider-supplied data is validated before any write.
+URLs; authentication is required by default, with an explicit read-only public mode for GET/HEAD;
+one bad provider must never block startup or another provider; provider-supplied data is validated
+before any write.
 
 **Scale/Scope**: 1 user, ~10 bundled providers at maturity, 1M+ entries, 100k+ works, 200k+
 creators, and enough headroom for continued provider growth.

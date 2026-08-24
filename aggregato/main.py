@@ -71,8 +71,9 @@ def create_app(
 
     Raises:
         aggregato.config.MissingTokenError: ``api.token`` is unset. Startup fails rather than
-            serving, because there is no unauthenticated mode . This is the ONLY fatal
-            configuration error — a broken *provider* leaves the service running.
+            serving; it remains required for protected requests even when public read-only access
+            is enabled. This is the ONLY fatal configuration error — a broken *provider* leaves
+            the service running.
     """
     settings = config or load_config()
     engine = create_engine(settings.database_url)

@@ -125,7 +125,7 @@ will not edit them, because the file is the source of truth for those.
 
 A platform whose block is broken (a bad shape, an unset `${VAR}`) is marked `misconfigured` and
 disabled on its own. Startup is unaffected and so is every other platform. The one fatal
-configuration error is a missing `AGGREGATO_TOKEN`: there is no unauthenticated mode.
+configuration error is a missing `AGGREGATO_TOKEN`, which remains required for protected access.
 
 ### Letting other people look
 
@@ -136,6 +136,10 @@ change something simply absent. The refusal is enforced by the server, not by th
 any write it attempts comes back `403`, whether it goes through the web UI or straight at the API.
 It cannot change settings, trigger a sync, resolve identities, or upgrade itself into the real
 token. Leave it unset and no read-only access exists.
+
+For a public archive, set `AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY=true`. Credential-free GET and
+HEAD requests then work in the frontend as read-only access; writes and websocket connections still
+require a token. `AGGREGATO_TOKEN` is still required by the server.
 
 ### Where your data lives
 
