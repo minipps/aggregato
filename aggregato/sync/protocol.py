@@ -67,6 +67,19 @@ class ErrorMessage(BaseModel):
     retry_after_seconds: float | None = Field(default=None, ge=0)
 
 
+class ResponseMessage(BaseModel):
+    """A bounded host-client response snapshot for operator diagnosis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["response"] = "response"
+    method: str
+    url: str
+    status: int
+    headers: dict[str, str]
+    body: str
+
+
 class FailureMessage(BaseModel):
     """One record the child could not normalize. The run continues .
 
@@ -92,7 +105,12 @@ class CheckMessage(BaseModel):
 
 
 ChildMessage = Annotated[
-    BatchMessage | CheckpointMessage | ErrorMessage | FailureMessage | CheckMessage,
+    BatchMessage
+    | CheckpointMessage
+    | ErrorMessage
+    | FailureMessage
+    | CheckMessage
+    | ResponseMessage,
     Field(discriminator="type"),
 ]
 
