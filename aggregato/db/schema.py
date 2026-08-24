@@ -535,6 +535,8 @@ sync_runs = Table(
     Column("error_message", Text),
     # Application logs, not user log data — the spec is explicit about the naming collision.
     Column("log_excerpt", Text),
+    Column("log", Text),
+    Column("raw_responses", JSON_COL),
     Column("cursor_before", JSON_COL),
     Column("cursor_after", JSON_COL),
     check_constraint("status", RunStatus),

@@ -329,6 +329,7 @@ class PoliteClient:
         host_state_dir: Path | None = None,
         rng: random.Random | None = None,
         now: Callable[[], datetime] | None = None,
+        on_response: Callable[[httpx.Response], None] | None = None,
     ) -> None:
         self._policy = policy
         self._limiter = RateLimiter(policy.effective_interval_seconds)
@@ -338,6 +339,7 @@ class PoliteClient:
         # Injected so retry jitter is reproducible in tests (testing guidance).
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._now = now or SYSTEM_CLOCK.now
+        self._on_response = on_response
         self._client = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT},
             follow_redirects=False,
@@ -477,6 +479,8 @@ class PoliteClient:
                 await self._sleep_before_retry(attempt, retry_after)
 
             assert response is not None
+            if self._on_response is not None:
+                self._on_response(response)
             location = response.headers.get("Location")
             if response.status_code not in {301, 302, 303, 307, 308} or not location:
                 return response

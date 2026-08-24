@@ -42,6 +42,7 @@ from aggregato.sync.protocol import (
     ErrorMessage,
     FailureMessage,
     ProtocolViolation,
+    ResponseMessage,
     decode,
 )
 
@@ -76,6 +77,8 @@ class RunOutcome:
     error_class: ErrorClass | None = None
     error_message: str | None = None
     log_excerpt: str | None = None
+    log: str | None = None
+    raw_responses: list[dict[str, object]] = field(default_factory=list)
     retry_after: timedelta | None = None
     check_result: CheckResult | None = None
 
@@ -204,6 +207,7 @@ async def execute_run(
 
     stderr = stderr_task.result() if stderr_task.done() and not stderr_task.cancelled() else ""
     if stderr:
+        outcome.log = stderr
         outcome.log_excerpt = _tail(stderr)
 
     if request.mode is FetchMode.CHECK:
@@ -310,6 +314,8 @@ async def _consume(
                     outcome.log_excerpt = _tail(message.detail)
                 if message.retry_after_seconds is not None:
                     outcome.retry_after = timedelta(seconds=message.retry_after_seconds)
+            case ResponseMessage():
+                outcome.raw_responses.append(message.model_dump(exclude={"type"}))
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:

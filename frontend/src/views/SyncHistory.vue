@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import { providerRuns, providers } from '@/api/client'
+import { providerRuns, providers, syncRunDiagnostics } from '@/api/client'
 import { useSyncStream } from '@/api/syncStream'
 import { usePaged, useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -34,6 +34,16 @@ const grouped = computed(() => {
   for (const run of visibleRuns.value) groups.set(run.lineage_id, [...(groups.get(run.lineage_id) ?? []), run])
   return [...groups.values()]
 })
+const expanded = ref<number | null>(null)
+const diagnostics = ref<Record<number, Awaited<ReturnType<typeof syncRunDiagnostics>>> >({})
+const diagnosticError = ref<Record<number, string>>({})
+async function showDiagnostics(run: (typeof visibleRuns.value)[number]): Promise<void> {
+  if (expanded.value === run.id) { expanded.value = null; return }
+  expanded.value = run.id
+  if (diagnostics.value[run.id]) return
+  try { diagnostics.value[run.id] = await syncRunDiagnostics(providerId.value, run.id) }
+  catch (error) { diagnosticError.value[run.id] = error instanceof Error ? error.message : String(error) }
+}
 
 async function select(): Promise<void> { await history.restart() }
 </script>
@@ -89,12 +99,28 @@ async function select(): Promise<void> { await history.restart() }
           <h2>Sync lineage · {{ attempts.length }} attempt{{ attempts.length === 1 ? '' : 's' }}</h2>
           <ul class="plain">
             <li v-for="run in attempts" :key="run.id">
-              <strong>{{ run.status }}</strong> · attempt {{ run.attempt }} ·
+              <button type="button" class="link-button" :aria-expanded="expanded === run.id" @click="showDiagnostics(run)">
+                <strong>{{ run.status }}</strong> · attempt {{ run.attempt }}
+              </button> ·
               <LoggedAt :at="run.started_at" precision="exact" /> ·
               {{ run.items_seen }} seen · {{ run.items_written }} written, {{ run.items_failed }} failed ·
               {{ run.checkpoint_count }} checkpoints
               <span v-if="run.phase !== 'finished' && run.phase !== 'failed'"> · {{ run.phase }}</span>
               <p v-if="run.error_message" class="muted">{{ run.error_class }}: {{ run.error_message }}</p>
+              <div v-if="expanded === run.id" class="diagnostics">
+                <LoadingState v-if="!diagnostics[run.id] && !diagnosticError[run.id]" label="Loading diagnostics…" />
+                <p v-if="diagnosticError[run.id]" class="error">{{ diagnosticError[run.id] }}</p>
+                <template v-if="diagnostics[run.id]">
+                  <h3>Full log</h3>
+                  <pre>{{ diagnostics[run.id]!.log || 'No log output.' }}</pre>
+                  <h3>Raw responses</h3>
+                  <p v-if="diagnostics[run.id]!.raw_responses.length === 0" class="muted">No HTTP responses captured.</p>
+                  <details v-for="(response, responseIndex) in diagnostics[run.id]!.raw_responses" :key="responseIndex">
+                    <summary>{{ response.status }} {{ response.method }} {{ response.url }}</summary>
+                    <pre>{{ response.body }}</pre>
+                  </details>
+                </template>
+              </div>
             </li>
           </ul>
         </li>

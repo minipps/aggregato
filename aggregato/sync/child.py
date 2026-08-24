@@ -37,10 +37,31 @@ from aggregato.sync.protocol import (
     ChildMessage,
     ErrorMessage,
     FailureMessage,
+    ResponseMessage,
     encode,
 )
 
 log = logging.getLogger("aggregato.sync.child")
+
+
+def _response(response: Any) -> None:
+    """Emit a bounded response snapshot; raw provider responses are diagnostic data."""
+    body = response.content[: 256 * 1024].decode(response.encoding or "utf-8", errors="replace")
+    emit(
+        ResponseMessage(
+            method=response.request.method,
+            # Query strings may carry provider credentials; diagnostics keep the endpoint,
+            # not secrets.
+            url=str(response.request.url.copy_with(query=None)),
+            status=response.status_code,
+            headers={
+                key: value
+                for key, value in response.headers.items()
+                if key.lower() not in {"set-cookie", "authorization"}
+            },
+            body=body,
+        )
+    )
 
 
 def _politeness_policy(provider: Any) -> PolitenessPolicy:
@@ -90,7 +111,9 @@ async def run(
     # Feeding it to the request limiter made a provider with two requests per run sleep for an hour
     # after its first request.  Providers without an explicit request-rate declaration use the
     # host-owned acquisition floor.
-    client = PoliteClient(_politeness_policy(provider), host_state_dir=host_state_dir)
+    client = PoliteClient(
+        _politeness_policy(provider), host_state_dir=host_state_dir, on_response=_response
+    )
     ctx = ProviderContext(
         http=client,  # type: ignore[arg-type]  # PoliteClient is the wrapper the contract promises
         config=provider.config_model.model_validate(_with_secrets(config, secrets)),

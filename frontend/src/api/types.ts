@@ -349,6 +349,12 @@ export interface SyncRun {
   log_excerpt?: string | null
 }
 
+export interface SyncRunDiagnostics {
+  run_id: number
+  log?: string | null
+  raw_responses: { method: string; url: string; status: number; headers: Record<string, string>; body: string }[]
+}
+
 export interface SyncProviderState {
   id: string
   enabled: boolean

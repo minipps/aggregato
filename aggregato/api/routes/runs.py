@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.requests import Request
@@ -58,6 +58,12 @@ class SyncRun(BaseModel):
     error_message: str | None = None
     next_retry_at: datetime | None = None
     log_excerpt: str | None = None
+
+
+class SyncRunDiagnostics(BaseModel):
+    run_id: int
+    log: str | None = None
+    raw_responses: list[dict[str, object]] = Field(default_factory=list)
 
 
 class SyncProviderState(BaseModel):
@@ -196,6 +202,23 @@ async def provider_runs(
             limit=clamp_limit(limit),
         )
     return PageResponse(items=[_run(row) for row in page.items], next_cursor=page.next_cursor)
+
+
+@router.get("/providers/{id}/runs/{run_id}/diagnostics", response_model=SyncRunDiagnostics)
+async def run_diagnostics(request: Request, id: str, run_id: int) -> SyncRunDiagnostics:
+    """Return retained child logs and host HTTP response snapshots for one attempt."""
+    async with transaction(request.app.state.engine) as conn:
+        row = (
+            await conn.execute(
+                select(sync_runs).where(
+                    sync_runs.c.id == run_id,
+                    sync_runs.c.provider_id == id,
+                )
+            )
+        ).first()
+    if row is None:
+        raise ProblemError(status=404, title="Sync run not found", type=error_type("run-not-found"))
+    return SyncRunDiagnostics(run_id=run_id, log=row.log, raw_responses=row.raw_responses or [])
 
 
 @router.get("/ingest-failures", response_model=PageResponse[IngestFailure])

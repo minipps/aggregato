@@ -292,6 +292,20 @@ paths:
                   - properties:
                       items: { type: array, items: { $ref: "#/components/schemas/SyncRun" } }
 
+  /providers/{id}/runs/{run_id}/diagnostics:
+    get:
+      tags: [operations]
+      summary: Read retained diagnostics for one sync attempt
+      parameters:
+        - $ref: "#/components/parameters/providerId"
+        - { name: run_id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: Full child log and bounded raw HTTP responses
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRunDiagnostics" }
+
   /sync/status:
     get:
       tags: [operations]
@@ -1027,6 +1041,16 @@ components:
         error_message: { type: string, nullable: true }
         next_retry_at: { type: string, format: date-time, nullable: true }
         log_excerpt: { type: string, nullable: true, description: Application logs, not user log data }
+
+    SyncRunDiagnostics:
+      type: object
+      required: [run_id, raw_responses]
+      properties:
+        run_id: { type: integer, format: int64 }
+        log: { type: string, nullable: true }
+        raw_responses:
+          type: array
+          items: { type: object, additionalProperties: true }
 
     SyncProviderState:
       type: object
