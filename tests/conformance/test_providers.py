@@ -1,4 +1,4 @@
-"""The provider conformance suite — contract §5, groups 1 to 9.
+"""The provider conformance suite — contract §5, groups 1 to 10.
 
 Every bundled provider is registered in ``conftest.py`` and must pass all of this; it is also what a
 third-party provider runs to prove compliance . Each test names the group it implements, and
@@ -26,10 +26,10 @@ from aggregato.domain.enums import (
     MediaType,
     Role,
 )
-from aggregato.domain.models import Checkpoint, CheckResult, RawRecord
+from aggregato.domain.models import Checkpoint, CheckResult, NowPlayingItem, RawRecord
 from aggregato.domain.subject_ref import SUBJECT_REF_KEYS, validate_subject_ref
-from aggregato.providers.base import Provider, ProviderContext
-from aggregato.providers.errors import StructureChangedError
+from aggregato.providers.base import NowPlayingProvider, Provider, ProviderContext
+from aggregato.providers.errors import AuthError, RateLimited, StructureChangedError
 from aggregato.providers.registry import discover_providers
 from tests.conformance.conftest import (
     REGISTERED,
@@ -366,7 +366,53 @@ async def test_group7_check_reports_both_outcomes(
     assert bad.detail, "a failed check must say what an operator should do about it"
 
 
-# --- group 8: the settings form can render config_model -------------------------------------------
+# --- group 8: optional now-playing capability ----------------------------------------------------
+
+
+async def test_group8_now_playing_contract(
+    provider: Provider, registration: Registration, provider_fixtures: Path
+) -> None:
+    """Capability providers return one normalized item, idle ``None``, and named failures.
+
+    The fixtures exercise the optional endpoint without teaching this suite either provider's wire
+    format. Providers that do not declare the capability skip the group automatically.
+    """
+    if Capability.NOW_PLAYING not in provider.capabilities:
+        pytest.skip("provider does not declare now_playing")
+    assert isinstance(provider, NowPlayingProvider)
+
+    active_path = provider_fixtures / "now-playing-active.json"
+    idle_path = provider_fixtures / "now-playing-idle.json"
+    changed_path = provider_fixtures / "now-playing-structure-changed.json"
+    for path in (active_path, idle_path, changed_path):
+        assert path.exists(), f"now-playing provider is missing its recorded fixture: {path}"
+
+    active = await provider.now_playing(build_ctx(registration, active_path))
+    assert isinstance(active, NowPlayingItem)
+    assert active.work.title
+    assert active.work.media_type in provider.media_types
+    repeated = await provider.now_playing(build_ctx(registration, active_path))
+    assert repeated is not None
+    assert repeated.model_dump_json() == active.model_dump_json(), (
+        "now_playing normalization changed between identical recorded responses"
+    )
+
+    assert await provider.now_playing(build_ctx(registration, idle_path)) is None
+
+    with pytest.raises(StructureChangedError):
+        await provider.now_playing(build_ctx(registration, changed_path))
+
+    invalid_path = provider_fixtures / registration.invalid
+    with pytest.raises(AuthError):
+        await provider.now_playing(build_ctx(registration, invalid_path))
+
+    rate_limited_path = provider_fixtures / "now-playing-rate-limited.json"
+    if rate_limited_path.exists():
+        with pytest.raises(RateLimited):
+            await provider.now_playing(build_ctx(registration, rate_limited_path))
+
+
+# --- group 9: the settings form can render config_model -------------------------------------------
 
 
 def _resolve(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
@@ -379,7 +425,7 @@ def _resolve(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_group8_config_schema_is_renderable(provider: Provider) -> None:
-    """Group 8: ``config_model`` produces a JSON Schema the settings form can render .
+    """Group 9: ``config_model`` produces a JSON Schema the settings form can render .
 
     The form renderer reads the JSON Schema directly (research.md ), so the schema is the form:
     a nested object has no widget, a secret without ``writeOnly`` gets echoed back into the page,
@@ -412,13 +458,13 @@ def test_group8_config_schema_is_renderable(provider: Provider) -> None:
             )
 
 
-# --- group 9: scraping providers additionally -----------------------------------------------------
+# --- group 10: scraping providers additionally ----------------------------------------------------
 
 
 async def test_group9_scraping_obligations(
     provider: Provider, registration: Registration, provider_fixtures: Path
 ) -> None:
-    """Group 9: scrapers only — recorded HTML fixtures, ``StructureChangedError`` on a changed
+    """Group 10: scrapers only — recorded HTML fixtures, ``StructureChangedError`` on a changed
     structure, and no solver in the import graph.
 
     Skips for every non-scraping provider, and activates automatically on either declaration, so a

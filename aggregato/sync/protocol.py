@@ -17,7 +17,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from aggregato.domain.enums import ErrorClass
-from aggregato.domain.models import CheckResult, Cursor, NormalizedBatch, RawRecord
+from aggregato.domain.models import (
+    CheckResult,
+    Cursor,
+    NormalizedBatch,
+    NowPlayingItem,
+    RawRecord,
+)
 
 #: Cap on one line's length. A provider that emits an unbounded line would otherwise let the parent
 #: read until it runs out of memory — which is a hang the wall-clock kill cannot help with, because
@@ -104,13 +110,23 @@ class CheckMessage(BaseModel):
     result: CheckResult
 
 
+class NowPlayingMessage(BaseModel):
+    """The one current-playback result emitted by a now-playing child."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["now_playing"] = "now_playing"
+    result: NowPlayingItem | None
+
+
 ChildMessage = Annotated[
     BatchMessage
     | CheckpointMessage
     | ErrorMessage
     | FailureMessage
     | CheckMessage
-    | ResponseMessage,
+    | ResponseMessage
+    | NowPlayingMessage,
     Field(discriminator="type"),
 ]
 

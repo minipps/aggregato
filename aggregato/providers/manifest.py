@@ -282,7 +282,7 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
     "koito": _manifest(
         name="Koito",
         media_types=("track",),
-        capabilities=("poll", "backfill", "has_credits"),
+        capabilities=("poll", "backfill", "now_playing", "has_credits"),
         acquisition="api",
         schema_version=1,
         interval_seconds=300,
@@ -314,7 +314,7 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
     "listenbrainz": _manifest(
         name="ListenBrainz",
         media_types=("track",),
-        capabilities=("poll", "backfill", "has_credits"),
+        capabilities=("poll", "backfill", "now_playing", "has_credits"),
         acquisition="api",
         schema_version=1,
         interval_seconds=900,

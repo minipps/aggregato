@@ -68,6 +68,43 @@ for production and tests .
 - **Subprocess sandbox / WASM** — the spec's own §6.7 says this is the answer *if* out-of-tree
   providers ever become supported, and explicitly not before. Building it now would be speculative.
 
+## — Current playback: reuse the child boundary and persist only the latest state
+
+**Decision**: Treat current playback as an optional provider capability, not as another ingest mode.
+Providers declare `now_playing` in their static manifest and implement
+`now_playing(ctx) -> NowPlayingItem | None`. The scheduler process runs a separate monitor beside
+normal history scheduling, starts the existing short-lived child with `operation="now_playing"`, and
+persists one parent-validated result per provider in six additional `provider_state` columns. The
+success interval is a host constant of 15 seconds; no more than three presence children run at once,
+and each gets a 30-second wall-clock limit.
+
+The authenticated API reads this durable state through `/api/v1/ws/now-playing`. It sends a complete
+snapshot on connect, then checks the database every 500 ms and sends only when the semantic item set
+changes. It filters disabled rows and checks older than 45 seconds. Artwork is mapped to the existing
+local image-cache route. Current playback never enters `provider_items`, `entries`, `opinions`, or
+`sync_runs`, and the API has no HTTP fallback for it.
+
+**Rationale**: A provider process remains untrusted and may crash or hang, so the existing child
+boundary is the smallest safe implementation. Durable state lets the API and worker restart
+independently without an in-memory event broker. Keeping the item source-specific avoids unsafe title
+matching while two platforms can legitimately report the same work. Clearing on idle or failure and
+the 45-second cutoff prevent a known-stale item from appearing current.
+
+**Failure policy**: Successful active and idle results schedule the next check 15 seconds later and
+reset failures. Transient failures use the existing 1m/5m/15m/1h retry ladder and honour a longer
+`Retry-After`; auth, blocked, and structure-change failures suspend polling until a configuration,
+provider schema, or enablement change changes the stored fingerprint. Equal normalized items refresh
+the checked timestamp but preserve `changed_at`, suppressing duplicate WebSocket messages.
+
+**Alternatives considered**:
+- **Put playback into history ingest** — would create fake log events and couple a transient signal to
+  idempotency, identity resolution, and retention. Rejected because playback is presence, not history.
+- **A persistent provider process or event broker** — adds a new lifecycle and stateful dependency,
+  while weakening the already-proven process isolation. Rejected until measured cadence or scale
+  requires it.
+- **In-memory API broadcast** — loses state across API restarts and cannot serve a reconnect from a
+  separate worker. Rejected in favour of the database already used as the cross-process boundary.
+
 ##  — Data access: SQLAlchemy 2.0 Core + Alembic, no ORM
 
 **Decision**: SQLAlchemy Core (`Table` objects, explicit `select`/`insert`), async engine, Alembic
@@ -228,10 +265,14 @@ rotation can actually invalidate them.
 3. **Integration tests** — one per user story, driving the real scheduler, real bundled providers, and
    recorded fixtures, over a temporary SQLite file.
 4. **Unit tests** — resolution branches, retry classification, `subject_ref` validation, rating
-   normalization (both kinds), family mapping, cursor codec, config precedence.
+   normalization (both kinds), family mapping, cursor codec, config precedence, and now-playing
+   monitor state transitions with a frozen clock.
 5. **Benchmarks** (`tests/bench/`) — the budgets in
    [architecture.md](architecture.md), checked against a generated 1M-entry fixture database and
    the versioned [baseline](../tests/bench/baseline.json).
+6. **Now-playing contract tests** — recorded active, idle, malformed, and classified-failure
+   responses for every provider declaring the optional capability, plus authenticated WebSocket
+   snapshots. The timing assertion advances an injected clock; tests never sleep or open sockets.
 
 **Rationale**: Determinism is a project requirement, so a blocked-socket fixture and an
 injected clock are infrastructure, not test hygiene. Network access in a test is a failure, not a

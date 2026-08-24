@@ -190,7 +190,7 @@ def work_from_row(row: Row[Any], aggregate: WorkAggregate) -> Work:
         release_year=row.release_year,
         parent_work_id=row.parent_work_id,
         sequence_number=row.sequence_number,
-        image=_image(row.image_url),
+        image=image_path(row.image_url),
         entry_count=aggregate.entry_count,
         providers=aggregate.providers,
     )
@@ -259,7 +259,7 @@ def external_id_from_row(row: Row[Any]) -> ExternalId:
     )
 
 
-def _image(image_url: str | None) -> str | None:
+def image_path(image_url: str | None) -> str | None:
     """The local path for a work's artwork, never the platform URL itself ."""
     if not image_url:
         return None

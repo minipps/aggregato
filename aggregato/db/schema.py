@@ -476,6 +476,14 @@ provider_state = Table(
     Column("last_window_item_count", Integer),
     # Diagnostic only. A rejected observation must never become the next baseline.
     Column("last_failed_window_item_count", Integer),
+    # Latest parent-validated now-playing item. This state is transient: no playback history is
+    # retained, and the monitor owns its independent schedule below.
+    Column("now_playing_item", JSON_COL),
+    Column("now_playing_changed_at", TIMESTAMP),
+    Column("now_playing_checked_at", TIMESTAMP),
+    Column("now_playing_next_poll_at", TIMESTAMP),
+    Column("now_playing_failures", Integer, nullable=False, server_default=text("0")),
+    Column("now_playing_config_fingerprint", String(64)),
     # The provider's own opaque key/value store .
     Column("kv", JSON_COL, nullable=False, server_default=text("'{}'")),
     # The only thing the scheduler selects on.

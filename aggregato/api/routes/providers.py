@@ -235,7 +235,11 @@ async def update_provider_config(
 
     now = request_now(request)
     async with transaction(engine) as conn:
-        exists = (await conn.execute(select(providers.c.id).where(providers.c.id == id))).first()
+        exists = (
+            await conn.execute(
+                select(providers.c.id, providers.c.enabled).where(providers.c.id == id)
+            )
+        ).first()
         if exists is None:
             # Saving settings must not start network activity. Enable is a separate, deliberate
             # operation, preserving the fresh-install silence guarantee .
@@ -258,6 +262,7 @@ async def update_provider_config(
                     effective_interval_seconds=int(info.default_poll_interval.total_seconds()),
                     consecutive_failures=0,
                     retry_step=0,
+                    **_now_playing_state_values(info, enabled=False, now=now, fingerprint=None),
                     kv={},
                 )
             )
@@ -277,7 +282,20 @@ async def update_provider_config(
                         effective_interval_seconds=int(info.default_poll_interval.total_seconds()),
                         consecutive_failures=0,
                         retry_step=0,
+                        **_now_playing_state_values(
+                            info, enabled=bool(exists.enabled), now=now, fingerprint=None
+                        ),
                         kv={},
+                    )
+                )
+            else:
+                await conn.execute(
+                    update(provider_state)
+                    .where(provider_state.c.provider_id == id)
+                    .values(
+                        **_now_playing_state_values(
+                            info, enabled=bool(exists.enabled), now=now, fingerprint=None
+                        )
                     )
                 )
 
@@ -1265,6 +1283,26 @@ def _aware(value: datetime | None) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def _now_playing_state_values(
+    info: ProviderInfo,
+    *,
+    enabled: bool,
+    now: datetime,
+    fingerprint: str | None,
+) -> dict[str, object]:
+    """Reset transient presence atomically with a provider lifecycle write."""
+    return {
+        "now_playing_item": None,
+        "now_playing_changed_at": None,
+        "now_playing_checked_at": None,
+        "now_playing_next_poll_at": now
+        if enabled and Capability.NOW_PLAYING.value in info.capabilities
+        else None,
+        "now_playing_failures": 0,
+        "now_playing_config_fingerprint": fingerprint,
+    }
+
+
 async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> ProviderView:
     """Enable or disable, creating the provider's rows on first enable."""
     config: Config = request.app.state.config
@@ -1337,6 +1375,12 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
                         and Capability.POLL.value in info.capabilities
                         else None
                     ),
+                    **_now_playing_state_values(
+                        info,
+                        enabled=stored_enabled,
+                        now=now,
+                        fingerprint=None,
+                    ),
                     kv={},
                 )
             )
@@ -1369,7 +1413,13 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
                         and not misconfigured
                         and Capability.POLL.value in info.capabilities
                         else None
-                    )
+                    ),
+                    **_now_playing_state_values(
+                        info,
+                        enabled=stored_enabled,
+                        now=now,
+                        fingerprint=None,
+                    ),
                 )
             )
             if state_result.rowcount != 1:
@@ -1385,6 +1435,12 @@ async def _set_enabled(request: Request, provider_id: str, *, enabled: bool) -> 
                             and not misconfigured
                             and Capability.POLL.value in info.capabilities
                             else None
+                        ),
+                        **_now_playing_state_values(
+                            info,
+                            enabled=stored_enabled,
+                            now=now,
+                            fingerprint=None,
                         ),
                         kv={},
                     )

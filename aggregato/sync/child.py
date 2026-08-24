@@ -21,11 +21,11 @@ import logging
 import sys
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from aggregato.domain.enums import FetchMode
+from aggregato.domain.enums import Capability, FetchMode
 from aggregato.domain.models import Checkpoint, Cursor, RawRecord
-from aggregato.providers.base import ProviderContext
+from aggregato.providers.base import NowPlayingProvider, ProviderContext
 from aggregato.providers.errors import ProviderError, RateLimited
 from aggregato.providers.http import PoliteClient, PolitenessPolicy
 from aggregato.providers.registry import load_provider
@@ -37,6 +37,7 @@ from aggregato.sync.protocol import (
     ChildMessage,
     ErrorMessage,
     FailureMessage,
+    NowPlayingMessage,
     ResponseMessage,
     encode,
 )
@@ -83,6 +84,7 @@ async def run(
     provider_id: str,
     *,
     mode: FetchMode,
+    operation: Literal["sync", "now_playing"] = "sync",
     cursor: Cursor | None,
     config: dict[str, Any],
     secrets: dict[str, str],
@@ -97,6 +99,7 @@ async def run(
     Args:
         provider_id: Which provider to load. Only this one is imported.
         mode: ``incremental``, ``full``, or ``import``.
+        operation: ``sync`` for history ingestion, or ``now_playing`` for one transient result.
         cursor: Where to resume, or ``None`` to start over.
         config: The provider's validated configuration, as a plain dict from the parent.
         secrets: This provider's credentials only .
@@ -124,7 +127,18 @@ async def run(
     )
 
     try:
-        if mode is FetchMode.CHECK:
+        if operation not in {"sync", "now_playing"}:
+            raise ValueError(f"unknown child operation: {operation!r}")
+        if operation == "now_playing":
+            if Capability.NOW_PLAYING not in provider.capabilities:
+                raise ValueError(f"provider {provider_id!r} does not declare now_playing")
+            if not isinstance(provider, NowPlayingProvider):
+                raise ValueError(
+                    f"provider {provider_id!r} declares now_playing but has no now_playing method"
+                )
+            async with client:
+                emit(NowPlayingMessage(result=await provider.now_playing(ctx)))
+        elif mode is FetchMode.CHECK:
             async with client:
                 emit(CheckMessage(result=await provider.check(ctx)))
         elif replay_records is not None:
@@ -234,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         run(
             args.provider,
             mode=FetchMode(payload.get("mode", FetchMode.INCREMENTAL)),
+            operation=payload.get("operation", "sync"),
             cursor=Cursor(state=cursor_state) if cursor_state is not None else None,
             config=payload.get("config", {}),
             secrets=payload.get("secrets", {}),

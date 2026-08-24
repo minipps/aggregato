@@ -192,6 +192,10 @@ def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Respons
             return httpx.Response(
                 401, json=json.loads((directory / "credentials-invalid.json").read_text())
             )
+        if request.url.path.endswith("/playing-now"):
+            if path.name == "now-playing-rate-limited.json":
+                return httpx.Response(429, json=json.loads(path.read_text()))
+            return httpx.Response(200, json=json.loads(path.read_text()))
         max_ts = request.url.params.get("max_ts")
         name = (
             "page-1.json"
@@ -219,6 +223,8 @@ def _koito_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
             return httpx.Response(
                 401, json=json.loads((directory / "credentials-invalid.json").read_text())
             )
+        if request.url.path.endswith("/now-playing"):
+            return httpx.Response(200, json=json.loads(path.read_text()))
         to = request.url.params.get("to")
         name = (
             "page-1.json"

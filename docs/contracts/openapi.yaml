@@ -33,6 +33,9 @@ info:
       * `GET /sync/status` is the HTTP snapshot for live operations. The same snapshot is streamed by
         the authenticated websocket at `/api/v1/ws/sync`; websocket clients should reconnect and use
         the full snapshot as their source of truth.
+      * The authenticated websocket at `/api/v1/ws/now-playing` streams the current, source-specific
+        playback items. It sends a complete snapshot on connect and only sends later snapshots when
+        an item changes, appears, or disappears; stale items are omitted.
       * Retained provider payloads and ingest-failure payloads can contain private platform data.
         They are returned only through authenticated endpoints and follow the local retention and
         export rules described by the operator guide.
@@ -49,6 +52,17 @@ tags:
   - name: identity
   - name: providers
   - name: operations
+
+x-websocket-paths:
+  /api/v1/ws/now-playing:
+    description: >-
+      Authenticated, read-only playback stream. Bearer or session-cookie authentication is
+      accepted; unauthenticated handshakes close with code 1008. The server sends one complete
+      snapshot on connect and then polls durable state every 500 ms, sending only semantic changes.
+      Clients send no messages and should reconnect after disconnecting.
+    messages:
+      snapshot:
+        payload: { $ref: "#/components/schemas/NowPlayingSnapshot" }
 
 paths:
   /auth/session:
@@ -985,7 +999,7 @@ components:
           type: array
           items:
             type: string
-            enum: [poll, backfill, file_import, reports_deletes, has_ratings, has_reviews,
+            enum: [poll, backfill, file_import, now_playing, reports_deletes, has_ratings, has_reviews,
                    has_credits, scrapes, push]
         media_types: { type: array, items: { $ref: "#/components/schemas/MediaType" } }
         poll_interval_seconds: { type: integer }
@@ -1077,6 +1091,73 @@ components:
         runs:
           type: array
           items: { $ref: "#/components/schemas/SyncRun" }
+
+    NowPlayingWork:
+      type: object
+      required: [media_type, title, original_title, release_year, sequence_number, image, metadata]
+      properties:
+        media_type: { $ref: "#/components/schemas/MediaType" }
+        title: { type: string }
+        original_title: { type: string, nullable: true }
+        release_year: { type: integer, nullable: true }
+        sequence_number: { type: integer, nullable: true }
+        image: { type: string, nullable: true, description: Local cached image path, never a third-party URL }
+        metadata: { type: object, additionalProperties: true }
+
+    NowPlayingCredit:
+      type: object
+      required: [creator_name, creator_kind, role, role_raw, position]
+      properties:
+        creator_name: { type: string }
+        creator_kind: { type: string, enum: [person, group, studio, imprint, unknown] }
+        role: { $ref: "#/components/schemas/Role" }
+        role_raw: { type: string }
+        credited_as: { type: string, nullable: true }
+        position: { type: integer, minimum: 0 }
+
+    NowPlayingExternalId:
+      type: object
+      required: [namespace, value, confidence]
+      properties:
+        namespace: { type: string }
+        value: { type: string }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+
+    NowPlayingCreatorExternalId:
+      type: object
+      required: [creator_name, namespace, value, confidence]
+      properties:
+        creator_name: { type: string }
+        namespace: { type: string }
+        value: { type: string }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+
+    NowPlayingItem:
+      type: object
+      required: [provider_id, changed_at, work, credits, external_ids, creator_external_ids]
+      properties:
+        provider_id: { type: string }
+        changed_at: { type: string, format: date-time }
+        work: { $ref: "#/components/schemas/NowPlayingWork" }
+        credits:
+          type: array
+          items: { $ref: "#/components/schemas/NowPlayingCredit" }
+        external_ids:
+          type: array
+          items: { $ref: "#/components/schemas/NowPlayingExternalId" }
+        creator_external_ids:
+          type: array
+          items: { $ref: "#/components/schemas/NowPlayingCreatorExternalId" }
+
+    NowPlayingSnapshot:
+      type: object
+      required: [type, generated_at, items]
+      properties:
+        type: { type: string, enum: [snapshot] }
+        generated_at: { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NowPlayingItem" }
 
     ProviderCheckStatus: { type: string, enum: [pending, success, failure] }
     LastCheck:

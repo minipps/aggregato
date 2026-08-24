@@ -414,6 +414,57 @@ def test_0016_preserves_existing_sync_history_and_backfills_progress_defaults(
     assert failure == (7, json.dumps({"id": "payload"}), "retained failure")
 
 
+def test_0018_preserves_provider_state_and_initializes_now_playing_fields(
+    tmp_path: Path,
+) -> None:
+    """Current-item state is additive and leaves the existing scheduler state untouched."""
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0017")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO providers "
+            "(id, enabled, status, acquisition, schema_version, reviewed, config, created_at, "
+            "updated_at) VALUES ('legacy', 1, 'idle', 'api', 3, 1, ?, '2026-01-01', "
+            "'2026-01-02')",
+            (json.dumps({"username": "old"}),),
+        )
+        conn.execute(
+            "INSERT INTO provider_state "
+            "(provider_id, cursor, next_run_at, effective_interval_seconds, "
+            "consecutive_failures, retry_step, last_success_at, requested_mode, "
+            "requested_lineage_id, last_window_item_count, last_failed_window_item_count, kv) "
+            "VALUES ('legacy', ?, '2026-01-03', 3600, 2, 1, '2026-01-04', 'full', ?, 17, 4, ?)",
+            (
+                json.dumps({"cursor": "old"}),
+                "8" * 32,
+                json.dumps({"provider": "state"}),
+            ),
+        )
+        before = conn.execute(
+            "SELECT provider_id, cursor, next_run_at, effective_interval_seconds, "
+            "consecutive_failures, retry_step, last_success_at, requested_mode, "
+            "requested_lineage_id, last_window_item_count, last_failed_window_item_count, kv "
+            "FROM provider_state WHERE provider_id = 'legacy'"
+        ).fetchone()
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        after = conn.execute(
+            "SELECT provider_id, cursor, next_run_at, effective_interval_seconds, "
+            "consecutive_failures, retry_step, last_success_at, requested_mode, "
+            "requested_lineage_id, last_window_item_count, last_failed_window_item_count, kv, "
+            "now_playing_item, now_playing_changed_at, now_playing_checked_at, "
+            "now_playing_next_poll_at, now_playing_failures, now_playing_config_fingerprint "
+            "FROM provider_state WHERE provider_id = 'legacy'"
+        ).fetchone()
+
+    assert after[:12] == before
+    assert after[12:] == (None, None, None, None, 0, None)
+
+
 def test_0005_keeps_the_log_it_retypes(tmp_path: Path) -> None:
     """A season's entries must survive the rebuild.
 

@@ -32,6 +32,7 @@ from aggregato.sync.protocol import (
     CheckpointMessage,
     ErrorMessage,
     FailureMessage,
+    NowPlayingMessage,
     ProtocolViolation,
     decode,
     encode,
@@ -53,6 +54,18 @@ def test_a_check_result_round_trips() -> None:
     decoded = decode(encode(message))
     assert isinstance(decoded, CheckMessage)
     assert decoded.result.error_class is ErrorClass.AUTH
+
+
+def test_a_now_playing_result_round_trips_for_active_and_idle() -> None:
+    active = NowPlayingMessage(result={"work": {"media_type": "track", "title": "Current track"}})
+    decoded = decode(encode(active))
+    assert isinstance(decoded, NowPlayingMessage)
+    assert decoded.result is not None
+    assert decoded.result.work.title == "Current track"
+
+    idle = decode(encode(NowPlayingMessage(result=None)))
+    assert isinstance(idle, NowPlayingMessage)
+    assert idle.result is None
 
 
 def test_every_message_serializes_to_exactly_one_line() -> None:
@@ -220,8 +233,79 @@ FIXTURE_BROKEN = (
 ).resolve()
 
 
+def _write_now_playing_provider(provider_dir: Path, *, unexpected: bool = False) -> None:
+    package = provider_dir / "now_playing_fixture"
+    package.mkdir(parents=True)
+    source = f"""from aggregato.domain.enums import Capability, MediaType
+from aggregato.domain.models import NowPlayingItem, NormalizedWork
+from aggregato.providers.fixture import FixtureProvider
+
+
+class NowPlayingFixtureProvider(FixtureProvider):
+    id = "now_playing_fixture"
+    media_types = {{MediaType.TRACK}}
+    capabilities = {{Capability.NOW_PLAYING}}
+
+    async def now_playing(self, ctx):
+        if {unexpected!r}:
+            print('{{"type":"checkpoint","cursor":{{"state":{{}}}}}}', flush=True)
+        if ctx.state.get("idle") == "1":
+            return None
+        return NowPlayingItem(
+            work=NormalizedWork(media_type=MediaType.TRACK, title="Current track")
+        )
+
+
+provider = NowPlayingFixtureProvider()
+"""
+    (package / "__init__.py").write_text(source, encoding="utf-8")
+    (package / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "Now-playing fixture",
+                "media_types": ["track"],
+                "capabilities": ["now_playing"],
+                "acquisition": "export",
+                "schema_version": 1,
+                "default_poll_interval_seconds": 3600,
+                "config_schema": {"type": "object", "properties": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _emit(obj: dict[str, object]) -> str:
     return f"sys.stdout.write(json.dumps({obj!r}) + '\\n'); sys.stdout.flush()\n"
+
+
+async def test_now_playing_protocol_rejects_duplicate_results(tmp_path: Path) -> None:
+    script = (
+        HEADER
+        + _emit({"type": "now_playing", "result": None})
+        + _emit({"type": "now_playing", "result": None})
+    )
+    outcome = await _run_child(script, tmp_path)
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+    assert "more than one" in (outcome.error_message or "")
+
+
+def test_a_malformed_now_playing_result_is_rejected() -> None:
+    with pytest.raises(ProtocolViolation, match="invalid message"):
+        decode('{"type":"now_playing","result":{"work":{"media_type":"track"}}}')
+
+
+def test_run_request_serializes_now_playing_operation() -> None:
+    from aggregato.sync.runner import RunRequest
+
+    assert (
+        json.loads(RunRequest(provider_id="fixture", operation="now_playing").payload())[
+            "operation"
+        ]
+        == "now_playing"
+    )
 
 
 async def test_a_clean_run_reports_success(tmp_path: Path) -> None:
@@ -231,6 +315,81 @@ async def test_a_clean_run_reports_success(tmp_path: Path) -> None:
     assert outcome.status is RunStatus.SUCCESS
     assert outcome.cursor_after is not None
     assert outcome.cursor_after.state == {"page": 2}
+
+
+async def test_the_real_child_returns_active_and_idle_now_playing_results(tmp_path: Path) -> None:
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    provider_dir = tmp_path / "providers"
+    _write_now_playing_provider(provider_dir)
+    request = RunRequest(
+        provider_id="now_playing_fixture",
+        operation="now_playing",
+        provider_dir=provider_dir,
+        config={"path": str(FIXTURE_RECORDS)},
+        wall_clock_seconds=60,
+    )
+
+    active = await execute_run(request)
+    assert active.status is RunStatus.SUCCESS, active.error_message
+    assert active.records == []
+    assert active.failures == []
+    assert active.now_playing_result_received
+    assert active.now_playing is not None
+    assert active.now_playing.work.title == "Current track"
+
+    idle = await execute_run(
+        RunRequest(
+            provider_id="now_playing_fixture",
+            operation="now_playing",
+            provider_dir=provider_dir,
+            config={"path": str(FIXTURE_RECORDS)},
+            state={"idle": "1"},
+            wall_clock_seconds=60,
+        )
+    )
+    assert idle.status is RunStatus.SUCCESS, idle.error_message
+    assert idle.now_playing_result_received
+    assert idle.now_playing is None
+
+
+async def test_now_playing_requires_capability_and_protocol_method() -> None:
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="fixture",
+            operation="now_playing",
+            config={"path": str(FIXTURE_RECORDS)},
+            wall_clock_seconds=60,
+        )
+    )
+
+    assert outcome.status is RunStatus.FAILED
+    assert outcome.error_class is ErrorClass.INTERNAL
+    assert "does not declare now_playing" in (outcome.error_message or "")
+
+
+async def test_now_playing_rejects_unexpected_protocol_messages(tmp_path: Path) -> None:
+    from aggregato.sync.runner import RunRequest, execute_run
+
+    provider_dir = tmp_path / "providers"
+    _write_now_playing_provider(provider_dir, unexpected=True)
+    outcome = await execute_run(
+        RunRequest(
+            provider_id="now_playing_fixture",
+            operation="now_playing",
+            provider_dir=provider_dir,
+            config={"path": str(FIXTURE_RECORDS)},
+            wall_clock_seconds=60,
+        )
+    )
+
+    # The unexpected message follows a flushed checkpoint, so the supervision invariant keeps
+    # already-checkpointed work resumable as partial rather than discarding it as failed.
+    assert outcome.status is RunStatus.PARTIAL
+    assert outcome.error_class is ErrorClass.INTERNAL
+    assert "unexpected protocol message" in (outcome.error_message or "")
 
 
 async def test_a_hanging_child_is_killed_at_the_wall_clock(tmp_path: Path) -> None:

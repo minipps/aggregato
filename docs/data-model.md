@@ -26,7 +26,7 @@ change with a migration.
 | `role` | `author`, `illustrator`, `translator`, `editor`, `director`, `writer`, `composer`, `performer`, `featured_performer`, `voice`, `narrator`, `studio`, `publisher`, `developer`, `other` |
 | `review_format` | `plain`, `markdown`, `html` |
 | `scale_kind` | `linear`, `ordinal` |
-| `capability` | `poll`, `backfill`, `file_import`, `reports_deletes`, `has_ratings`, `has_reviews`, `has_credits`, `scrapes`, `push` (`push` reserved, ignored in v1) |
+| `capability` | `poll`, `backfill`, `file_import`, `now_playing`, `reports_deletes`, `has_ratings`, `has_reviews`, `has_credits`, `scrapes`, `push` (`push` reserved, ignored in v1) |
 | `acquisition` | `api`, `feed`, `export`, `scrape` |
 | `error_class` | `auth`, `rate_limit`, `transport`, `parse`, `structure_changed`, `blocked`, `internal` |
 | `run_status` | `running`, `success`, `partial`, `failed` |
@@ -276,6 +276,26 @@ only; file values are not copied here — ) · `last_error` json null · `create
 `last_window_item_count` int null (the sanity baseline — ) · `kv` json (the provider's own opaque
 `state` store, ).
 
+Providers declaring `now_playing` also use this same row for transient current playback. These
+columns are independent of the history schedule:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `now_playing_item` | json null | Latest parent-validated `NowPlayingItem`; never a log event |
+| `now_playing_changed_at` | ts null | Host time when the normalized item last changed |
+| `now_playing_checked_at` | ts null | Last completed now-playing attempt, used for freshness |
+| `now_playing_next_poll_at` | ts null | Independent next poll; `NULL` suspends polling |
+| `now_playing_failures` | int not null, default 0 | Position in the transient retry ladder |
+| `now_playing_config_fingerprint` | text(64) null | Hash of resolved non-secret settings and provider schema version |
+
+Success with an item or with no playback resets `now_playing_failures` and schedules the next check
+15 seconds later. Equal normalized items update `now_playing_checked_at` but preserve
+`now_playing_changed_at`. Any failed attempt clears the item immediately; transient failures use the
+1m/5m/15m/1h ladder and honour a longer `Retry-After`, while auth, blocked, and structure-change
+failures set `now_playing_next_poll_at` to `NULL` until configuration, schema, or enablement changes.
+The API omits an item whose checked time is older than 45 seconds. No now-playing state is copied to
+`provider_items`, `entries`, `opinions`, or `sync_runs`.
+
 `next_run_at` is the only thing the scheduler selects on: `WHERE enabled AND status <> 'disabled' AND
 next_run_at <= now()`. Index `(next_run_at)`.
 
@@ -327,6 +347,10 @@ describes . Contents: work titles (all forms) and opinion review text.
 
 Alembic, forward-only, applied automatically on startup with a pre-migration file copy of the SQLite
 database . Alembic owns its own version table; no hand-rolled `schema_migrations`.
+
+Revision `0018` adds the six nullable/current-state columns above (with a zero default for
+`now_playing_failures`) on top of upstream revision `0017`; it does not alter prior history or
+create a downgrade path.
 
 **There is no `user_id` column anywhere** . Adding one is a v2 schema break, accepted
 knowingly.
@@ -407,6 +431,22 @@ disabled ──enable──► idle ──due──► syncing ──ok──►
 `degraded` retries at the normal interval, never faster, and surfaces in the UI, `/health`, and the
 application logs . `auth`, `blocked`, and `structure_changed` skip the ladder
 entirely.
+
+### Current playback
+
+```
+absent ──active result──► current ──equal result──► current (checked_at refreshed)
+   ▲                         │  │
+   │                         │  ├─changed result──► current (changed_at replaced)
+   │                         │  ├─idle result─────► absent
+   │                         │  └─failed attempt──► absent
+   │                         └─checked_at older than 45s ──► omitted by API
+   └─configuration/schema/enablement change reactivates a suspended poll
+```
+
+The monitor runs at most three isolated now-playing children concurrently. It polls successful
+providers every 15 seconds, and the authenticated WebSocket reads durable rows every 500 ms and sends
+only semantic snapshot changes. Multiple providers reporting the same work remain separate items.
 
 ### Retry ladder
 

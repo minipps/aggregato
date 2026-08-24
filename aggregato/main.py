@@ -32,6 +32,7 @@ from aggregato.api.routes import (
     health,
     identity,
     images,
+    now_playing,
     opinions,
     providers,
     resolution,
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(identity.router, prefix=API_PREFIX)
     app.include_router(resolution.router, prefix=API_PREFIX)
     app.include_router(images.router, prefix=API_PREFIX)
+    app.include_router(now_playing.router, prefix=API_PREFIX)
     app.include_router(providers.router, prefix=API_PREFIX)
     app.include_router(runs.router, prefix=API_PREFIX)
     app.include_router(stats.router, prefix=API_PREFIX)

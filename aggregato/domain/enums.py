@@ -125,6 +125,7 @@ class Capability(StrEnum):
     POLL = "poll"
     BACKFILL = "backfill"
     FILE_IMPORT = "file_import"
+    NOW_PLAYING = "now_playing"
     REPORTS_DELETES = "reports_deletes"
     HAS_RATINGS = "has_ratings"
     HAS_REVIEWS = "has_reviews"

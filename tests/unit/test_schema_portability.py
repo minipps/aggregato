@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.schema import CreateIndex, CreateTable
 
-from aggregato.db.schema import entries, metadata, provider_items, providers
+from aggregato.db.schema import entries, metadata, provider_items, provider_state, providers
 
 DIALECTS: list[tuple[str, Dialect]] = [
     ("sqlite", sqlite.dialect()),
@@ -98,6 +98,29 @@ def test_provider_items_idempotency_key_exists() -> None:
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
     assert ("provider_id", "native_id") in keys
+
+
+def test_now_playing_state_columns_are_portable() -> None:
+    """The transient monitor state uses only the shared JSON and UTC timestamp types."""
+    expected = {
+        "now_playing_item": ("JSON", True),
+        "now_playing_changed_at": ("DateTime", True),
+        "now_playing_checked_at": ("DateTime", True),
+        "now_playing_next_poll_at": ("DateTime", True),
+        "now_playing_failures": ("Integer", False),
+        "now_playing_config_fingerprint": ("String", True),
+    }
+    for name, (type_name, nullable) in expected.items():
+        column = provider_state.c[name]
+        assert column.type.__class__.__name__ == type_name
+        assert column.nullable is nullable
+        for _, dialect in DIALECTS:
+            column.type.compile(dialect=dialect)
+    assert provider_state.c.now_playing_failures.server_default is not None
+    assert provider_state.c.now_playing_failures.server_default.arg.text == "0"
+    assert provider_state.c.now_playing_config_fingerprint.type.length == 64
+    for _, dialect in DIALECTS:
+        CreateTable(provider_state).compile(dialect=dialect)
 
 
 def test_no_user_id_column_anywhere() -> None:
