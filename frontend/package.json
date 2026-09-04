@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "vue": "^3.5.41",
-    "vue-router": "^5.2.0"
+    "vue-router": "^5.3.0"
   },
   "devDependencies": {
     "@tsconfig/node26": "^26.0.1",
