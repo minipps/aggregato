@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aggregato — every log, one archive you own</title>
+  <meta name="description" content="Aggregato pulls your films, series, books, anime and listens out of the platforms you log them on and keeps them in one self-hosted database you own." />
+  <meta name="color-scheme" content="dark" />
+  <meta property="og:title" content="Aggregato" />
+  <meta property="og:description" content="Every film, album, book and episode you've logged, in one self-hosted archive you own." />
+  <meta property="og:image" content="screenshots/stats.webp" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2311111b'/%3E%3Cpath d='M6 18V6m0 12h12M9 15V10m3 5V7m3 8v-3' fill='none' stroke='%2389b4fa' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <style>
+    /* Catppuccin Mocha, the same tokens as frontend/src/styles/main.css. No web fonts: a page for a
+       tool that makes zero outbound requests by default should not make any of its own either. */
+    :root {
+      color-scheme: dark;
+      --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+      --ctp-base: #1e1e2e;
+      --ctp-mantle: #181825;
+      --ctp-crust: #11111b;
+      --ctp-surface0: #313244;
+      --ctp-surface1: #45475a;
+      --ctp-surface2: #585b70;
+      --ctp-overlay1: #7f849c;
+      --ctp-subtext0: #a6adc8;
+      --ctp-subtext1: #bac2de;
+      --ctp-text: #cdd6f4;
+      --ctp-blue: #89b4fa;
+      --ctp-lavender: #b4befe;
+      --ctp-sapphire: #74c7ec;
+      --ctp-teal: #94e2d5;
+      --ctp-green: #a6e3a1;
+      --ctp-yellow: #f9e2af;
+      --ctp-peach: #fab387;
+      --ctp-red: #f38ba8;
+      --ctp-mauve: #cba6f7;
+      --ctp-pink: #f5c2e7;
+
+      --bg: var(--ctp-crust);
+      --text: var(--ctp-text);
+      --muted: var(--ctp-subtext0);
+      --accent: var(--ctp-blue);
+      --radius: 1rem;
+      --radius-xl: 1.5rem;
+      --wrap: min(100% - 2rem, 76rem);
+      --ease: cubic-bezier(0.16, 0.84, 0.44, 1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: 17px;
+      line-height: 1.6;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: clip;
+    }
+    img { max-width: 100%; height: auto; display: block; }
+    a { color: var(--accent); }
+    :focus-visible { outline: 2px solid var(--ctp-lavender); outline-offset: 3px; border-radius: 4px; }
+    .wrap { width: var(--wrap); margin-inline: auto; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ctp-overlay1);
+      margin: 0 0 1rem;
+    }
+    h1, h2, h3 { line-height: 1.05; letter-spacing: -0.035em; margin: 0; }
+    h2 { font-size: clamp(2.2rem, 5.5vw, 4.2rem); font-weight: 800; }
+    p { margin: 0 0 1em; }
+
+    /* ---------- Top bar ---------- */
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      background: color-mix(in srgb, var(--ctp-mantle) 82%, transparent);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--ctp-surface0);
+    }
+    .topbar nav { display: flex; align-items: center; gap: 0.5rem 1rem; padding: 0.7rem 0; flex-wrap: wrap; }
+    .brand {
+      font-weight: 750; color: var(--text); text-decoration: none; letter-spacing: -0.01em;
+      padding: 0.25rem 0.8rem; border-radius: 999px; background: var(--ctp-surface0);
+      transition: background 0.2s, color 0.2s;
+    }
+    .brand:hover { background: var(--accent); color: var(--ctp-crust); }
+    .topbar ul { display: flex; gap: 0.25rem; list-style: none; margin: 0 0 0 auto; padding: 0; font-size: 0.92rem; flex-wrap: wrap; }
+    .topbar ul a { display: block; padding: 0.25rem 0.8rem; border-radius: 999px; color: var(--muted); text-decoration: none; transition: background 0.2s, color 0.2s; }
+    .topbar ul a:hover { background: var(--ctp-surface0); color: var(--text); }
+    .topbar ul a.gh { color: var(--ctp-lavender); background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 650; }
+
+    /* ---------- Hero ---------- */
+    .hero { position: relative; overflow-x: clip; padding: clamp(3rem, 8vw, 6.5rem) 0 0; isolation: isolate; }
+    .hero::before {
+      /* Two soft washes in the accent hues; the only decoration that is not the product itself. */
+      content: ""; position: absolute; inset: -10rem 0 auto; height: 60rem; z-index: -1;
+      background:
+        radial-gradient(40rem 26rem at 18% 20%, color-mix(in srgb, var(--ctp-mauve) 20%, transparent), transparent 70%),
+        radial-gradient(44rem 30rem at 85% 45%, color-mix(in srgb, var(--ctp-blue) 18%, transparent), transparent 70%);
+    }
+    .hero h1 {
+      font-size: clamp(3rem, 10.5vw, 9rem);
+      font-weight: 850;
+      letter-spacing: -0.055em;
+      line-height: 0.9;
+      max-width: 12ch;
+    }
+    .hero h1 .grad {
+      background: linear-gradient(100deg, var(--ctp-blue), var(--ctp-mauve) 45%, var(--ctp-pink) 70%, var(--ctp-peach));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .hero-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 2rem 4rem; align-items: end; }
+    .hero .lede { font-size: clamp(1.1rem, 1.6vw, 1.3rem); color: var(--ctp-subtext1); max-width: 34ch; }
+    .cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.8rem 1.4rem; border-radius: 999px; font-weight: 700; text-decoration: none;
+      transition: transform 0.25s var(--ease), background 0.2s, box-shadow 0.25s;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn--primary { background: var(--accent); color: var(--ctp-crust); box-shadow: 0 8px 30px color-mix(in srgb, var(--accent) 35%, transparent); }
+    .btn--primary:hover { background: var(--ctp-lavender); }
+    .btn--ghost { color: var(--text); background: var(--ctp-surface0); }
+    .btn--ghost:hover { background: var(--ctp-surface1); }
+
+    /* The convergence: platform chips drift around a tilted screenshot of the archive. */
+    .stage { position: relative; margin-top: clamp(3rem, 7vw, 5rem); perspective: 1800px; }
+    .stage .shot {
+      transform: rotateX(18deg) rotateZ(-2deg) scale(0.94);
+      transform-origin: 50% 0;
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      border: 1px solid var(--ctp-surface1);
+      box-shadow: 0 40px 120px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(137, 180, 250, 0.08), 0 -20px 80px -30px color-mix(in srgb, var(--ctp-mauve) 50%, transparent);
+      transition: transform 1.2s var(--ease);
+      mask-image: linear-gradient(to bottom, #000 55%, transparent 98%);
+    }
+    .stage:hover .shot { transform: rotateX(8deg) rotateZ(-1deg) scale(0.97); }
+    .chips { list-style: none; margin: 0; padding: 0; }
+    .chip {
+      position: absolute; z-index: 2;
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.55rem 1rem 0.55rem 0.7rem;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--ctp-base) 88%, transparent);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--ctp-surface1);
+      font-weight: 650; font-size: 0.95rem; white-space: nowrap;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+      animation: bob 6s ease-in-out infinite;
+    }
+    .chip i { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--c); box-shadow: 0 0 12px var(--c); }
+    .chip small { color: var(--muted); font-weight: 500; font-family: var(--font-mono); font-size: 0.75rem; }
+    .chip:nth-child(1) { --c: var(--ctp-peach);    top: -4%;  left: 4%;  animation-delay: -1s; }
+    .chip:nth-child(2) { --c: var(--ctp-mauve);    top: 10%;  right: 2%; animation-delay: -3s; }
+    .chip:nth-child(3) { --c: var(--ctp-pink);     top: 34%;  left: -2%; animation-delay: -2s; }
+    .chip:nth-child(4) { --c: var(--ctp-green);    top: 44%;  right: -1%; animation-delay: -4s; }
+    .chip:nth-child(5) { --c: var(--ctp-teal);     top: 62%;  left: 10%; animation-delay: -5s; }
+    .chip:nth-child(6) { --c: var(--ctp-sapphire); top: 70%;  right: 12%; animation-delay: -0.5s; }
+    @keyframes bob { 50% { transform: translateY(-10px); } }
+
+    /* ---------- Marquee of mixed log entries ---------- */
+    .ticker { overflow: hidden; padding: 2rem 0; border-block: 1px solid var(--ctp-surface0); background: var(--ctp-mantle); display: grid; gap: 1rem; margin-top: -4rem; position: relative; z-index: 3; }
+    .ticker .row { display: flex; width: max-content; gap: 1rem; animation: slide 60s linear infinite; }
+    .ticker .row:nth-child(2) { animation-direction: reverse; animation-duration: 75s; }
+    .ticker:hover .row { animation-play-state: paused; }
+    @keyframes slide { to { transform: translateX(-50%); } }
+    .entry {
+      display: flex; align-items: baseline; gap: 0.6rem;
+      padding: 0.6rem 1.1rem; border-radius: var(--radius);
+      background: var(--ctp-base); border: 1px solid var(--ctp-surface0);
+      white-space: nowrap; font-size: 0.95rem;
+    }
+    .entry b { font-weight: 700; }
+    .entry span { color: var(--muted); font-size: 0.85rem; }
+    .entry em { font-style: normal; font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 0.1rem 0.5rem; border-radius: 999px; color: var(--ctp-crust); background: var(--c); }
+    .film { --c: var(--ctp-peach); } .track { --c: var(--ctp-mauve); } .book { --c: var(--ctp-green); } .anime { --c: var(--ctp-pink); } .tv { --c: var(--ctp-yellow); }
+
+    /* ---------- Zero ---------- */
+    .zero { padding: clamp(5rem, 12vw, 9rem) 0; }
+    .zero .wrap { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 1rem 4rem; }
+    .zero .big {
+      font-size: clamp(10rem, 32vw, 26rem); font-weight: 900; line-height: 0.75; letter-spacing: -0.08em;
+      color: transparent; -webkit-text-stroke: 2px var(--ctp-surface2);
+      background: linear-gradient(180deg, var(--ctp-green), transparent 85%); -webkit-background-clip: text; background-clip: text;
+    }
+    .zero h2 { max-width: 14ch; }
+    .zero p { color: var(--ctp-subtext1); font-size: 1.15rem; max-width: 46ch; margin-top: 1.25rem; }
+
+    /* ---------- Principles ---------- */
+    .principles { padding-bottom: clamp(4rem, 10vw, 8rem); }
+    .principles ol { list-style: none; margin: 3rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(12, 1fr); gap: 1.5rem; align-items: start; counter-reset: p; }
+    .principles li {
+      counter-increment: p; position: relative;
+      padding: 2rem; border-radius: var(--radius-xl);
+      background: linear-gradient(160deg, var(--ctp-base), var(--ctp-mantle));
+      border: 1px solid var(--ctp-surface0);
+      overflow: hidden;
+      transition: transform 0.4s var(--ease), border-color 0.3s;
+    }
+    .principles li:hover { transform: translateY(-4px) rotate(-0.4deg); border-color: var(--c); }
+    .principles li::before {
+      content: counter(p, decimal-leading-zero);
+      position: absolute; right: -0.5rem; bottom: -3.2rem;
+      font-size: 9rem; font-weight: 900; letter-spacing: -0.06em; line-height: 1;
+      color: color-mix(in srgb, var(--c) 10%, transparent);
+    }
+    .principles h3 { font-size: 1.5rem; margin-bottom: 0.75rem; color: var(--c); letter-spacing: -0.02em; }
+    .principles p { color: var(--ctp-subtext1); margin: 0; position: relative; }
+    .principles li:nth-child(1) { --c: var(--ctp-blue);  grid-column: 1 / span 7; }
+    .principles li:nth-child(2) { --c: var(--ctp-peach); grid-column: 8 / span 5; margin-top: 3rem; }
+    .principles li:nth-child(3) { --c: var(--ctp-mauve); grid-column: 2 / span 5; }
+    .principles li:nth-child(4) { --c: var(--ctp-green); grid-column: 7 / span 6; }
+    .principles li:nth-child(5) { --c: var(--ctp-pink);  grid-column: 3 / span 8; }
+
+    /* ---------- Tour: sticky stacked cards ---------- */
+    .tour { padding: clamp(4rem, 10vw, 7rem) 0; background: var(--ctp-mantle); border-block: 1px solid var(--ctp-surface0); }
+    .tour header { margin-bottom: 3rem; display: flex; justify-content: space-between; align-items: end; gap: 1rem 3rem; flex-wrap: wrap; }
+    .tour header p { color: var(--muted); max-width: 40ch; margin: 0; }
+    .stack { list-style: none; margin: 0; padding: 0; }
+    .card {
+      position: sticky; top: calc(5rem + var(--i) * 1.25rem);
+      display: grid; grid-template-columns: 1fr 1.9fr; gap: 2rem; align-items: center;
+      padding: clamp(1.25rem, 3vw, 2.25rem);
+      margin-bottom: 4rem;
+      border-radius: var(--radius-xl);
+      background: var(--ctp-base);
+      border: 1px solid var(--ctp-surface1);
+      box-shadow: 0 -12px 40px rgba(17, 17, 27, 0.8);
+    }
+    .card:last-child { margin-bottom: 0; }
+    .card .num { font-family: var(--font-mono); font-size: 0.8rem; color: var(--c); letter-spacing: 0.1em; }
+    .card h3 { font-size: clamp(1.6rem, 3vw, 2.4rem); margin: 0.5rem 0 1rem; }
+    .card p { color: var(--ctp-subtext1); }
+    .card ul { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.95rem; }
+    .card ul li::marker { color: var(--c); }
+    .card a.frame { display: block; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--ctp-surface0); box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.7); transition: transform 0.4s var(--ease); }
+    .card a.frame:hover { transform: scale(1.015); }
+    .card:nth-child(1) { --i: 0; --c: var(--ctp-blue); }
+    .card:nth-child(2) { --i: 1; --c: var(--ctp-peach); }
+    .card:nth-child(3) { --i: 2; --c: var(--ctp-mauve); }
+    .card:nth-child(4) { --i: 3; --c: var(--ctp-yellow); }
+    .card:nth-child(5) { --i: 4; --c: var(--ctp-green); }
+    .card:nth-child(6) { --i: 5; --c: var(--ctp-teal); }
+
+    /* ---------- Platforms ---------- */
+    .platforms { padding: clamp(4rem, 10vw, 8rem) 0; }
+    .platforms .intro { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem 4rem; align-items: end; margin-bottom: 3rem; }
+    .platforms .intro p { color: var(--muted); margin: 0; }
+    .plist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ctp-surface0); }
+    .plist li {
+      display: grid; grid-template-columns: minmax(0, 13rem) minmax(0, 1.3fr) minmax(0, 1.3fr) 7.5rem; gap: 0.5rem 2rem; align-items: baseline;
+      padding: 1.4rem 1rem; border-bottom: 1px solid var(--ctp-surface0);
+      transition: background 0.3s, padding 0.4s var(--ease);
+    }
+    .plist li:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--c) 12%, transparent), transparent 70%); padding-left: 1.75rem; }
+    .plist strong { font-size: clamp(1.4rem, 3vw, 2.1rem); letter-spacing: -0.03em; color: var(--c); }
+    .plist .what { color: var(--text); }
+    .plist .need { color: var(--muted); font-size: 0.92rem; }
+    .plist .when { font-family: var(--font-mono); font-size: 0.78rem; padding: 0.25rem 0.7rem; border-radius: 999px; background: var(--ctp-surface0); color: var(--ctp-subtext1); white-space: nowrap; justify-self: end; }
+    .plist li:nth-child(1) { --c: var(--ctp-teal); }
+    .plist li:nth-child(2) { --c: var(--ctp-mauve); }
+    .plist li:nth-child(3) { --c: var(--ctp-pink); }
+    .plist li:nth-child(4) { --c: var(--ctp-peach); }
+    .plist li:nth-child(5) { --c: var(--ctp-green); }
+    .plist li:nth-child(6) { --c: var(--ctp-yellow); }
+    .platforms .more { margin-top: 2rem; color: var(--muted); }
+
+    /* ---------- Setup ---------- */
+    .setup { padding: clamp(1rem, 3vw, 2rem) 0 clamp(4rem, 10vw, 8rem); position: relative; isolation: isolate; }
+    .setup::before {
+      content: ""; position: absolute; inset: 0; z-index: -1;
+      background: radial-gradient(50rem 30rem at 85% 35%, color-mix(in srgb, var(--ctp-green) 10%, transparent), transparent 70%);
+    }
+    .setup .cols { display: grid; grid-template-columns: 1fr 1.5fr; gap: 3rem 5rem; align-items: start; }
+    .setup .cols > * { min-width: 0; }
+    .setup .aside { position: sticky; top: 6rem; }
+    .setup .aside h2 { margin-bottom: 1.25rem; }
+    .setup .aside p { color: var(--ctp-subtext1); }
+    .needs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
+    .needs li { font-family: var(--font-mono); font-size: 0.8rem; padding: 0.35rem 0.8rem; border-radius: 999px; border: 1px solid var(--ctp-surface1); color: var(--ctp-subtext1); }
+    .steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+    .steps > li { counter-increment: s; position: relative; padding: 0 0 3rem 4.5rem; }
+    .steps > li::before {
+      content: counter(s); position: absolute; left: 0; top: -0.2rem;
+      width: 3rem; height: 3rem; display: grid; place-items: center;
+      border-radius: 50%; font-weight: 800; font-size: 1.2rem;
+      background: var(--ctp-base); color: var(--ctp-green); border: 2px solid var(--ctp-green);
+    }
+    .steps > li::after { content: ""; position: absolute; left: calc(1.5rem - 1px); top: 3.2rem; bottom: 0.4rem; width: 2px; background: linear-gradient(var(--ctp-surface1), transparent); }
+    .steps > li:last-child { padding-bottom: 0; }
+    .steps > li:last-child::after { display: none; }
+    .steps h3 { font-size: 1.45rem; margin-bottom: 0.6rem; }
+    .steps p { color: var(--ctp-subtext1); }
+    .steps ol { color: var(--ctp-subtext1); padding-left: 1.2rem; }
+    .steps ol li { margin-bottom: 0.4rem; }
+    .steps b { color: var(--text); }
+    .term {
+      position: relative; margin: 1rem 0 1.25rem;
+      border-radius: var(--radius); overflow: hidden;
+      background: var(--ctp-mantle); border: 1px solid var(--ctp-surface0);
+    }
+    .term .bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.6rem 0.9rem; background: var(--ctp-base); border-bottom: 1px solid var(--ctp-surface0); font-family: var(--font-mono); font-size: 0.75rem; color: var(--ctp-overlay1); }
+    .term .bar i { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--ctp-surface1); }
+    .term .bar i:nth-child(1) { background: var(--ctp-red); } .term .bar i:nth-child(2) { background: var(--ctp-yellow); } .term .bar i:nth-child(3) { background: var(--ctp-green); }
+    .term .bar span { margin-left: 0.5rem; }
+    .term pre { margin: 0; padding: 1.1rem 1.2rem; overflow-x: auto; font-family: var(--font-mono); font-size: 0.88rem; line-height: 1.7; }
+    .term .c { color: var(--ctp-overlay1); } .term .k { color: var(--ctp-mauve); } .term .s { color: var(--ctp-green); } .term .v { color: var(--ctp-peach); } .term .p { color: var(--ctp-blue); user-select: none; }
+    .copy {
+      position: absolute; top: 0.35rem; right: 0.5rem;
+      font: inherit; font-size: 0.75rem; font-weight: 650; cursor: pointer;
+      padding: 0.2rem 0.7rem; border-radius: 999px; border: 1px solid var(--ctp-surface1);
+      background: var(--ctp-surface0); color: var(--ctp-subtext1);
+      transition: background 0.2s, color 0.2s;
+    }
+    .copy:hover { background: var(--accent); color: var(--ctp-crust); }
+    .note { padding: 1rem 1.2rem; border-radius: var(--radius); background: color-mix(in srgb, var(--ctp-yellow) 9%, var(--ctp-base)); border: 1px solid color-mix(in srgb, var(--ctp-yellow) 25%, transparent); color: var(--ctp-subtext1); font-size: 0.95rem; }
+    .note b { color: var(--ctp-yellow); }
+    code { font-family: var(--font-mono); font-size: 0.88em; padding: 0.1em 0.4em; border-radius: 0.35rem; background: var(--ctp-surface0); color: var(--ctp-text); }
+    pre code { font-size: inherit; padding: 0; background: none; }
+
+    /* ---------- Footer ---------- */
+    footer { border-top: 1px solid var(--ctp-surface0); background: var(--ctp-mantle); padding: 4rem 0 3rem; }
+    footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2rem; align-items: end; }
+    footer .mark { font-size: clamp(3rem, 12vw, 8rem); font-weight: 900; letter-spacing: -0.06em; line-height: 0.8; color: var(--ctp-surface0); }
+    footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
+    footer ul a { color: var(--muted); text-decoration: none; }
+    footer ul a:hover { color: var(--text); text-decoration: underline; }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 60rem) {
+      .hero-grid, .zero .wrap, .platforms .intro, .setup .cols { grid-template-columns: 1fr; }
+      .setup .aside { position: static; }
+      .card { grid-template-columns: 1fr; position: static; margin-bottom: 1.5rem; }
+      .principles ol { grid-template-columns: 1fr; }
+      .principles li:nth-child(n) { grid-column: auto; margin-top: 0; }
+      .plist li { grid-template-columns: 1fr auto; }
+      .plist .what, .plist .need { grid-column: 1 / -1; }
+      .plist .when { grid-row: 1; grid-column: 2; }
+    }
+    @media (max-width: 40rem) {
+      body { font-size: 16px; }
+      .topbar ul li:not(:last-child) { display: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+      .chip { position: static; animation: none; font-size: 0.85rem; }
+      .stage .shot { transform: none; }
+      .ticker { margin-top: -2rem; }
+      .steps > li { padding-left: 3.75rem; }
+      .steps > li::before { width: 2.5rem; height: 2.5rem; font-size: 1rem; }
+      .steps > li::after { left: calc(1.25rem - 1px); top: 2.8rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      .ticker .row { flex-wrap: wrap; width: auto; padding-inline: 1rem; }
+      .ticker .row [aria-hidden] { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <nav class="wrap" aria-label="Primary">
+      <a class="brand" href="#top">Aggregato</a>
+      <ul>
+        <li><a href="#what">What it does</a></li>
+        <li><a href="#tour">Tour</a></li>
+        <li><a href="#platforms">Platforms</a></li>
+        <li><a href="#setup">Set it up</a></li>
+        <li><a class="gh" href="https://github.com/minipps/aggregato">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap">
+        <div class="hero-grid">
+          <div>
+            <p class="eyebrow">Self-hosted · single-user · archive-first</p>
+            <h1 id="hero-title">Every log. <span class="grad">One archive.</span></h1>
+          </div>
+          <div>
+            <p class="lede">Aggregato pulls your films, series, books, anime and listens out of the platforms you already log them on, and keeps them in one local database you own.</p>
+            <div class="cta">
+              <a class="btn btn--primary" href="#setup">Set it up in 3 commands</a>
+              <a class="btn btn--ghost" href="https://github.com/minipps/aggregato">View source</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="stage">
+          <ul class="chips" aria-label="Bundled platforms">
+            <li class="chip"><i></i>Letterboxd <small>films</small></li>
+            <li class="chip"><i></i>ListenBrainz <small>listens</small></li>
+            <li class="chip"><i></i>AniList <small>anime</small></li>
+            <li class="chip"><i></i>Goodreads <small>books</small></li>
+            <li class="chip"><i></i>Koito <small>listens</small></li>
+            <li class="chip"><i></i>Spotify <small>listens</small></li>
+          </ul>
+          <div class="shot">
+            <img src="screenshots/stats.webp" width="1920" height="1200" alt="Aggregato's Statistics screen: 1,950 logged entries, a year-long activity heatmap, and the most logged works and creators." />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="ticker" aria-label="Examples of entries from different platforms, side by side in one log">
+      <div class="row">
+        <div class="entry film"><em>film</em><b>Past Lives</b><span>★★★★★ · Letterboxd</span></div>
+        <div class="entry track"><em>track</em><b>Weird Fishes/Arpeggi</b><span>Radiohead · ListenBrainz</span></div>
+        <div class="entry book"><em>book</em><b>Piranesi</b><span>5 of 5 · Goodreads</span></div>
+        <div class="entry anime"><em>anime</em><b>Frieren</b><span>9.5 of 10 · AniList</span></div>
+        <div class="entry track"><em>track</em><b>Dreams</b><span>Fleetwood Mac · Koito</span></div>
+        <div class="entry film"><em>film</em><b>Perfect Days</b><span>★★★★½ · Letterboxd</span></div>
+        <div class="entry book"><em>book</em><b>Stoner</b><span>read · May 2019 · Goodreads</span></div>
+        <div class="entry track"><em>track</em><b>Nobody</b><span>Mitski · Spotify</span></div>
+        <div aria-hidden="true" class="entry film"><em>film</em><b>Past Lives</b><span>★★★★★ · Letterboxd</span></div>
+        <div aria-hidden="true" class="entry track"><em>track</em><b>Weird Fishes/Arpeggi</b><span>Radiohead · ListenBrainz</span></div>
+        <div aria-hidden="true" class="entry book"><em>book</em><b>Piranesi</b><span>5 of 5 · Goodreads</span></div>
+        <div aria-hidden="true" class="entry anime"><em>anime</em><b>Frieren</b><span>9.5 of 10 · AniList</span></div>
+        <div aria-hidden="true" class="entry track"><em>track</em><b>Dreams</b><span>Fleetwood Mac · Koito</span></div>
+        <div aria-hidden="true" class="entry film"><em>film</em><b>Perfect Days</b><span>★★★★½ · Letterboxd</span></div>
+        <div aria-hidden="true" class="entry book"><em>book</em><b>Stoner</b><span>read · May 2019 · Goodreads</span></div>
+        <div aria-hidden="true" class="entry track"><em>track</em><b>Nobody</b><span>Mitski · Spotify</span></div>
+      </div>
+      <div class="row">
+        <div class="entry anime"><em>anime</em><b>Mushishi</b><span>episode 12 · AniList</span></div>
+        <div class="entry film"><em>film</em><b>Stalker</b><span>★★★★★ · Letterboxd</span></div>
+        <div class="entry track"><em>track</em><b>Alright</b><span>Kendrick Lamar · ListenBrainz</span></div>
+        <div class="entry book"><em>book</em><b>The Dispossessed</b><span>5 of 5 · Goodreads</span></div>
+        <div class="entry track"><em>track</em><b>Lazuli</b><span>Beach House · Koito</span></div>
+        <div class="entry film"><em>film</em><b>Fallen Leaves</b><span>★★★★ · Letterboxd</span></div>
+        <div class="entry anime"><em>anime</em><b>Dungeon Meshi</b><span>finished · AniList</span></div>
+        <div class="entry track"><em>track</em><b>Roygbiv</b><span>Boards of Canada · Spotify</span></div>
+        <div aria-hidden="true" class="entry anime"><em>anime</em><b>Mushishi</b><span>episode 12 · AniList</span></div>
+        <div aria-hidden="true" class="entry film"><em>film</em><b>Stalker</b><span>★★★★★ · Letterboxd</span></div>
+        <div aria-hidden="true" class="entry track"><em>track</em><b>Alright</b><span>Kendrick Lamar · ListenBrainz</span></div>
+        <div aria-hidden="true" class="entry book"><em>book</em><b>The Dispossessed</b><span>5 of 5 · Goodreads</span></div>
+        <div aria-hidden="true" class="entry track"><em>track</em><b>Lazuli</b><span>Beach House · Koito</span></div>
+        <div aria-hidden="true" class="entry film"><em>film</em><b>Fallen Leaves</b><span>★★★★ · Letterboxd</span></div>
+        <div aria-hidden="true" class="entry anime"><em>anime</em><b>Dungeon Meshi</b><span>finished · AniList</span></div>
+        <div aria-hidden="true" class="entry track"><em>track</em><b>Roygbiv</b><span>Boards of Canada · Spotify</span></div>
+      </div>
+    </section>
+
+    <section class="zero" aria-labelledby="zero-title">
+      <div class="wrap">
+        <div class="big" aria-hidden="true">0</div>
+        <div>
+          <p class="eyebrow">Outbound requests on a fresh install</p>
+          <h2 id="zero-title">Nothing leaves until you say so.</h2>
+          <p>A new install talks to no one. Nothing is fetched until you enable a platform yourself, and Aggregato never enriches your data from third-party metadata sources: what you see is what your platforms said, unified and handed back to you.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="principles" id="what" aria-labelledby="what-title">
+      <div class="wrap">
+        <p class="eyebrow">What it does</p>
+        <h2 id="what-title">Your history, kept honest.</h2>
+        <ol>
+          <li>
+            <h3>One log across every platform</h3>
+            <p>A film you rated on Letterboxd and an album you scrobbled sit in the same timeline, the same search and the same statistics. Search covers titles and your own reviews.</p>
+          </li>
+          <li>
+            <h3>Ratings stay what you gave</h3>
+            <p>4 of 5 stars and 8 of 10 are stored as each platform said them, with their scale — not flattened into one invented number.</p>
+          </li>
+          <li>
+            <h3>No fabricated precision</h3>
+            <p>An entry logged as “May 2019” stays a month, not a guessed day.</p>
+          </li>
+          <li>
+            <h3>Archive-first</h3>
+            <p>Raw payloads are retained, so a fix can be replayed offline, and a platform that changes shape or goes away does not take your history with it. Deletes are tombstones; nothing is silently erased.</p>
+          </li>
+          <li>
+            <h3>Yours to take</h3>
+            <p>Download a full archive from Settings at any time. The database is a plain SQLite file in a directory you chose — or Postgres, if your library passes a million entries.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="tour" id="tour" aria-labelledby="tour-title">
+      <div class="wrap">
+        <header>
+          <div>
+            <p class="eyebrow">A tour</p>
+            <h2 id="tour-title">Six screens, one archive.</h2>
+          </div>
+          <p>Screenshots from a demo archive of about two thousand entries across five platforms. Select any of them to see it full size.</p>
+        </header>
+        <ol class="stack">
+          <li class="card">
+            <div>
+              <span class="num">01 · DASHBOARD</span>
+              <h3>Is everything working?</h3>
+              <p>The newest entries, and whether every provider is actually syncing. A provider in trouble is named, not reduced to a badge.</p>
+              <ul><li>Live sync activity</li><li>Per-provider health</li></ul>
+            </div>
+            <a class="frame" href="screenshots/dashboard.webp"><img src="screenshots/dashboard.webp" width="1920" height="1200" loading="lazy" alt="Dashboard: a sync health card reading “Every provider is healthy” with 5 providers and 0 needing attention, above a list of recent listens." /></a>
+          </li>
+          <li class="card">
+            <div>
+              <span class="num">02 · LOG</span>
+              <h3>Everything you logged, in order.</h3>
+              <p>Filter by media family, type, platform, kind of entry or date range. Films, anime episodes and books interleave in one timeline.</p>
+              <ul><li>Full-text search over titles and reviews</li><li>Stable, cursor-based paging</li></ul>
+            </div>
+            <a class="frame" href="screenshots/log.webp"><img src="screenshots/log.webp" width="1920" height="1200" loading="lazy" alt="Log screen filtered to the screen family: Perfect Days and Past Lives watched on Letterboxd, then episode progress for Frieren from AniList." /></a>
+          </li>
+          <li class="card">
+            <div>
+              <span class="num">03 · STATISTICS</span>
+              <h3>A year at a glance.</h3>
+              <p>An activity heatmap of every entry, plus your most logged works and creators — counted by what you logged, not by normalized scores.</p>
+              <ul><li>Per-year activity</li><li>Top works and creators</li></ul>
+            </div>
+            <a class="frame" href="screenshots/stats.webp"><img src="screenshots/stats.webp" width="1920" height="1200" loading="lazy" alt="Statistics screen with a calendar heatmap of 1,568 entries across 271 active days in 2026 and lists of most logged works and creators." /></a>
+          </li>
+          <li class="card">
+            <div>
+              <span class="num">04 · WORK</span>
+              <h3>Every opinion, on its own scale.</h3>
+              <p>A work shows each platform's rating as given, its 0–100 value within that scale only, your review, the credits in the platform's own words, and every identifier it came with.</p>
+              <ul><li>Merge and split duplicates</li><li>Identity links you can audit</li></ul>
+            </div>
+            <a class="frame" href="screenshots/work.webp"><img src="screenshots/work.webp" width="1920" height="1200" loading="lazy" alt="Work page for Past Lives (2023): a Letterboxd rating of 5 on the letterboxd-5-star-halves scale, normalized 100 of 100 within that scale only, liked, with Celine Song credited as director." /></a>
+          </li>
+          <li class="card">
+            <div>
+              <span class="num">05 · PROVIDERS</span>
+              <h3>Configure, check, sync.</h3>
+              <p>Each platform's form is generated from what it actually needs. Secrets are never shown again, and settings pinned by your config file say so.</p>
+              <ul><li>Check credentials without syncing</li><li>Sync now or full resync</li></ul>
+            </div>
+            <a class="frame" href="screenshots/providers.webp"><img src="screenshots/providers.webp" width="1920" height="1200" loading="lazy" alt="Providers screen: 6 installed, 5 enabled. AniList is idle, with its last success, next run, capabilities, current settings and buttons to disable, check, sync now or run a full resync." /></a>
+          </li>
+          <li class="card">
+            <div>
+              <span class="num">06 · SYNC HISTORY</span>
+              <h3>What ran, and what went wrong.</h3>
+              <p>Every attempt a provider made, grouped by the run it retried, with counts and the class of any error — so a broken platform looks broken instead of looking empty.</p>
+              <ul><li>Retries grouped by lineage</li><li>Ingest failures kept with their payloads</li></ul>
+            </div>
+            <a class="frame" href="screenshots/sync-history.webp"><img src="screenshots/sync-history.webp" width="1920" height="1200" loading="lazy" alt="Sync history for Letterboxd: a series of successful runs and one failed run with the error “transport: Connection reset by peer”." /></a>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="platforms" id="platforms" aria-labelledby="platforms-title">
+      <div class="wrap">
+        <div class="intro">
+          <div>
+            <p class="eyebrow">Bundled platforms</p>
+            <h2 id="platforms-title">Where it reads from.</h2>
+          </div>
+          <p>Each platform is a plugin that runs in its own short-lived process with no database access and a rate-limited HTTP client it cannot bypass. A crash or a hang in one never touches the others.</p>
+        </div>
+        <ul class="plist">
+          <li><strong>Koito</strong><span class="what">Listens</span><span class="need">Server URL and API key</span><span class="when">every 5 min</span></li>
+          <li><strong>ListenBrainz</strong><span class="what">Listens — or any compatible server, such as Maloja</span><span class="need">Username and user token</span><span class="when">every 15 min</span></li>
+          <li><strong>AniList</strong><span class="what">Anime and manga, with ratings</span><span class="need">Username, plus an OAuth token for private lists</span><span class="when">hourly</span></li>
+          <li><strong>Letterboxd</strong><span class="what">Films and series, with ratings and reviews</span><span class="need">Username or public RSS URL</span><span class="when">every 6 h</span></li>
+          <li><strong>Goodreads</strong><span class="what">Books, with ratings and reviews</span><span class="need">Public profile or RSS URL</span><span class="when">daily</span></li>
+          <li><strong>Spotify</strong><span class="what">Recently played tracks</span><span class="need">App client ID and secret, plus a refresh token</span><span class="when">every 15 min</span></li>
+        </ul>
+        <p class="more">Anything else is a plugin away — see <a href="https://github.com/minipps/aggregato/blob/main/docs/writing-a-provider.md">writing a provider</a>. No CAPTCHA or anti-bot circumvention, ever: a blocked platform is marked degraded and left alone.</p>
+      </div>
+    </section>
+
+    <section class="setup" id="setup" aria-labelledby="setup-title">
+      <div class="wrap cols">
+        <div class="aside">
+          <p class="eyebrow">Set it up</p>
+          <h2 id="setup-title">Running in three commands.</h2>
+          <p>One named volume. No database server, no message broker, nothing else to run. Images are published for amd64 and arm64.</p>
+          <ul class="needs" aria-label="Requirements">
+            <li>Docker</li>
+            <li>Docker Compose</li>
+            <li>≈ 5 minutes</li>
+          </ul>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <h3>Start it</h3>
+            <p>Clone the repository, generate a token and bring the stack up. Keep the token — it is your login.</p>
+            <div class="term">
+              <div class="bar"><i></i><i></i><i></i><span>shell</span></div>
+              <button class="copy" type="button" data-copy="git clone https://github.com/minipps/aggregato &amp;&amp; cd aggregato
+export AGGREGATO_TOKEN=$(openssl rand -hex 32)
+docker compose -f docker/compose.yml up -d">Copy</button>
+              <pre><code><span class="p">$ </span>git clone https://github.com/minipps/aggregato <span class="k">&amp;&amp;</span> cd aggregato
+<span class="p">$ </span><span class="k">export</span> <span class="v">AGGREGATO_TOKEN</span>=<span class="s">$(openssl rand -hex 32)</span>   <span class="c"># keep this</span>
+<span class="p">$ </span>docker compose -f docker/compose.yml up -d</code></pre>
+            </div>
+            <p>Set <code>AGGREGATO_FRONTEND_PORT</code> if port 8000 is already taken, and <code>AGGREGATO_VERSION</code> to pin a release.</p>
+          </li>
+          <li>
+            <h3>Sign in</h3>
+            <p>Open <a href="http://localhost:8000">localhost:8000</a> and paste the token. The frontend container serves the app and proxies <code>/api</code> to the backend, which runs both the API and the scheduler.</p>
+          </li>
+          <li>
+            <h3>Connect a platform</h3>
+            <p>On the <b>Providers</b> screen:</p>
+            <ol>
+              <li>Pick a platform, press <b>Configure provider</b>, fill in the form and <b>Save configuration</b>.</li>
+              <li>Press <b>Enable</b>, then <b>Sync now</b> for the first pass.</li>
+              <li>That's it. The scheduler polls at the platform's own interval from here on.</li>
+            </ol>
+            <p>Your log fills in as syncs land: <b>Log</b> is the timeline, <b>Statistics</b> the summaries, <b>Sync history</b> what ran, and <b>Settings</b> holds retention, storage and the archive download.</p>
+          </li>
+          <li>
+            <h3>Or keep it all in a file</h3>
+            <p>Anything the UI can set, YAML can too. Point <code>AGGREGATO_CONFIG</code> at it; <code>${VAR}</code> references resolve at read time and are never written back or returned by the API.</p>
+            <div class="term">
+              <div class="bar"><i></i><i></i><i></i><span>aggregato.yml</span></div>
+              <button class="copy" type="button" data-copy="providers:
+  listenbrainz:
+    username: your-name
+    token: ${LISTENBRAINZ_TOKEN}
+  letterboxd:
+    username: your-name
+  goodreads:
+    profile_url: https://www.goodreads.com/user/show/your-id">Copy</button>
+              <pre><code><span class="k">providers:</span>
+  <span class="k">listenbrainz:</span>
+    <span class="v">username:</span> your-name
+    <span class="v">token:</span> <span class="s">${LISTENBRAINZ_TOKEN}</span>
+  <span class="k">letterboxd:</span>
+    <span class="v">username:</span> your-name
+  <span class="k">goodreads:</span>
+    <span class="v">profile_url:</span> https://www.goodreads.com/user/show/your-id</code></pre>
+            </div>
+            <p>A broken block disables that one platform, never the rest. Want to let others browse? Set <code>AGGREGATO_READONLY_TOKEN</code> — the server refuses its writes, not just the buttons.</p>
+          </li>
+        </ol>
+      </div>
+      <div class="wrap">
+        <p class="note"><b>Your data lives in <code>/data</code></b> on the <code>aggregato-data</code> volume and survives restarts and upgrades. <code>docker compose down --volumes</code> deletes it — that is the one command to be careful with. For everything else, see the <a href="https://github.com/minipps/aggregato/blob/main/docs/operations.md">operations guide</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <div class="mark" aria-hidden="true">aggregato</div>
+      <nav aria-label="Project links">
+        <ul>
+          <li><a href="https://github.com/minipps/aggregato">Source on GitHub</a></li>
+          <li><a href="https://github.com/minipps/aggregato/releases">Releases</a></li>
+          <li><a href="https://github.com/minipps/aggregato/blob/main/docs/operations.md">Operations guide</a></li>
+          <li><a href="https://github.com/minipps/aggregato/blob/main/docs/writing-a-provider.md">Writing a provider</a></li>
+          <li><a href="https://github.com/minipps/aggregato/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        </ul>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    for (const button of document.querySelectorAll('.copy')) {
+      button.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(button.dataset.copy)
+          button.textContent = 'Copied'
+        } catch {
+          button.textContent = 'Select and copy'
+        }
+        setTimeout(() => (button.textContent = 'Copy'), 1600)
+      })
+    }
+  </script>
+</body>
+</html>
