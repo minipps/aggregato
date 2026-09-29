@@ -7,13 +7,41 @@ updates:
     directory: "/docker"
     schedule:
       interval: weekly
+    groups:
+      container-images:
+        patterns: ["*"]
+      container-image-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      workflow-actions:
+        patterns: ["*"]
+      workflow-action-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      frontend:
+        patterns: ["*"]
+      frontend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
