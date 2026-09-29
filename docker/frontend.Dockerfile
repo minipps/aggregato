@@ -3,7 +3,7 @@
 # Base images use exact version tags plus immutable manifest digests, matching the backend image.
 
 # --- Stage 1: build the SPA --------------------------------------------------------------------
-FROM node:26.7.0-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503 AS frontend-build
+FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS frontend-build
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
@@ -17,7 +17,7 @@ FROM frontend-build AS development
 EXPOSE 80
 
 # --- Stage 3: production static server ---------------------------------------------------------
-FROM nginx:1.31.4-alpine-slim@sha256:1870de6d59aafee152589b64404556d2535922cdd998e6dac1c4888c938ed8f9 AS production
+FROM nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7 AS production
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 
