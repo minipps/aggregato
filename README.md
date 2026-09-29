@@ -34,6 +34,7 @@ platform yourself.
 | **ListenBrainz** | listens (tracks) | username + user token | its API, every 15 minutes. Also works against a compatible server such as Maloja via `base_url` |
 | **AniList** | anime + manga, with ratings | username, plus an OAuth token for private lists | its API, hourly |
 | **Letterboxd** | films + series, with ratings and reviews | your username or public RSS URL | public feed, every 6 hours |
+| **Spotify** | recently played (tracks) | app client ID + secret, plus a refresh token with `user-read-recently-played` ([setup](docs/provider-acquisition-roadmap.md#spotify)) | its Web API, every 15 minutes |
 | **Goodreads** | books, with ratings and reviews | public profile/RSS URL | [public RSS feed](docs/goodreads.md), daily |
 
 Anything else is a plugin away: see [docs/writing-a-provider.md](docs/writing-a-provider.md).
@@ -49,7 +50,7 @@ treatment — a file the operator downloads, imported by hand.
 |---|---|---|
 | **MyAnimeList** | anime + manga, with scores | `api` — official v2 API, OAuth2 |
 | **Kitsu** (kitsu.app) | anime + manga, with ratings | `api` — public JSON:API |
-| **Last.fm** | scrobbles (tracks) + loved tracks | `api` — documented, API key. A third listens provider beside ListenBrainz and Koito |
+| **Last.fm** | scrobbles (tracks) + loved tracks | `api` — documented, API key. Another listens provider beside ListenBrainz, Koito, and Spotify |
 | **AOTY** | album ratings + reviews | unconfirmed — no official public API found; likely `export` or `scrape` |
 | **RateYourMusic** | album ratings + reviews | **no API** — `export` at best |
 | **Hardcover** | books, with ratings and reviews | `api` — public GraphQL, token |
@@ -113,6 +114,10 @@ providers:
   listenbrainz:
     username: your-name
     token: ${LISTENBRAINZ_TOKEN}
+  spotify:
+    client_id: your-app-client-id
+    client_secret: ${SPOTIFY_CLIENT_SECRET}
+    refresh_token: ${SPOTIFY_REFRESH_TOKEN}
   letterboxd:
     username: your-name
   goodreads:
