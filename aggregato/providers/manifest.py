@@ -207,6 +207,32 @@ _listenbrainz_token, _ = _string(
     format="password",
     min_length=1,
 )
+_spotify_client_id, _ = _string(
+    description="Client ID from the Spotify Developer Dashboard.",
+    required=True,
+    min_length=1,
+)
+_spotify_client_secret, _ = _string(
+    description=(
+        "Spotify app client secret. Use a ${ENV_VAR} reference to keep it out of the config file."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
+_spotify_refresh_token, _ = _string(
+    description=(
+        "Refresh token authorized with the user-read-recently-played scope. Spotify refresh "
+        "tokens expire after six months; reauthorize when one expires. Development Mode also "
+        "requires a Premium app owner and an allowlisted account. Use a ${ENV_VAR} reference "
+        "to keep it out of the config file."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
 
 
 BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
@@ -325,6 +351,22 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 "base_url": _listenbrainz_base,
             },
             required=["username", "token"],
+        ),
+    ),
+    "spotify": _manifest(
+        name="Spotify",
+        media_types=("track",),
+        capabilities=("poll", "backfill", "has_credits"),
+        acquisition="api",
+        schema_version=1,
+        interval_seconds=900,
+        config_schema=_object_schema(
+            {
+                "client_id": _spotify_client_id,
+                "client_secret": _spotify_client_secret,
+                "refresh_token": _spotify_refresh_token,
+            },
+            required=["client_id", "client_secret", "refresh_token"],
         ),
     ),
 }

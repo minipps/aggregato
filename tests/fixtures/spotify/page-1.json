@@ -1,0 +1,88 @@
+{
+  "href": "https://api.spotify.com/v1/me/player/recently-played?limit=50",
+  "limit": 50,
+  "next": "https://api.spotify.com/v1/me/player/recently-played?before=1740009600000&limit=50",
+  "cursors": {
+    "after": "1740009600000",
+    "before": "1740009600000"
+  },
+  "total": 2,
+  "items": [
+    {
+      "track": {
+        "album": {
+          "album_type": "album",
+          "total_tracks": 10,
+          "external_urls": {
+            "spotify": "https://open.spotify.com/album/album-fixture-1"
+          },
+          "href": "https://api.spotify.com/v1/albums/album-fixture-1",
+          "id": "album-fixture-1",
+          "images": [
+            {
+              "url": "https://i.scdn.co/image/fixture-cover-1",
+              "height": 300,
+              "width": 300
+            }
+          ],
+          "name": "Fixture Album",
+          "release_date": "2020-04-17",
+          "release_date_precision": "day",
+          "type": "album",
+          "uri": "spotify:album:album-fixture-1",
+          "artists": [
+            {
+              "external_urls": {
+                "spotify": "https://open.spotify.com/artist/artist-fixture-1"
+              },
+              "href": "https://api.spotify.com/v1/artists/artist-fixture-1",
+              "id": "artist-fixture-1",
+              "name": "Fixture Artist",
+              "type": "artist",
+              "uri": "spotify:artist:artist-fixture-1"
+            }
+          ]
+        },
+        "artists": [
+          {
+            "external_urls": {
+              "spotify": "https://open.spotify.com/artist/artist-fixture-1"
+            },
+            "href": "https://api.spotify.com/v1/artists/artist-fixture-1",
+            "id": "artist-fixture-1",
+            "name": "Fixture Artist",
+            "type": "artist",
+            "uri": "spotify:artist:artist-fixture-1"
+          }
+        ],
+        "disc_number": 1,
+        "duration_ms": 185000,
+        "explicit": false,
+        "external_ids": {
+          "isrc": "USAAA2000001",
+          "ean": "0000000000011",
+          "upc": "0000000000011"
+        },
+        "external_urls": {
+          "spotify": "https://open.spotify.com/track/track-fixture-1"
+        },
+        "href": "https://api.spotify.com/v1/tracks/track-fixture-1",
+        "id": "track-fixture-1",
+        "is_local": false,
+        "name": "Fixture Track One",
+        "track_number": 1,
+        "type": "track",
+        "uri": "spotify:track:track-fixture-1"
+      },
+      "played_at": "2025-02-20T00:00:00.000Z",
+      "context": {
+        "type": "playlist",
+        "href": "https://api.spotify.com/v1/playlists/playlist-fixture-1",
+        "external_urls": {
+          "spotify": "https://open.spotify.com/playlist/playlist-fixture-1"
+        },
+        "uri": "spotify:playlist:playlist-fixture-1"
+      }
+    }
+  ]
+}

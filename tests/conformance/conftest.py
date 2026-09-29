@@ -87,6 +87,18 @@ REGISTERED = [
         },
     ),
     Registration(
+        provider_id="spotify",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "client_id": "fixture-client",
+            "client_secret": "fixture-secret",
+            "refresh_token": "invalid"
+            if path.name == "credentials-invalid.json"
+            else "fixture-refresh",
+        },
+    ),
+    Registration(
         provider_id="koito",
         records="page-1.json",
         invalid="credentials-invalid.json",
@@ -163,6 +175,8 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
     http: AsyncClient
     if registration.provider_id == "listenbrainz":
         http = httpx.AsyncClient(transport=httpx.MockTransport(_listenbrainz_fixture(path)))
+    elif registration.provider_id == "spotify":
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_spotify_fixture(path)))
     elif registration.provider_id == "anilist":
         http = httpx.AsyncClient(transport=httpx.MockTransport(_anilist_fixture(path)))
     elif registration.provider_id == "koito":
@@ -204,6 +218,35 @@ def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Respons
             if max_ts == "1700000200"
             else "page-3-empty.json"
         )
+        return httpx.Response(200, json=json.loads((directory / name).read_text()))
+
+    return respond
+
+
+def _spotify_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    """Serve recorded Spotify token and recently-played responses without network access."""
+    directory = path.parent
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "accounts.spotify.com":
+            if path.name == "credentials-invalid.json":
+                return httpx.Response(400, json=json.loads(path.read_text()))
+            return httpx.Response(
+                200, json=json.loads((directory / "credentials-valid.json").read_text())
+            )
+
+        before = request.url.params.get("before")
+        name = (
+            "page-1.json"
+            if before is None
+            else "page-2.json"
+            if before == "1740009600000"
+            else "page-3-empty.json"
+            if before == "1740006000000"
+            else None
+        )
+        if name is None:
+            raise AssertionError(f"unexpected Spotify before cursor: {before}")
         return httpx.Response(200, json=json.loads((directory / name).read_text()))
 
     return respond
