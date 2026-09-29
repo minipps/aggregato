@@ -1,0 +1,75 @@
+{
+  "href": "https://api.spotify.com/v1/me/player/recently-played?before=1740009600000&limit=50",
+  "limit": 50,
+  "next": null,
+  "cursors": {
+    "after": "1740006000000",
+    "before": "1740006000000"
+  },
+  "total": 2,
+  "items": [
+    {
+      "track": {
+        "album": {
+          "album_type": "single",
+          "total_tracks": 1,
+          "external_urls": {
+            "spotify": "https://open.spotify.com/album/album-fixture-2"
+          },
+          "href": "https://api.spotify.com/v1/albums/album-fixture-2",
+          "id": "album-fixture-2",
+          "images": [],
+          "name": "Fixture Single",
+          "release_date": "2021",
+          "release_date_precision": "year",
+          "type": "album",
+          "uri": "spotify:album:album-fixture-2",
+          "artists": [
+            {
+              "external_urls": {
+                "spotify": "https://open.spotify.com/artist/artist-fixture-2"
+              },
+              "href": "https://api.spotify.com/v1/artists/artist-fixture-2",
+              "id": "artist-fixture-2",
+              "name": "Second Fixture Artist",
+              "type": "artist",
+              "uri": "spotify:artist:artist-fixture-2"
+            }
+          ]
+        },
+        "artists": [
+          {
+            "external_urls": {
+              "spotify": "https://open.spotify.com/artist/artist-fixture-2"
+            },
+            "href": "https://api.spotify.com/v1/artists/artist-fixture-2",
+            "id": "artist-fixture-2",
+            "name": "Second Fixture Artist",
+            "type": "artist",
+            "uri": "spotify:artist:artist-fixture-2"
+          }
+        ],
+        "disc_number": 1,
+        "duration_ms": 200000,
+        "explicit": false,
+        "external_ids": {
+          "isrc": "USAAA2100002",
+          "ean": "0000000000028",
+          "upc": "0000000000028"
+        },
+        "external_urls": {
+          "spotify": "https://open.spotify.com/track/track-fixture-2"
+        },
+        "href": "https://api.spotify.com/v1/tracks/track-fixture-2",
+        "id": "track-fixture-2",
+        "is_local": false,
+        "name": "Fixture Track Two",
+        "track_number": 1,
+        "type": "track",
+        "uri": "spotify:track:track-fixture-2"
+      },
+      "played_at": "2025-02-19T23:00:00.000Z",
+      "context": null
+    }
+  ]
+}

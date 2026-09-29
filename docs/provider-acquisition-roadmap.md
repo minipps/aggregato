@@ -4,6 +4,16 @@ Phase 7 keeps one stable provider id per service as its acquisition surface impr
 automatic synchronization therefore normalize into the same `provider_item` identity space rather
 than creating a replacement provider or duplicating an archive.
 
+## Spotify
+
+The provider uses Spotify's user-authorized Web API, `GET /v1/me/player/recently-played`, with
+`user-read-recently-played`. Its 50-item pages have time cursors, so polling and backfill use the
+same endpoint. Configure the app ID, secret, and refresh token from Spotify's
+[Authorization Code flow](https://developer.spotify.com/documentation/web-api/tutorials/code-flow);
+the refresh token must be authorized with that scope. Development Mode requires a Premium app
+owner and an allowlisted user. The provider records tracks only; Spotify's separate lifetime export
+is outside this API provider.
+
 ## Goodreads
 
 Goodreads has no supported personal-library API. The provider uses the public

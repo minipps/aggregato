@@ -1,0 +1,11 @@
+{
+  "href": "https://api.spotify.com/v1/me/player/recently-played?before=1740006000000&limit=50",
+  "limit": 50,
+  "next": null,
+  "cursors": {
+    "after": null,
+    "before": null
+  },
+  "total": 2,
+  "items": []
+}
