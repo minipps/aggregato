@@ -208,7 +208,7 @@ _listenbrainz_token, _ = _string(
     min_length=1,
 )
 _spotify_client_id, _ = _string(
-    description="Spotify app client ID from the Spotify Developer Dashboard.",
+    description="Client ID from the Spotify Developer Dashboard.",
     required=True,
     min_length=1,
 )
@@ -223,10 +223,10 @@ _spotify_client_secret, _ = _string(
 )
 _spotify_refresh_token, _ = _string(
     description=(
-        "Refresh token authorized with user-read-recently-played. Spotify refresh tokens expire "
-        "after six months; reauthorize when one expires. Development Mode requires a Premium "
-        "app owner and an allowlisted user. Use a ${ENV_VAR} reference to keep it out of the "
-        "config file."
+        "Refresh token authorized with the user-read-recently-played scope. Spotify refresh "
+        "tokens expire after six months; reauthorize when one expires. Development Mode also "
+        "requires a Premium app owner and an allowlisted account. Use a ${ENV_VAR} reference "
+        "to keep it out of the config file."
     ),
     required=True,
     secret=True,
