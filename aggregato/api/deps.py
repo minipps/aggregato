@@ -5,14 +5,14 @@ By default a request carries either ``Authorization: Bearer <api.token>`` or the
 ``api.allow_unauthenticated_readonly`` is enabled, credential-free GET and HEAD requests are
 allowed as read-only requests. The token still never appears in a URL or page source.
 
-Design decisions worth stating once:
+Authentication details:
 
-* **Constant-time token comparison.** ``hmac.compare_digest`` on bytes. A ``==`` on a secret leaks
-  length and prefix through timing, and this is the only credential in the system .
+* **Constant-time token comparison.** ``hmac.compare_digest`` on bytes avoids timing differences
+  from comparing secret values with ``==``.
 * **Sessions live in the database** (``sessions``), not in a self-contained signed cookie, so that
   rotating ``api.token`` can actually reach them: every row stores the ``token_fingerprint`` it was
   issued under, and a lookup requires it to equal the fingerprint of the *current* token. Rotation
-  therefore invalidates every session, as  requires. Expiry is checked in SQL for the same
+  therefore invalidates every session. Expiry is checked in SQL for the same
   reason it is stored in SQL — and because SQLite hands back naive datetimes.
 * **CSRF: double-submit, with the token derived by HMAC rather than stored.**
   ``POST /auth/session`` sets a second, JS-readable cookie holding
@@ -43,9 +43,9 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import timedelta
 from hashlib import sha256
-from typing import Final, Literal, cast
+from typing import Annotated, Final, Literal, cast
 
-from fastapi import FastAPI, WebSocketException
+from fastapi import Depends, FastAPI, WebSocketException
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from starlette.requests import HTTPConnection, Request
@@ -68,6 +68,7 @@ __all__ = [
     "register_auth",
     "require_auth",
     "require_bearer",
+    "require_operator",
     "require_websocket_auth",
     "token_fingerprint",
 ]
@@ -81,7 +82,7 @@ CSRF_COOKIE: Final = "aggregato_csrf"
 CSRF_HEADER: Final = "X-CSRF-Token"
 
 SESSION_TTL: Final = timedelta(days=14)
-"""How long a cookie session lasts. One user, one token: there is no refresh flow ."""
+"""Lifetime of a database-backed cookie session."""
 
 MAX_ACTIVE_SESSIONS: Final = 100
 """Bound the number of live sessions a leaked token can mint before cleanup runs."""
@@ -97,7 +98,7 @@ _UNAUTHORIZED: Final = 401
 _FORBIDDEN: Final = 403
 
 # A bearer token is not attached automatically by a browser, so these need no CSRF token when
-# presented with one; only cookie authentication does .
+# presented with one; only cookie authentication does.
 _UNSAFE_METHODS: Final = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _SESSION_PATHS: Final = frozenset({"/api/v1/auth/session", "/auth/session"})
@@ -136,7 +137,7 @@ def register_auth(
     """Attach the config and engine that :func:`require_auth` and the routes read.
 
     ``main.py`` must additionally construct the app as
-    ``FastAPI(dependencies=[Depends(require_auth)])`` so no route can forget the check .
+    ``FastAPI(dependencies=[Depends(require_auth)])`` so no route can forget the check.
 
     Args:
         app: The application to mutate.
@@ -240,6 +241,20 @@ async def require_bearer(request: Request) -> None:
         _record_auth_failure(request)
         raise _unauthorized("POST /auth/session requires the API token as a bearer credential.")
     _clear_auth_failures(request)
+
+
+async def require_operator(
+    context: Annotated[AuthContext, Depends(require_auth)],
+) -> AuthContext:
+    """Require the full operator credential for a route, including read-only HTTP methods."""
+    if context.readonly:
+        raise ProblemError(
+            status=_FORBIDDEN,
+            title="Forbidden",
+            detail="This operation requires operator access.",
+            type=error_type("operator-required"),
+        )
+    return context
 
 
 async def require_websocket_auth(websocket: WebSocket) -> AuthContext:
@@ -487,7 +502,7 @@ async def _valid_session(connection: HTTPConnection, cookie: str) -> tuple[str, 
         raise _unauthorized("The session cookie is not valid.")
     credential, readonly = matched
     # Expiry and fingerprint are both filters, not fetched values: SQLite returns naive datetimes,
-    # and the fingerprint predicate is what makes token rotation invalidate the session .
+    # and the fingerprint predicate is what makes token rotation invalidate the session.
     async with transaction(_engine(connection)) as conn:
         found = await conn.scalar(
             select(sessions.c.id).where(

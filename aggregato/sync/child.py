@@ -1,12 +1,8 @@
-"""The child entrypoint: fetch and normalize, write JSON lines, exit (research.md ).
+"""The child entrypoint: load one provider, run it, and emit JSON lines.
 
-This process imports **one** provider and has no database engine. That is not a convention the
-review enforces — it is why the process exists. Three separate requirements collapse into it:
-
-* hang and crash containment , because the parent can kill a process;
-* no database handle and no other provider's secrets in plugin code , because neither is
-  reachable from here;
-* a per-run wall-clock timeout that actually works (§6.7).
+The child has no database engine. The parent supervises it with a per-run wall-clock timeout,
+validates its messages, and performs all writes. This contains child crashes and hangs, but it is
+not an OS sandbox for provider code.
 
 Nothing here writes to the database. Every message goes to **stdout**, one line each; logging
 goes to **stderr**, so a provider that prints does not corrupt the protocol stream.
@@ -46,21 +42,12 @@ log = logging.getLogger("aggregato.sync.child")
 
 
 def _response(response: Any) -> None:
-    """Emit a bounded response snapshot; raw provider responses are diagnostic data."""
-    body = response.content[: 256 * 1024].decode(response.encoding or "utf-8", errors="replace")
+    """Emit only response metadata; bodies and headers can carry credentials or private data."""
     emit(
         ResponseMessage(
             method=response.request.method,
-            # Query strings may carry provider credentials; diagnostics keep the endpoint,
-            # not secrets.
-            url=str(response.request.url.copy_with(query=None)),
+            url=str(response.request.url),
             status=response.status_code,
-            headers={
-                key: value
-                for key, value in response.headers.items()
-                if key.lower() not in {"set-cookie", "authorization"}
-            },
-            body=body,
         )
     )
 
@@ -74,7 +61,7 @@ def emit(message: ChildMessage) -> None:
     """Write one protocol message to stdout and flush.
 
     Flushing per message matters: the parent streams these, and a buffered checkpoint that never
-    arrives before a crash is a checkpoint that did not happen .
+    arrives before a crash is a checkpoint that did not happen.
     """
     sys.stdout.write(encode(message))
     sys.stdout.flush()
@@ -102,8 +89,8 @@ async def run(
         operation: ``sync`` for history ingestion, or ``now_playing`` for one transient result.
         cursor: Where to resume, or ``None`` to start over.
         config: The provider's validated configuration, as a plain dict from the parent.
-        secrets: This provider's credentials only .
-        state: The provider's own opaque key/value store.
+        secrets: This provider's credentials only.
+        state: Per-run scratch mapping. Changes are not returned or persisted by the protocol.
         import_path: Set only in ``import`` mode.
 
     Returns:
@@ -180,7 +167,7 @@ async def run(
 def _emit_normalized(provider: Any, record: RawRecord) -> None:
     """Normalize one record, or report it as a single failure and keep going.
 
-    A record that will not convert costs its own row, not the run . The exception is caught
+    A record that will not convert costs its own row, not the run. The exception is caught
     here rather than in the loop above so that a provider raising a *ProviderError* from
     ``normalize`` still ends the run — that signals a platform-level problem, not a bad record.
     """

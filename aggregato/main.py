@@ -1,13 +1,8 @@
-"""The API process: app factory, static assets, and the startup migration hook.
+"""The API process: app factory, HTTP routes, static assets, and startup migrations.
 
-Serves the public HTTP contract under ``/api/v1`` and the built SPA at everything else. The SPA
-consumes only that contract  — which an SPA makes structural rather than disciplinary, since
-it physically cannot read the database or reach a private endpoint.
-
-This process does **not** run syncs. The scheduler is a separate process (``python -m
-aggregato.worker``), so a provider that hangs or crashes cannot affect browsing . The
-import-linter contract ``aggregato.api -> aggregato.sync`` keeps this module out of the scheduler's
-business.
+The API serves the contract under ``/api/v1`` and the built SPA on other paths. Authentication and
+authorization are enforced by the server. Syncs run in the separate worker process; import-linter
+forbids ``aggregato.api`` from importing ``aggregato.sync``.
 """
 
 from __future__ import annotations
@@ -16,8 +11,9 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -63,8 +59,8 @@ def create_app(
     Args:
         config: Loaded configuration, or ``None`` to load it from the environment. Injectable so a
             test builds an app without touching the real environment.
-        run_migrations: Whether to apply migrations on startup . Tests that build their
-            own schema pass ``False``.
+        run_migrations: Whether to apply migrations during application startup. Tests that build
+            their own schema pass ``False``.
         clock: Injectable UTC time source for request-side timestamps.
 
     Returns:
@@ -73,8 +69,7 @@ def create_app(
     Raises:
         aggregato.config.MissingTokenError: ``api.token`` is unset. Startup fails rather than
             serving; it remains required for protected requests even when public read-only access
-            is enabled. This is the ONLY fatal configuration error — a broken *provider* leaves
-            the service running.
+            is enabled. Invalid provider settings are isolated and do not prevent startup.
     """
     settings = config or load_config()
     engine = create_engine(settings.database_url)
@@ -82,13 +77,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if run_migrations:
-            # In a THREAD, not inline. Alembic's env.py drives its own `asyncio.run`, and lifespan
-            # already runs inside a loop — calling it directly raises "asyncio.run() cannot be
-            # called from a running event loop", which is how this was broken until a smoke test
-            # started the real app. The thread has no loop of its own, so env.py works unchanged.
+            # Alembic's environment calls asyncio.run, so run it in a thread rather than inside
+            # lifespan's active event loop.
             #
-            # Still before anything is served, which is what keeps the pre-migration backup honest:
-            # no writer is running yet .
+            # Apply migrations before this API process serves requests. The worker also migrates
+            # under its own startup lock, so either process may perform the upgrade first.
             await asyncio.to_thread(upgrade_to_head, settings.database_url)
         yield
         await engine.dispose()
@@ -97,8 +90,7 @@ def create_app(
         title="Aggregato",
         version="1.0.0",
         lifespan=lifespan,
-        # App-wide, not per route. No endpoint can become reachable by someone forgetting to
-        # declare a dependency .
+        # Apply authentication to every route by default; public routes opt out explicitly.
         dependencies=[Depends(require_auth)],
         docs_url=f"{API_PREFIX}/docs",
         openapi_url=f"{API_PREFIX}/openapi.json",
@@ -155,10 +147,10 @@ def _mount_cors(app: FastAPI, settings: Config) -> None:
     """Answer cross-origin preflights, for the origins the operator listed and no others.
 
     Nothing is mounted unless ``api.cors_origins`` is set, and that is the normal case: the API
-    serves the SPA from its own origin and Vite proxies ``/api`` in development, so a browser never
-    preflights either one. ``OPTIONS`` on an API path stays a 405 there, which is the honest answer
-    — no route declares the method, and a 200 carrying no ``Access-Control-Allow-Origin`` would not
-    make a real preflight pass anyway.
+    serves the SPA from its own origin and Vite proxies ``/api`` in development, so a browser does
+    not preflight either setup. Without this middleware, ``OPTIONS`` on an API path returns 405
+    because no route declares that method; a 200 without ``Access-Control-Allow-Origin`` would still
+    fail the browser's preflight check.
 
     Mounted as middleware rather than per-route handlers because a preflight arrives *without*
     credentials — browsers strip ``Authorization`` and cookies from it — so it has to be answered
@@ -191,23 +183,39 @@ def _mount_frontend(app: FastAPI, settings: Config) -> None:
     a path only the SPA router knows, so anything that is not under ``/api`` and not a real file
     falls back to ``index.html``.
     """
-    static_dir = settings.static_dir
-    if static_dir is None or not static_dir.is_dir():
-        log.info("no built frontend at %s; serving the API only", static_dir)
+    configured_dir = settings.static_dir
+    if configured_dir is None or not configured_dir.is_dir():
+        log.info("no built frontend at %s; serving the API only", configured_dir)
         return
+    static_dir = configured_dir.resolve()
 
     assets = static_dir / "assets"
-    if assets.is_dir():
+    if _contained_path(static_dir, assets) is not None and assets.is_dir():
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
-
-    index = static_dir / "index.html"
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str) -> FileResponse:
-        candidate = static_dir / path
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        candidate = _contained_path(static_dir, static_dir / path)
+        if candidate is None:
+            raise HTTPException(status_code=404)
         if path and candidate.is_file():
             return FileResponse(candidate)
+        index = _contained_path(static_dir, static_dir / "index.html")
+        if index is None:
+            raise HTTPException(status_code=404)
         return FileResponse(index)
+
+
+def _contained_path(root: Path, candidate: Path) -> Path | None:
+    """Resolve a configured asset only when it remains inside the frontend root."""
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return resolved
 
 
 def __getattr__(name: str) -> object:

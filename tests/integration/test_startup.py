@@ -74,19 +74,14 @@ async def test_starting_twice_is_harmless(data_dir: Path) -> None:
     assert (data_dir / "aggregato.db").is_file()
 
 
-async def test_a_second_startup_leaves_a_pre_migration_backup(data_dir: Path) -> None:
-    """'s safety net: a failed migration must never leave no way back."""
+async def test_a_restart_at_head_does_not_create_a_backup(data_dir: Path) -> None:
     config = config_for(data_dir)
-    app = create_app(config)
-    async with app.router.lifespan_context(app):
-        pass
-
-    app = create_app(config)
-    async with app.router.lifespan_context(app):
-        pass
-
-    backups = await asyncio.to_thread(lambda: list(data_dir.glob("aggregato.db.*")))
-    assert backups, "no pre-migration backup was taken for an existing database"
+    for _ in range(2):
+        app = create_app(config)
+        async with app.router.lifespan_context(app):
+            pass
+    backups = await asyncio.to_thread(lambda: list(data_dir.glob("aggregato.db.*.bak")))
+    assert backups == []
 
 
 async def test_the_served_api_answers_after_a_cold_start(data_dir: Path) -> None:

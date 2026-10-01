@@ -1,17 +1,4 @@
-"""The served schema against contracts/openapi.yaml .
-
-``contracts/openapi.yaml`` is the contract the web UI consumes and the only one , so it is
-normative rather than documentation. This harness compares what the app actually serves against it
-and fails on drift in either direction:
-
-* a path or method in the contract that the app does not serve — the UI would 404;
-* a path the app serves that the contract does not describe — an undocumented endpoint, which is how
-  "the UI uses only the public API" quietly stops being true.
-
-Paths not yet implemented are listed in :data:`NOT_YET_IMPLEMENTED` with the task that adds each.
-That list is the honest form of "partially built": it shrinks as tasks land, and a path missing from
-both the app and the list is a failure rather than an omission.
-"""
+"""Compare served and documented paths, methods, and selected response shapes."""
 
 from __future__ import annotations
 
@@ -26,10 +13,6 @@ from aggregato.config import load_config
 from aggregato.main import API_PREFIX, create_app
 
 CONTRACT = Path(__file__).parent.parent.parent / "docs/contracts/openapi.yaml"
-
-#: Contract paths with no implementation yet, each with the task that adds it. Every entry is a
-#: promise rather than an exemption — 's final gate check expects this dict empty.
-NOT_YET_IMPLEMENTED: dict[str, str] = {}
 
 
 @pytest.fixture(scope="module")
@@ -72,6 +55,28 @@ def _served_paths(served: dict[str, Any]) -> dict[str, set[str]]:
     return paths
 
 
+def _assert_schema_shape_matches(actual: dict[str, Any], expected: dict[str, Any]) -> None:
+    assert set(actual["required"]) == set(expected["required"])
+    assert set(actual["properties"]) == set(expected["properties"])
+
+    def shape(schema: dict[str, Any]) -> tuple[str | None, bool]:
+        variants = schema.get("anyOf", [schema])
+        types = {variant.get("type") for variant in variants}
+        nullable = schema.get("nullable", False) or "null" in types
+        types.discard("null")
+        assert len(types) <= 1
+        return next(iter(types), None), nullable
+
+    for name, expected_property in expected["properties"].items():
+        actual_property = actual["properties"][name]
+        assert shape(actual_property) == shape(expected_property), name
+        assert actual_property.get("$ref") == expected_property.get("$ref"), name
+        if expected_property.get("type") == "array":
+            assert actual_property["items"].get("$ref") == expected_property["items"].get("$ref"), (
+                name
+            )
+
+
 # --- The contract document itself ---------------------------------------------------------------
 
 
@@ -101,55 +106,18 @@ def test_the_contract_has_no_unauthenticated_endpoint(contract: dict[str, Any]) 
                 assert security != [], f"{method.upper()} {path} opts out of authentication"
 
 
-def test_every_contract_path_is_either_served_or_listed_as_pending(
-    contract: dict[str, Any], served: dict[str, Any]
-) -> None:
-    """The honest-progress check: implemented, or explicitly owed to a named task."""
-    contract_paths = set(_contract_paths(contract))
-    served_paths = set(_served_paths(served))
-    missing = contract_paths - served_paths - set(NOT_YET_IMPLEMENTED)
-    assert missing == set(), (
-        f"contract paths neither served nor listed in NOT_YET_IMPLEMENTED: {sorted(missing)}"
-    )
-
-
-def test_nothing_is_served_that_the_contract_does_not_describe(
-    contract: dict[str, Any], served: dict[str, Any]
-) -> None:
-    """An undocumented endpoint is how "the UI consumes only the public API" stops being true."""
-    undocumented = set(_served_paths(served)) - set(_contract_paths(contract))
-    assert undocumented == set(), f"served but undocumented: {sorted(undocumented)}"
-
-
-def test_the_pending_list_names_only_real_contract_paths() -> None:
-    """A stale entry would hide a genuinely missing endpoint behind a promise."""
-    declared = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))["paths"]
-    unknown = set(NOT_YET_IMPLEMENTED) - set(declared)
-    assert unknown == set(), (
-        f"NOT_YET_IMPLEMENTED names paths the contract does not have: {unknown}"
-    )
-
-
-def test_the_pending_list_does_not_claim_something_already_served(
-    served: dict[str, Any],
-) -> None:
-    """When a task lands, its entry must come out — otherwise the list stops meaning anything."""
-    stale = set(NOT_YET_IMPLEMENTED) & set(_served_paths(served))
-    assert stale == set(), f"already served but still listed as pending: {sorted(stale)}"
-
-
-# --- Method agreement on what IS implemented ---------------------------------------------------
-
-
-def test_implemented_paths_serve_exactly_the_contract_methods(
+def test_served_paths_and_methods_match_the_contract(
     contract: dict[str, Any], served: dict[str, Any]
 ) -> None:
     contract_paths = _contract_paths(contract)
     served_paths = _served_paths(served)
-    for path, methods in served_paths.items():
-        expected = contract_paths[path]
-        assert methods == expected, (
-            f"{path}: serves {sorted(methods)}, contract says {sorted(expected)}"
+    assert set(served_paths) == set(contract_paths), (
+        f"path mismatch: missing={sorted(set(contract_paths) - set(served_paths))}, "
+        f"undocumented={sorted(set(served_paths) - set(contract_paths))}"
+    )
+    for path, methods in contract_paths.items():
+        assert served_paths[path] == methods, (
+            f"{path}: serves {sorted(served_paths[path])}, contract says {sorted(methods)}"
         )
 
 
@@ -193,6 +161,40 @@ def test_replay_contract_documents_queued_worker_semantics(contract: dict[str, A
 def test_failure_contract_exposes_replay_identity(contract: dict[str, Any]) -> None:
     properties = contract["components"]["schemas"]["IngestFailure"]["properties"]
     assert properties["native_id"]["nullable"] is True
+
+
+def test_settings_response_matches_its_contract_shape(
+    contract: dict[str, Any], served: dict[str, Any]
+) -> None:
+    schemas = contract["components"]["schemas"]
+    served_schemas = served["components"]["schemas"]
+    _assert_schema_shape_matches(served_schemas["SettingsView"], schemas["ArchiveSettings"])
+    _assert_schema_shape_matches(served_schemas["StorageUsage"], schemas["StorageUsage"])
+
+
+def test_run_modes_match_the_contract(contract: dict[str, Any], served: dict[str, Any]) -> None:
+    expected = contract["components"]["schemas"]["SyncRun"]["properties"]["mode"]["enum"]
+    assert set(served["components"]["schemas"]["FetchMode"]["enum"]) == set(expected)
+
+
+def test_diagnostic_response_metadata_matches_its_contract_shape(
+    contract: dict[str, Any], served: dict[str, Any]
+) -> None:
+    schemas = contract["components"]["schemas"]
+    served_schemas = served["components"]["schemas"]
+    _assert_schema_shape_matches(
+        served_schemas["SyncRunDiagnostics"], schemas["SyncRunDiagnostics"]
+    )
+    actual_metadata = served_schemas["RunHttpResponseMetadata"]
+    expected_metadata = schemas["RunHttpResponseMetadata"]
+    _assert_schema_shape_matches(actual_metadata, expected_metadata)
+    safe_fields = {"method", "url", "status"}
+    assert set(actual_metadata["properties"]) == safe_fields
+    assert set(actual_metadata["required"]) == safe_fields
+    assert set(expected_metadata["properties"]) == safe_fields
+    assert set(expected_metadata["required"]) == safe_fields
+    assert actual_metadata["additionalProperties"] is False
+    assert expected_metadata["additionalProperties"] is False
 
 
 # --- Conventions the contract states and the app must not contradict ----------------------------

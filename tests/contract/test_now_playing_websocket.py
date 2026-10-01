@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 
@@ -86,10 +85,17 @@ async def _first_snapshot(
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     messages: list[dict[str, object]] = []
     first_payload = asyncio.Event()
+    disconnect = asyncio.Event()
+    connected = False
     scope = _scope(app, headers=[(b"authorization", f"Bearer {token}".encode())])
 
     async def receive() -> dict[str, object]:
-        return {"type": "websocket.connect"}
+        nonlocal connected
+        if not connected:
+            connected = True
+            return {"type": "websocket.connect"}
+        await disconnect.wait()
+        return {"type": "websocket.disconnect", "code": 1000}
 
     async def send(message: dict[str, object]) -> None:
         messages.append(message)
@@ -98,9 +104,8 @@ async def _first_snapshot(
 
     task = asyncio.create_task(app(scope, receive, send))
     await asyncio.wait_for(first_payload.wait(), timeout=2)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    disconnect.set()
+    await asyncio.wait_for(task, timeout=2)
     payload = json.loads(
         next(message["text"] for message in messages if message["type"] == "websocket.send")
     )
@@ -173,8 +178,13 @@ async def test_now_playing_rejects_unauthenticated_handshake(tmp_path: Path) -> 
     )
     app = create_app(config)
     messages: list[dict[str, object]] = []
+    connected = False
 
     async def receive() -> dict[str, object]:
+        nonlocal connected
+        if connected:
+            raise AssertionError("rejected handshake should not read another websocket message")
+        connected = True
         return {"type": "websocket.connect"}
 
     async def send(message: dict[str, object]) -> None:

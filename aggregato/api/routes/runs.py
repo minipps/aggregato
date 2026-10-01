@@ -1,4 +1,4 @@
-"""Operational history: sync attempts and retained poison records ."""
+"""Operational history: sync attempts and retained poison records."""
 
 from __future__ import annotations
 
@@ -6,16 +6,17 @@ import asyncio
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.requests import Request
 
 from aggregato.api.clock import now as request_now
-from aggregato.api.deps import require_websocket_auth
+from aggregato.api.deps import AuthContext, require_auth, require_operator, require_websocket_auth
 from aggregato.api.errors import ProblemError, error_type
 from aggregato.api.pagination import clamp_limit
 from aggregato.api.queries import fetch_page
@@ -39,7 +40,7 @@ class SyncRun(BaseModel):
     provider_id: str
     lineage_id: uuid.UUID
     attempt: int
-    mode: str
+    mode: FetchMode
     status: RunStatus
     phase: RunPhase
     started_at: datetime
@@ -60,10 +61,18 @@ class SyncRun(BaseModel):
     log_excerpt: str | None = None
 
 
+class RunHttpResponseMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = Field(max_length=32)
+    url: str = Field(max_length=2048)
+    status: int
+
+
 class SyncRunDiagnostics(BaseModel):
     run_id: int
+    raw_responses: list[RunHttpResponseMetadata]
     log: str | None = None
-    raw_responses: list[dict[str, object]] = Field(default_factory=list)
 
 
 class SyncProviderState(BaseModel):
@@ -116,6 +125,7 @@ def _required(value: datetime | None) -> datetime:
 @router.get("/sync/status", response_model=SyncSnapshot)
 async def sync_status(
     request: Request,
+    auth: Annotated[AuthContext, Depends(require_auth)],
     provider_id: str | None = None,
     lineage_id: uuid.UUID | None = None,
 ) -> SyncSnapshot:
@@ -125,6 +135,7 @@ async def sync_status(
         generated_at=request_now(request),
         provider_id=provider_id,
         lineage_id=lineage_id,
+        readonly=auth.readonly,
     )
 
 
@@ -141,7 +152,7 @@ async def sync_socket(
     and a worker restart cannot strand a websocket in an invented state.
     """
     try:
-        await require_websocket_auth(websocket)
+        auth = await require_websocket_auth(websocket)
     except ProblemError:
         # WebSocket routes do not pass through the HTTP problem-detail handlers.  A policy close is
         # the interoperable way to reject an unauthenticated handshake without putting credentials
@@ -158,6 +169,7 @@ async def sync_socket(
                 generated_at=websocket.app.state.clock.now(),
                 provider_id=provider_id,
                 lineage_id=lineage_id,
+                readonly=auth.readonly,
             )
             state = json.dumps(
                 snapshot.model_dump(mode="json", exclude={"generated_at"}),
@@ -170,7 +182,13 @@ async def sync_socket(
                 )
                 await websocket.send_text(payload)
                 previous_state = state
-            await asyncio.sleep(0.5)
+            try:
+                async with asyncio.timeout(0.5):
+                    while (await websocket.receive())["type"] != "websocket.disconnect":
+                        pass
+            except TimeoutError:
+                continue
+            return
     except (WebSocketDisconnect, RuntimeError, ConnectionError):
         return
 
@@ -179,6 +197,7 @@ async def sync_socket(
 async def provider_runs(
     request: Request,
     id: str,
+    auth: Annotated[AuthContext, Depends(require_auth)],
     status: RunStatus | None = None,
     limit: int | None = None,
     cursor: str | None = None,
@@ -201,10 +220,17 @@ async def provider_runs(
             cursor=cursor,
             limit=clamp_limit(limit),
         )
-    return PageResponse(items=[_run(row) for row in page.items], next_cursor=page.next_cursor)
+    return PageResponse(
+        items=[_run(row, readonly=auth.readonly) for row in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
-@router.get("/providers/{id}/runs/{run_id}/diagnostics", response_model=SyncRunDiagnostics)
+@router.get(
+    "/providers/{id}/runs/{run_id}/diagnostics",
+    response_model=SyncRunDiagnostics,
+    dependencies=[Depends(require_operator)],
+)
 async def run_diagnostics(request: Request, id: str, run_id: int) -> SyncRunDiagnostics:
     """Return retained child logs and host HTTP response snapshots for one attempt."""
     async with transaction(request.app.state.engine) as conn:
@@ -218,10 +244,18 @@ async def run_diagnostics(request: Request, id: str, run_id: int) -> SyncRunDiag
         ).first()
     if row is None:
         raise ProblemError(status=404, title="Sync run not found", type=error_type("run-not-found"))
-    return SyncRunDiagnostics(run_id=run_id, log=row.log, raw_responses=row.raw_responses or [])
+    return SyncRunDiagnostics(
+        run_id=run_id,
+        log=row.log,
+        raw_responses=_response_metadata(row.raw_responses),
+    )
 
 
-@router.get("/ingest-failures", response_model=PageResponse[IngestFailure])
+@router.get(
+    "/ingest-failures",
+    response_model=PageResponse[IngestFailure],
+    dependencies=[Depends(require_operator)],
+)
 async def list_ingest_failures(
     request: Request,
     provider: str | None = None,
@@ -345,6 +379,7 @@ async def _snapshot(
     generated_at: datetime,
     provider_id: str | None,
     lineage_id: uuid.UUID | None,
+    readonly: bool,
 ) -> SyncSnapshot:
     """Read a complete sync snapshot in one transaction for HTTP and websocket callers."""
     provider_query = select(
@@ -389,11 +424,11 @@ async def _snapshot(
             )
             for row in provider_rows
         ],
-        runs=[_run(row) for row in run_rows],
+        runs=[_run(row, readonly=readonly) for row in run_rows],
     )
 
 
-def _run(row: Any) -> SyncRun:
+def _run(row: Any, *, readonly: bool = False) -> SyncRun:
     total = getattr(row, "progress_total", None)
     seen = int(row.items_seen or 0)
     percent = None if total is None else 100 if total == 0 else min(100, round(seen * 100 / total))
@@ -418,12 +453,12 @@ def _run(row: Any) -> SyncRun:
         progress_percent=percent,
         checkpoint_count=int(getattr(row, "checkpoint_count", 0) or 0),
         last_checkpoint_at=_aware(getattr(row, "last_checkpoint_at", None)),
-        cursor_before=getattr(row, "cursor_before", None),
-        cursor_after=getattr(row, "cursor_after", None),
+        cursor_before=None if readonly else getattr(row, "cursor_before", None),
+        cursor_after=None if readonly else getattr(row, "cursor_after", None),
         error_class=ErrorClass(row.error_class) if row.error_class else None,
-        error_message=row.error_message,
+        error_message=None if readonly else row.error_message,
         next_retry_at=_aware(getattr(row, "next_retry_at", None)),
-        log_excerpt=row.log_excerpt,
+        log_excerpt=None if readonly else row.log_excerpt,
     )
 
 
@@ -439,3 +474,30 @@ def _failure(row: Any) -> IngestFailure:
         created_at=_required(_aware(row.created_at)),
         resolved_at=_aware(row.resolved_at),
     )
+
+
+def _response_metadata(value: object) -> list[RunHttpResponseMetadata]:
+    if not isinstance(value, list):
+        return []
+    return [
+        RunHttpResponseMetadata(
+            method=method[:32], url=_safe_diagnostic_url(item.get("url")), status=status
+        )
+        for item in value
+        if isinstance(item, dict)
+        and isinstance((method := item.get("method")), str)
+        and type(status := item.get("status")) is int
+    ]
+
+
+def _safe_diagnostic_url(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return ""
+    authority = parts.netloc.rsplit("@", 1)[-1]
+    if parts.scheme not in {"http", "https"} or not authority:
+        return ""
+    return urlunsplit((parts.scheme, authority, parts.path, "", ""))[:2048]

@@ -1,11 +1,9 @@
-"""Configuration resolution: defaults ← YAML file ← ``${ENV}`` ← explicit caller overlay.
-
-The precedence and every rule below come from research.md :
+"""Resolve configuration from defaults, YAML, environment, and caller overrides.
 
 * ``api.token`` is the only fatal configuration error. Public read-only mode may expose reads
   without a caller token, but the server still needs the operator token for protected requests.
-* An invalid *provider* block disables that provider and records the error. It never stops
-  startup and never touches another provider . That is the important behaviour here.
+* An invalid *provider* block disables that provider and records the error without affecting
+  other providers.
 * Secrets are read from the environment at read time and never written back to disk or returned
   by the API: :meth:`Config.public_dict` emits the ``${VAR}`` reference, never its value.
 * Anything set in the YAML file is reported in :attr:`Config.file_pinned` so the UI can explain
@@ -34,6 +32,7 @@ __all__ = [
     "MissingTokenError",
     "ProviderConfig",
     "load_config",
+    "public_provider_settings",
 ]
 
 
@@ -42,7 +41,7 @@ class ConfigError(Exception):
 
 
 class MissingTokenError(ConfigError):
-    """``api.token`` is unset. The only fatal configuration error."""
+    """Raised when ``api.token`` is unset."""
 
 
 # The operator-facing environment variables (.env.example is the contract) mapped onto the dotted
@@ -78,7 +77,7 @@ class ProviderConfig(BaseModel):
 
     The core never interprets ``settings``; the provider validates its own schema. What matters
     here is that a block this module *cannot* resolve arrives with ``enabled=False`` and an
-    ``error`` instead of raising .
+    ``error`` instead of raising.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -151,37 +150,65 @@ class Config(BaseModel):
     #: error.
     static_dir: Path | None = None
     #: Optional directory of operator-installed provider packages.  These are discovered as
-    #: unreviewed drop-ins; no in-application installation mechanism exists .
+    #: unreviewed drop-ins; no in-application installation mechanism exists.
     provider_dir: Path | None = None
-    #: Disable remote image retrieval while preserving stable local image URLs .
+    #: Disable remote image retrieval while preserving stable local image URLs.
     image_cache_enabled: bool = True
     config_file: Path | None = None
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     file_pinned: frozenset[str] = frozenset()
     # Dotted path (in the shape of `public_dict`) → the `${VAR}` text it came from. Kept so the
-    # resolved secret can be swapped back out for its reference on the way to the API .
+    # resolved secret can be swapped back out for its reference on the way to the API.
     env_refs: dict[str, str] = Field(default_factory=dict)
 
     def is_file_pinned(self, path: str) -> bool:
         """Report whether ``path`` (e.g. ``"api.port"``) was set in the YAML file.
 
-        A pinned setting is not editable in the UI, and the UI needs to say so .
+        A pinned setting is not editable in the UI, and the UI needs to say so.
         """
         return path in self.file_pinned
 
     def public_dict(self) -> dict[str, Any]:
         """The API/serialization view: no secret values anywhere.
 
-        ``api.token`` is dropped outright and every value that came from ``${VAR}`` interpolation
-        is replaced by that reference, so a resolved credential can neither reach an API response
-        nor be written back to a config file .
+        API credentials and the database URL are dropped. Provider settings are projected through
+        the installed metadata-only manifest, keeping explicitly public fields and omitting
+        write-only or unknown fields. Environment references are restored before that projection,
+        so secret references cannot reappear after filtering.
         """
         data: dict[str, Any] = self.model_dump(mode="json", exclude={"env_refs"})
-        data["api"].pop("token", None)
-        data["api"].pop("readonly_token", None)
         for path, ref in self.env_refs.items():
             _set_path(data, path, ref)
+        data["api"].pop("token", None)
+        data["api"].pop("readonly_token", None)
+        data.pop("database_url", None)
+        for provider_id, provider in data.get("providers", {}).items():
+            provider["settings"] = public_provider_settings(
+                provider_id,
+                provider.get("settings", {}),
+                self.provider_dir,
+            )
+            provider.pop("error", None)
         return data
+
+
+def public_provider_settings(
+    provider_id: str, settings: object, provider_dir: Path | None = None
+) -> dict[str, Any]:
+    """Keep only valid fields explicitly marked public by a static provider manifest."""
+    if not isinstance(settings, dict):
+        return {}
+
+    from aggregato.providers.registry import discover_providers
+    from aggregato.providers.settings import UnsupportedProviderSchema, public_settings
+
+    try:
+        info = next(
+            (item for item in discover_providers(provider_dir) if item.id == provider_id), None
+        )
+        return public_settings(info.config_schema, settings) if info is not None else {}
+    except (RuntimeError, UnsupportedProviderSchema):
+        return {}
 
 
 def load_config(
@@ -207,7 +234,7 @@ def load_config(
         with their error recorded.
 
     Raises:
-        MissingTokenError: ``api.token``/``AGGREGATO_TOKEN`` is unset .
+        MissingTokenError: ``api.token``/``AGGREGATO_TOKEN`` is unset.
         ConfigError: The YAML file is unreadable or malformed, ``providers`` is not a mapping, or
             a non-provider setting references an unset ``${VAR}``. These are file-structure
             failures, not the per-setting errors  wants tolerated — ignoring them would run
@@ -216,7 +243,7 @@ def load_config(
     env = os.environ if env is None else env
     path = _resolve_config_path(env, config_file)
     file_layer = _read_yaml(path) if path is not None else {}
-    # Computed before the layer is consumed: pinning is about what the *file* said .
+    # Computed before the layer is consumed: pinning is about what the *file* said.
     pinned = frozenset(_dotted_paths(file_layer))
 
     raw_providers = file_layer.pop("providers", {})
@@ -229,7 +256,7 @@ def load_config(
         _set_path(tree, setting, value)
 
     # A provider block is resolved in isolation so one broken block cannot take out the process
-    # or its neighbours . Everything else interpolates eagerly and fails loudly.
+    # or its neighbours. Everything else interpolates eagerly and fails loudly.
     provider_tree = tree.pop("providers", None)
     refs: dict[str, str] = {}
     tree = _interpolate(tree, env, "", refs)
@@ -311,7 +338,7 @@ def _load_providers(
             settings = _interpolate(block, env, f"providers.{provider_id}.settings", local)
             providers[provider_id] = ProviderConfig(id=provider_id, settings=settings)
         except (ConfigError, ValidationError) as exc:
-            # Disabled, recorded, startup unaffected, neighbours unaffected .
+            # Disable this provider and record its error without affecting startup or other entries.
             providers[provider_id] = ProviderConfig(id=provider_id, enabled=False, error=str(exc))
             continue
         refs.update(local)
@@ -323,7 +350,7 @@ def _interpolate(value: Any, env: Mapping[str, str], path: str, refs: dict[str, 
 
     Raises:
         ConfigError: A referenced variable is unset. Leaking a literal ``${VAR}`` downstream
-            turns a missing credential into a confusing auth failure much later .
+            turns a missing credential into a confusing auth failure much later.
     """
     if isinstance(value, str):
         if not _VAR.search(value):

@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from aggregato.api.errors import ProblemError
-from aggregato.api.routes.providers import _public_settings, _validate_settings
+from aggregato.api.routes.providers import _public_settings
+from aggregato.providers.settings import validate_settings as _validate_settings
 
 
 def _schema(field: dict[str, object]) -> dict[str, object]:

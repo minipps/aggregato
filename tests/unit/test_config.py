@@ -154,29 +154,52 @@ def test_interpolation_resolves_and_unset_reference_is_an_error(tmp_path: Path) 
 
 
 def test_secrets_are_absent_from_the_serialized_view(tmp_path: Path) -> None:
-    """Nothing the API can display carries a resolved secret ."""
+    """Literal and resolved credentials are excluded while public settings survive."""
     path = write_config(
         tmp_path,
         {
             "database_url": "postgresql://u:${DB_PASSWORD}@db/aggregato",
-            "providers": {"good": {"token": "${LISTENBRAINZ_TOKEN}"}},
+            "api": {"readonly_token": "${READONLY_SECRET}"},
+            "providers": {
+                "listenbrainz": {
+                    "username": "public-name",
+                    "token": "${LISTENBRAINZ_TOKEN}",
+                },
+                "koito": {
+                    "base_url": "http://koito.lan:4110",
+                    "api_key": "literal-provider-secret",
+                },
+                "letterboxd": {
+                    "username": {"token": "nested-provider-secret"},
+                },
+            },
         },
     )
     env = {
         "AGGREGATO_TOKEN": TOKEN,
         "DB_PASSWORD": "pw-secret",
+        "READONLY_SECRET": "readonly-env-secret",
         "LISTENBRAINZ_TOKEN": "lb-secret",
     }
 
     public = load_config(env=env, config_file=path).public_dict()
 
     dumped = repr(public)
-    for secret in (TOKEN, "pw-secret", "lb-secret"):
+    for secret in (
+        TOKEN,
+        "pw-secret",
+        "readonly-env-secret",
+        "lb-secret",
+        "literal-provider-secret",
+        "nested-provider-secret",
+    ):
         assert secret not in dumped
     assert "token" not in public["api"]
-    # The reference survives instead, which is what may be written back to disk.
-    assert public["database_url"] == "postgresql://u:${DB_PASSWORD}@db/aggregato"
-    assert public["providers"]["good"]["settings"]["token"] == "${LISTENBRAINZ_TOKEN}"
+    assert "readonly_token" not in public["api"]
+    assert "database_url" not in public
+    assert public["providers"]["listenbrainz"]["settings"] == {"username": "public-name"}
+    assert public["providers"]["koito"]["settings"] == {"base_url": "http://koito.lan:4110"}
+    assert public["providers"]["letterboxd"]["settings"] == {}
 
 
 def test_no_file_and_defaults_only() -> None:

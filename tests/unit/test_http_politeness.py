@@ -16,11 +16,13 @@ import os
 import random
 import signal
 from contextlib import suppress
+from importlib.metadata import version
 from pathlib import Path
 
 import httpx
 import pytest
 
+from aggregato import __version__
 from aggregato.domain.enums import Acquisition
 from aggregato.providers.errors import BlockedError, RateLimited
 from aggregato.providers.http import (
@@ -226,6 +228,8 @@ async def test_requests_carry_an_identifying_user_agent() -> None:
         await client.get("https://example.test/")
 
     assert captured == [USER_AGENT]
+    assert __version__ == version("aggregato")
+    assert USER_AGENT.startswith(f"Aggregato/{version('aggregato')} ")
     assert "Aggregato/" in USER_AGENT
     assert "http" in USER_AGENT, "the User-Agent must carry a contact URL"
 

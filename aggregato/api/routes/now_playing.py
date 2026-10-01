@@ -125,7 +125,13 @@ async def now_playing_socket(websocket: WebSocket) -> None:
                     )
                 )
                 previous_state = state
-            await asyncio.sleep(0.5)
+            try:
+                async with asyncio.timeout(0.5):
+                    while (await websocket.receive())["type"] != "websocket.disconnect":
+                        pass
+            except TimeoutError:
+                continue
+            return
     except (WebSocketDisconnect, RuntimeError, ConnectionError):
         return
 

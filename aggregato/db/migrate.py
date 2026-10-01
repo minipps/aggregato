@@ -1,4 +1,4 @@
-"""Apply migrations at startup, backing up an embedded database first .
+"""Apply pending migrations at startup, backing up an embedded database first .
 
 Alembic owns the version table and the revision chain; this module is only the hook that runs it,
 so there is no second migration mechanism to keep in step (data-model.md §6).
@@ -17,6 +17,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import make_url
 
 from aggregato.domain.clock import SYSTEM_CLOCK
@@ -69,7 +70,7 @@ def backup_sqlite(url: str) -> Path | None:
 
 
 def upgrade_to_head(url: str) -> None:
-    """Migrate ``url`` to the latest revision, taking a backup first .
+    """Migrate ``url`` to the latest revision, backing up SQLite only when work is pending.
 
     Idempotent: already at head means Alembic runs nothing. The URL comes from the caller
     (``aggregato.config``), never from alembic.ini.
@@ -80,12 +81,16 @@ def upgrade_to_head(url: str) -> None:
         lock_path = Path(parsed.database).with_name(f"{Path(parsed.database).name}.migration.lock")
 
     def migrate() -> None:
-        backup_sqlite(url)
         config = Config()
         config.set_main_option("script_location", str(_SCRIPT_LOCATION))
         # `%` doubled because ConfigParser interpolates main options, and a URL-encoded password
         # is allowed to contain one.
         config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+        if parsed.get_backend_name() == "sqlite" and parsed.database not in {None, ":memory:"}:
+            database = Path(parsed.database)
+            if _sqlite_is_at_head(database, config):
+                return
+            backup_sqlite(url)
         command.upgrade(config, "head")
 
     if lock_path is None:
@@ -98,3 +103,17 @@ def upgrade_to_head(url: str) -> None:
             migrate()
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _sqlite_is_at_head(database: Path, config: Config) -> bool:
+    """Check migration state while the caller holds the SQLite migration lock."""
+    if not database.is_file():
+        return False
+    with closing(sqlite3.connect(database)) as conn:
+        has_version_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
+        ).fetchone()
+        if has_version_table is None:
+            return False
+        current = {row[0] for row in conn.execute("SELECT version_num FROM alembic_version")}
+    return current == set(ScriptDirectory.from_config(config).get_heads())

@@ -8,7 +8,7 @@ race itself.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +21,8 @@ from aggregato.db.engine import transaction
 from aggregato.db.schema import provider_state, providers, sync_runs
 from aggregato.domain.enums import FetchMode, ProviderStatus, RunStatus
 from aggregato.main import create_app
+from aggregato.sync.scheduler import release
+from tests.conftest import FrozenClock
 
 TOKEN = "providers-contract-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -89,6 +91,197 @@ async def test_a_discovered_provider_is_listed_before_it_is_enabled(
     body = (await client.get("/api/v1/providers")).json()
     assert "fixture" not in {p["id"] for p in body}
     assert all(p["enabled"] is False for p in body)
+
+
+async def test_readonly_provider_list_hides_raw_error_details(
+    client: httpx.AsyncClient,
+) -> None:
+    from aggregato.domain.enums import ErrorClass
+
+    engine = await _engine_for(client)
+    transport = client._transport_for_url(httpx.URL("http://test/"))
+    assert isinstance(transport, httpx.ASGITransport)
+    app = transport.app
+    assert app is not None
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            providers.insert().values(
+                id="anilist",
+                enabled=True,
+                status=str(ProviderStatus.DEGRADED),
+                acquisition="api",
+                schema_version=1,
+                reviewed=True,
+                config={},
+                last_error={
+                    "error_class": str(ErrorClass.AUTH),
+                    "message": "access_token=private-value",
+                    "action_required": "refresh_token=private-value",
+                },
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await conn.execute(
+            sync_runs.insert().values(
+                provider_id="anilist",
+                lineage_id=uuid4(),
+                attempt=1,
+                mode=str(FetchMode.CHECK),
+                status=str(RunStatus.FAILED),
+                phase="failed",
+                started_at=now,
+                finished_at=now,
+                updated_at=now,
+                error_class=str(ErrorClass.AUTH),
+                error_message="refresh_token=private-value",
+            )
+        )
+        await conn.execute(
+            sync_runs.insert().values(
+                provider_id="anilist",
+                lineage_id=uuid4(),
+                attempt=1,
+                mode=str(FetchMode.INCREMENTAL),
+                status=str(RunStatus.FAILED),
+                phase="failed",
+                started_at=now + timedelta(seconds=1),
+                finished_at=now + timedelta(seconds=1),
+                updated_at=now + timedelta(seconds=1),
+                error_class=str(ErrorClass.AUTH),
+                error_message="authorization=private-value",
+            )
+        )
+
+    app.state.config = load_config(
+        env={
+            "AGGREGATO_TOKEN": TOKEN,
+            "AGGREGATO_READONLY_TOKEN": "provider-readonly-token",
+            "AGGREGATO_ALLOW_UNAUTHENTICATED_READONLY": "true",
+            "AGGREGATO_DATA": str(app.state.config.data_dir),
+        },
+        db_overrides={"providers": {"fixture": {"path": str(FIXTURE)}}},
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as reader:
+        for headers in (
+            {"Authorization": "Bearer provider-readonly-token"},
+            {},
+        ):
+            response = await reader.get("/api/v1/providers", headers=headers)
+            assert response.status_code == 200, response.text
+            provider = next(item for item in response.json() if item["id"] == "anilist")
+            assert provider["last_error"]["error_class"] == "auth"
+            assert "private-value" not in str(provider["last_error"])
+            assert provider["last_check"]["status"] == "failure"
+            assert provider["last_check"]["detail"] is None
+            latest_run = await reader.get("/api/v1/providers/anilist/last-run", headers=headers)
+            assert latest_run.status_code == 200
+            assert latest_run.json()["status"] == "failed"
+            assert latest_run.json()["error_class"] == "auth"
+            assert latest_run.json()["detail"] is None
+
+    operator_view = await client.get(
+        "/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+    provider = next(item for item in operator_view.json() if item["id"] == "anilist")
+    assert provider["last_error"]["message"] == "access_token=private-value"
+    assert provider["last_check"]["detail"] == "refresh_token=private-value"
+    operator_run = await client.get("/api/v1/providers/anilist/last-run")
+    assert operator_run.json()["detail"] == "authorization=private-value"
+
+
+async def test_disable_reenable_during_run_keeps_operation_locked(
+    client: httpx.AsyncClient,
+) -> None:
+    engine = await _engine_for(client)
+    transport = client._transport_for_url(httpx.URL("http://test/"))
+    assert isinstance(transport, httpx.ASGITransport)
+    app = transport.app
+    assert app is not None
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    app.state.clock = FrozenClock(now)
+
+    assert (await client.post("/api/v1/providers/fixture/enable")).status_code == 200
+    lineage = uuid4()
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            providers.update()
+            .where(providers.c.id == "fixture")
+            .values(status=str(ProviderStatus.SYNCING))
+        )
+        await conn.execute(
+            provider_state.update()
+            .where(provider_state.c.provider_id == "fixture")
+            .values(
+                requested_mode=str(FetchMode.FULL),
+                requested_lineage_id=lineage,
+            )
+        )
+        run_id = int(
+            (
+                await conn.execute(
+                    sync_runs.insert()
+                    .values(
+                        provider_id="fixture",
+                        lineage_id=uuid4(),
+                        attempt=1,
+                        mode=str(FetchMode.INCREMENTAL),
+                        status=str(RunStatus.RUNNING),
+                        phase="fetching",
+                        started_at=now,
+                    )
+                    .returning(sync_runs.c.id)
+                )
+            ).scalar_one()
+        )
+
+    disabled = await client.post("/api/v1/providers/fixture/disable")
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+    assert disabled.json()["status"] == "syncing"
+
+    reenabled = await client.post("/api/v1/providers/fixture/enable")
+    assert reenabled.status_code == 200
+    assert reenabled.json()["enabled"] is True
+    assert reenabled.json()["status"] == "syncing"
+
+    config = await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+    assert config.status_code == 409
+
+    await release(
+        engine,  # type: ignore[arg-type]
+        "fixture",
+        status=ProviderStatus.IDLE,
+        next_run_at=now + timedelta(hours=1),
+        retry_step=0,
+        consecutive_failures=0,
+        now=now,
+        run_id=run_id,
+        run_status=RunStatus.SUCCESS,
+    )
+
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        provider = (
+            await conn.execute(
+                select(providers.c.enabled, providers.c.status).where(providers.c.id == "fixture")
+            )
+        ).one()
+        state = (
+            await conn.execute(
+                select(
+                    provider_state.c.requested_mode,
+                    provider_state.c.requested_lineage_id,
+                ).where(provider_state.c.provider_id == "fixture")
+            )
+        ).one()
+    assert provider.enabled is True
+    assert provider.status == str(ProviderStatus.IDLE)
+    assert state.requested_mode == str(FetchMode.FULL)
+    assert state.requested_lineage_id == lineage
 
 
 async def test_bundled_providers_are_marked_reviewed(client: httpx.AsyncClient) -> None:
@@ -182,6 +375,68 @@ async def test_enabling_makes_a_provider_enabled_and_due(client: httpx.AsyncClie
     assert body["status"] == "idle"
     # Due immediately, so an operator who just enabled a platform sees something happen.
     assert body["next_run_at"] is not None
+
+
+async def test_valid_config_change_requeues_only_a_suspended_enabled_provider(
+    client: httpx.AsyncClient,
+) -> None:
+    engine = await _engine_for(client)
+    transport = client._transport_for_url(httpx.URL("http://test/"))
+    assert isinstance(transport, httpx.ASGITransport)
+    app = transport.app
+    assert app is not None
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    app.state.clock = FrozenClock(now)
+    assert (await client.post("/api/v1/providers/fixture/enable")).status_code == 200
+
+    scheduled = now + timedelta(hours=4)
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id == "fixture")
+            .values(status=str(ProviderStatus.IDLE))
+        )
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(next_run_at=scheduled)
+        )
+
+    response = await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+    assert response.status_code == 200
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        next_run = (
+            await conn.execute(
+                select(provider_state.c.next_run_at).where(
+                    provider_state.c.provider_id == "fixture"
+                )
+            )
+        ).scalar_one()
+    assert next_run.replace(tzinfo=UTC) == scheduled
+
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id == "fixture")
+            .values(status=str(ProviderStatus.DEGRADED))
+        )
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "fixture")
+            .values(next_run_at=None)
+        )
+
+    response = await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
+    assert response.status_code == 200
+    async with transaction(engine) as conn:  # type: ignore[arg-type]
+        next_run = (
+            await conn.execute(
+                select(provider_state.c.next_run_at).where(
+                    provider_state.c.provider_id == "fixture"
+                )
+            )
+        ).scalar_one()
+    assert next_run.replace(tzinfo=UTC) == now
 
 
 async def test_enabling_twice_is_harmless(client: httpx.AsyncClient) -> None:

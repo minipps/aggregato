@@ -1,4 +1,4 @@
-"""Retention settings and cleanup for locally retained operational data ."""
+"""Retention settings and cleanup for locally retained operational data."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from aggregato.db.engine import transaction
 from aggregato.db.schema import image_cache, import_jobs, ingest_failures, settings, sync_runs
+from aggregato.db.upsert import upsert_stmt
 from aggregato.domain.clock import SYSTEM_CLOCK, Clock
 
 RAW_PAYLOAD_RETENTION_DAYS: Final = 90
@@ -67,16 +68,19 @@ async def update_settings(
     _validate(values)
     now = now or clock.now()
     async with transaction(engine) as conn:
-        for key, value in values.items():
-            existing = await conn.scalar(select(settings.c.key).where(settings.c.key == key))
-            if existing is None:
-                await conn.execute(settings.insert().values(key=key, value=value, updated_at=now))
-            else:
-                await conn.execute(
-                    settings.update()
-                    .where(settings.c.key == key)
-                    .values(value=value, updated_at=now)
+        if values:
+            await conn.execute(
+                upsert_stmt(
+                    conn,
+                    settings,
+                    [
+                        {"key": key, "value": value, "updated_at": now}
+                        for key, value in values.items()
+                    ],
+                    index_elements=["key"],
+                    update_columns=["value", "updated_at"],
                 )
+            )
         return await get_settings_on_connection(conn)
 
 
@@ -97,9 +101,8 @@ async def cleanup(
 ) -> None:
     """Remove expired operational records and disabled-cache files.
 
-    Failed runs are retained six times longer than successful ones by default: they are the useful
-    evidence when a provider misbehaves.  Provider payloads are never silently purged unless the
-    operator explicitly lowers their retention setting.
+    Failed runs are retained six times longer than successful ones by default. The raw-payload
+    window applies to resolved failures; provider-item payloads remain available for replay.
     """
     now = now or clock.now()
     values = await get_settings(engine)

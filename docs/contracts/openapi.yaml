@@ -7,21 +7,23 @@ info:
     default: either `Authorization: Bearer <api.token>` or the session cookie issued by
     `POST /auth/session`. When `api.allow_unauthenticated_readonly` is enabled, credential-free
     GET/HEAD requests are allowed as read-only requests; writes and websockets still require a
-    credential.
+    credential. Backups, retained diagnostics, and ingest-failure payloads require operator
+    access even though they use GET. Public and read-only credentials receive 403 on those routes.
 
     An optional second credential, `api.readonly_token`, authenticates reads only: any
     POST/PUT/PATCH/DELETE it presents — directly or through the session cookie it exchanges
     itself for — is refused with 403 `readonly-token`. `GET /auth/session` reports which
     credential the caller holds.
 
-    Conventions (, , , spec §9.3):
+    Conventions:
       * Timestamps are ISO 8601 with offset. `logged_at` is always accompanied by
         `logged_precision`; clients must not render a fabricated time as exact.
       * Ratings return raw value, scale, and normalized value. Normalized values are
         comparable within a scale, not across platforms.
       * Pagination is keyset-only via opaque `cursor`. There is no offset parameter.
       * Collection pages use `limit` 1–200, defaulting to 50; out-of-range values are clamped.
-        Full-text searches return every matching id before the collection page is applied.
+        Full-text searches filter in the database before applying collection pagination; there
+        is no arbitrary matching-result cap.
       * Work details embed at most the 200 newest entries and 200 newest opinions; use collection
         endpoints for keyset-paged data.
       * Sub-unit records (`subject_ref` non-null) are EXCLUDED from work-level aggregates
@@ -37,8 +39,9 @@ info:
         playback items. It sends a complete snapshot on connect and only sends later snapshots when
         an item changes, appears, or disappears; stale items are omitted.
       * Retained provider payloads and ingest-failure payloads can contain private platform data.
-        They are returned only through authenticated endpoints and follow the local retention and
-        export rules described by the operator guide.
+        Ingest-failure payloads and raw operational diagnostics are operator-only. Response
+        diagnostics retain method, sanitized endpoint URL, and status; response bodies and headers
+        are omitted. Exports exclude sessions, credentials, and operational diagnostic content.
       * Errors are RFC 9457 `application/problem+json`.
 servers:
   - url: /api/v1
@@ -156,8 +159,8 @@ paths:
           schema: { type: string, enum: [completed] }
         - { name: creator, in: query, schema: { type: string, format: uuid } }
         - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
-        - { name: from, in: query, schema: { type: string, format: date-time } }
-        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: from, in: query, description: Inclusive lower timestamp bound; the UI uses UTC midnight, schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: Inclusive upper timestamp bound; the UI uses UTC end-of-day with microsecond precision, schema: { type: string, format: date-time } }
         - { name: score_min, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
         - { name: score_max, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
         - { name: has_review, in: query, schema: { type: boolean } }
@@ -253,6 +256,7 @@ paths:
     post:
       tags: [providers]
       summary: Enable a provider and schedule its first sync
+      description: Sets an explicit due time. An active operation keeps its syncing status until it finishes.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       responses:
         "200":
@@ -266,6 +270,7 @@ paths:
     post:
       tags: [providers]
       summary: Disable a provider without deleting its archive
+      description: Stops ordinary scheduled admission. An active operation retains its syncing status until it finishes, then becomes disabled. Explicit checks and queued imports or replays can still run.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       responses:
         "200":
@@ -278,9 +283,8 @@ paths:
   /providers/{id}/config-schema:
     get:
       tags: [providers]
-      summary: JSON Schema of the provider's configuration model
-      description: Drives the generated settings form . Secret fields are marked
-        `writeOnly` and never returned with values.
+      summary: Static JSON Schema for provider settings
+      description: Drives the settings form without importing provider code. The manifest schema is checked against the runtime configuration model; secret fields are marked `writeOnly` and never returned with values.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       responses:
         "200":
@@ -312,15 +316,17 @@ paths:
     get:
       tags: [operations]
       summary: Read retained diagnostics for one sync attempt
+      description: Operator access required. Public and read-only credentials are refused.
       parameters:
         - $ref: "#/components/parameters/providerId"
         - { name: run_id, in: path, required: true, schema: { type: integer, format: int64 } }
       responses:
         "200":
-          description: Full child log and bounded raw HTTP responses
+          description: Retained child log and HTTP response metadata without bodies or headers
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncRunDiagnostics" }
+        "403": { $ref: "#/components/responses/Problem" }
 
   /sync/status:
     get:
@@ -398,7 +404,8 @@ paths:
       description: >-
         This read-only endpoint returns the most recent recorded run outcome. It does not trigger a
         credential check or contact the provider. A provider that has never run returns a null
-        `status` with a "not yet known" detail.
+        `status` with a "not yet known" detail for operators. The detail is null for public and
+        read-only clients.
       parameters: [{ $ref: "#/components/parameters/providerId" }]
       responses:
         "200":
@@ -414,13 +421,16 @@ paths:
                       - $ref: "#/components/schemas/RunStatus"
                       - { type: "null" }
                   error_class: { $ref: "#/components/schemas/ErrorClass" }
-                  detail: { type: string }
+                  detail: { type: string, nullable: true }
 
   /providers/{id}/config:
     put:
       tags: [providers]
       summary: Validate and persist provider configuration
-      description: Settings remain local and are never returned, because provider schemas can contain credentials. Saving configuration does not enable or sync a provider.
+      description: >-
+        Settings remain local; only the safe settings projection is returned. Configuration cannot
+        change during a sync (409). Saving does not enable a provider. For an enabled provider whose
+        schedule was suspended, a valid configuration change sets an explicit due timestamp.
       parameters:
         - $ref: "#/components/parameters/providerId"
       requestBody:
@@ -589,6 +599,8 @@ paths:
   /ingest-failures:
     get:
       tags: [operations]
+      summary: Read retained conversion failures
+      description: Operator access required because payloads can contain private platform data.
       parameters:
         - $ref: "#/components/parameters/provider"
         - { name: resolved, in: query, schema: { type: boolean, default: false } }
@@ -604,6 +616,7 @@ paths:
                   - $ref: "#/components/schemas/Page"
                   - properties:
                       items: { type: array, items: { $ref: "#/components/schemas/IngestFailure" } }
+        "403": { $ref: "#/components/responses/Problem" }
 
   /ingest-failures/{id}/replay:
     post:
@@ -696,12 +709,18 @@ paths:
   /export:
     get:
       tags: [operations]
-      summary: Portable backup archive (data + config, no secrets)
+      summary: SQLite archive backup without credentials or sessions
+      description: >-
+        Requires operator access and an on-disk SQLite database. Inspect
+        `GET /settings`'s `backup_supported` before offering this action. PostgreSQL operators
+        use their database backup tools. Restoring this archive requires fresh provider credentials.
       responses:
         "200":
           description: Archive stream
           content:
             application/octet-stream: { schema: { type: string, format: binary } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
 
   /settings:
     get:
@@ -709,7 +728,7 @@ paths:
       summary: Archive retention settings and storage usage
       responses:
         "200":
-          description: Current global settings and storage accounting
+          description: Current global settings and storage accounting. `image_cache_enabled` is the effective state; a false `image_cache_configured_enabled` means server configuration hard-disables image caching.
           content:
             application/json: { schema: { $ref: "#/components/schemas/ArchiveSettings" } }
     patch:
@@ -721,7 +740,7 @@ paths:
           application/json: { schema: { $ref: "#/components/schemas/ArchiveSettingsPatch" } }
       responses:
         "200":
-          description: Updated settings
+          description: Updated settings. When server configuration hard-disables image caching, a submitted `image_cache_enabled` value is ignored and the stored database preference is preserved.
           content:
             application/json: { schema: { $ref: "#/components/schemas/ArchiveSettings" } }
         "422": { $ref: "#/components/responses/Problem" }
@@ -809,7 +828,10 @@ components:
     Acquisition: { type: string, enum: [api, feed, export, scrape] }
     StorageUsage:
       type: object
-      description: Approximate local storage accounting. `raw_payload_bytes` is the encoded payload total; `database_bytes` includes SQLite sidecar files when present.
+      description: >-
+        Approximate storage accounting. `raw_payload_bytes` counts the UTF-8 bytes of database-rendered
+        JSON payload text, not physical JSON storage. `database_bytes` includes only the configured
+        SQLite file and its WAL/SHM sidecars; it is zero for PostgreSQL and in-memory SQLite.
       required: [raw_payload_bytes, image_cache_bytes, database_bytes]
       properties:
         raw_payload_bytes: { type: integer, minimum: 0 }
@@ -818,12 +840,14 @@ components:
     ArchiveSettings:
       type: object
       description: Retention controls read by the daily cleanup worker. Defaults are 90 days for resolved failure payloads, 30 days for successful run rows, and 180 days for failed or partial run rows. Provider-item replay payloads remain available for normalization replay.
-      required: [raw_payload_retention_days, success_run_retention_days, failure_run_retention_days, image_cache_enabled, storage]
+      required: [raw_payload_retention_days, success_run_retention_days, failure_run_retention_days, image_cache_enabled, image_cache_configured_enabled, backup_supported, storage]
       properties:
         raw_payload_retention_days: { type: integer, minimum: 0 }
         success_run_retention_days: { type: integer, minimum: 0 }
         failure_run_retention_days: { type: integer, minimum: 0 }
-        image_cache_enabled: { type: boolean }
+        image_cache_enabled: { type: boolean, description: Effective state after applying the server configuration hard-disable }
+        image_cache_configured_enabled: { type: boolean, description: Whether server configuration allows image caching to be enabled }
+        backup_supported: { type: boolean, description: Whether SQLite archive download is supported by the current database backend }
         storage: { $ref: "#/components/schemas/StorageUsage" }
     ArchiveSettingsPatch:
       type: object
@@ -1009,6 +1033,7 @@ components:
         last_error:
           type: object
           nullable: true
+          description: Operators receive recorded detail; public and read-only clients receive a generic message and action with the safe error classification.
           properties:
             error_class: { $ref: "#/components/schemas/ErrorClass" }
             message: { type: string }
@@ -1036,7 +1061,7 @@ components:
         provider_id: { type: string }
         lineage_id: { type: string, format: uuid }
         attempt: { type: integer }
-        mode: { type: string, enum: [incremental, full, import, check] }
+        mode: { type: string, enum: [incremental, full, import, replay, check] }
         status: { $ref: "#/components/schemas/RunStatus" }
         phase:
           type: string
@@ -1051,12 +1076,12 @@ components:
         progress_percent: { type: integer, nullable: true, minimum: 0, maximum: 100 }
         checkpoint_count: { type: integer }
         last_checkpoint_at: { type: string, format: date-time, nullable: true }
-        cursor_before: { type: object, nullable: true, additionalProperties: true }
-        cursor_after: { type: object, nullable: true, additionalProperties: true }
+        cursor_before: { type: object, nullable: true, additionalProperties: true, description: Null for public and read-only clients }
+        cursor_after: { type: object, nullable: true, additionalProperties: true, description: Null for public and read-only clients }
         error_class: { $ref: "#/components/schemas/ErrorClass" }
-        error_message: { type: string, nullable: true }
+        error_message: { type: string, nullable: true, description: Null for public and read-only clients }
         next_retry_at: { type: string, format: date-time, nullable: true }
-        log_excerpt: { type: string, nullable: true, description: Application logs, not user log data }
+        log_excerpt: { type: string, nullable: true, description: Application log excerpt; null for public and read-only clients }
 
     SyncRunDiagnostics:
       type: object
@@ -1066,7 +1091,16 @@ components:
         log: { type: string, nullable: true }
         raw_responses:
           type: array
-          items: { type: object, additionalProperties: true }
+          items: { $ref: "#/components/schemas/RunHttpResponseMetadata" }
+
+    RunHttpResponseMetadata:
+      type: object
+      additionalProperties: false
+      required: [method, url, status]
+      properties:
+        method: { type: string, maxLength: 32 }
+        url: { type: string, maxLength: 2048, description: Endpoint URL with userinfo, query, and fragment removed }
+        status: { type: integer }
 
     SyncProviderState:
       type: object
@@ -1168,7 +1202,7 @@ components:
         lineage_id: { type: string, format: uuid }
         requested_at: { type: string, format: date-time, nullable: true }
         completed_at: { type: string, format: date-time, nullable: true }
-        detail: { type: string, nullable: true }
+        detail: { type: string, nullable: true, description: Null for public and read-only clients }
         error_class: { $ref: "#/components/schemas/ErrorClass", nullable: true }
 
     ResolutionItem:

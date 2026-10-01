@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -136,10 +135,17 @@ def _scope(app: FastAPI, token: str) -> dict[str, object]:
 
 async def _snapshot(app: FastAPI) -> dict[str, object]:
     received = asyncio.Event()
+    disconnect = asyncio.Event()
     messages: list[dict[str, object]] = []
+    connected = False
 
     async def receive() -> dict[str, object]:
-        return {"type": "websocket.connect"}
+        nonlocal connected
+        if not connected:
+            connected = True
+            return {"type": "websocket.connect"}
+        await disconnect.wait()
+        return {"type": "websocket.disconnect", "code": 1000}
 
     async def send(message: dict[str, object]) -> None:
         messages.append(message)
@@ -148,9 +154,8 @@ async def _snapshot(app: FastAPI) -> dict[str, object]:
 
     task = asyncio.create_task(app(_scope(app, TOKEN), receive, send))
     await asyncio.wait_for(received.wait(), timeout=2)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    disconnect.set()
+    await asyncio.wait_for(task, timeout=2)
     return json.loads(
         next(message["text"] for message in messages if message["type"] == "websocket.send")
     )
