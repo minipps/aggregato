@@ -1,4 +1,4 @@
-"""The schema must stay first-class on both dialects (, research.md ).
+"""The schema must stay first-class on both dialects.
 
 These are cheap compile-time checks rather than round-trips against a server, and they catch the
 class of mistake that is otherwise found only by a self-hoster running the non-default dialect:
@@ -64,7 +64,7 @@ def test_boolean_defaults_compile_for_both_dialects() -> None:
 
 
 def test_no_naive_timestamp_columns() -> None:
-    """Every timestamp is timezone-aware, because everything is stored UTC (data-model.md)."""
+    """Every timestamp is timezone-aware because stored timestamps are UTC."""
     naive = [
         f"{table.name}.{column.name}"
         for table in metadata.sorted_tables
@@ -158,12 +158,11 @@ async def test_a_null_json_column_stores_sql_null_not_the_json_text_null() -> No
     ``'null'`` is a JSON *value*, so ``subject_ref IS NULL`` is FALSE for it. Two things break at
     once and neither announces itself:
 
-    * every aggregate filters ``subject_ref IS NULL`` to exclude sub-unit records (,
-      research.md ), so per-episode rows would start counting as whole works — the exact silent
-      statistic corruption the spec calls out;
+    * whole-work aggregates filter ``subject_ref IS NULL``, so storing JSON ``'null'`` would
+      incorrectly exclude whole-work rows;
     * the writer deduplicates entries with no native id on a ``subject_ref`` comparison including
       the null case, so a feed without event ids would duplicate its entire history on every
-      resync .
+      resync.
     """
     import uuid
     from datetime import UTC, datetime

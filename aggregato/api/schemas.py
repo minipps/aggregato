@@ -106,7 +106,7 @@ class CreatorDetail(Creator):
 
 
 class Work(BaseModel):
-    """A work. ``media_family`` is derived from ``media_type``, never stored (data-model.md §1)."""
+    """A work. ``media_family`` is derived from ``media_type``, never stored."""
 
     id: uuid.UUID
     media_type: MediaType

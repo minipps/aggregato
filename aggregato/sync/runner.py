@@ -36,7 +36,7 @@ from aggregato.sync.protocol import (
 )
 
 #: How long one run may take before it is killed. Generous, because a first backfill of a decade of
-#: history is legitimately slow; finite, because "no output and no exit" must not be forever (§6.7).
+#: history is legitimately slow; finite, because a silent child must still terminate.
 DEFAULT_WALL_CLOCK_SECONDS = 60 * 5
 
 #: Grace between SIGTERM and SIGKILL. A child mid-write gets a moment to finish its line; a child
@@ -174,7 +174,7 @@ async def execute_run(
             await asyncio.gather(consume_task, process.wait())
     except TimeoutError:
         # The child produced no end and no exit. Kill it, then classify — a hang and a crash must
-        # look different to the operator (§6.7).
+        # look different to the operator.
         await _terminate(process)
         outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
         outcome.error_class = ErrorClass.INTERNAL

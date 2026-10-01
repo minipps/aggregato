@@ -568,7 +568,7 @@ async def _upsert_entry(
     * ``native_id`` present — the partial unique index does the work, and ``ON CONFLICT`` updates.
     * ``native_id`` absent — there is no key to conflict on, so the writer looks for an existing row
       matching ``(provider_item_id, kind, logged_at, subject_ref)`` and skips if it finds one. This
-      is the fallback data-model.md §2 requires; without it a feed with no event ids duplicates its
+      is the fallback key; without it a feed with no event ids duplicates its
       whole history on every resync.
     """
     subject = entry.subject_ref.as_dict() if entry.subject_ref else None

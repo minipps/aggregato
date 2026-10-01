@@ -186,9 +186,8 @@ def test_group3_normalize_is_pure(
     # autouse (tests/conftest.py). Both together turn "pure" into something observable.
     assert clock.now() == clock.now()
 
-    # Writes: run from an empty directory and require it to stay empty. Ceiling — this catches a
-    # relative-path write, not an absolute one. An absolute-path write is caught by the child
-    # process having no writable state of its own (research.md ) rather than here.
+    # Running from an empty directory catches relative-path writes. Absolute-path writes are
+    # outside this fixture's coverage; the provider child is not a filesystem sandbox.
     monkeypatch.chdir(tmp_path)
 
     for raw in raw_records:
@@ -425,9 +424,9 @@ def _resolve(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_group8_config_schema_is_renderable(provider: Provider) -> None:
-    """Group 9: ``config_model`` produces a JSON Schema the settings form can render .
+    """Group 9: ``config_model`` produces a JSON Schema the settings form can render.
 
-    The form renderer reads the JSON Schema directly (research.md ), so the schema is the form:
+    The settings form reads the JSON Schema directly, so the schema is the form:
     a nested object has no widget, a secret without ``writeOnly`` gets echoed back into the page,
     and a field without a description has no label but its own variable name.
     """

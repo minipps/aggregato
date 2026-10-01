@@ -500,7 +500,7 @@ async def test_reasserting_an_identifier_does_not_duplicate_it(conn: AsyncConnec
 
 
 async def test_a_written_work_is_immediately_searchable(conn: AsyncConnection) -> None:
-    """The index is written in the SAME transaction as the row (research.md ).
+    """The index is written in the same transaction as the row.
 
     Nothing is committed here, so if indexing had been deferred to a separate transaction or a
     trigger, this query would find nothing.

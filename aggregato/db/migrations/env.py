@@ -1,4 +1,4 @@
-"""Alembic's runtime environment (, data-model.md §6 "Migrations").
+"""Alembic's runtime environment.
 
 Online mode only. ``--sql`` offline generation is not supported: migrations are applied
 automatically at startup against a live database, so a SQL script nobody runs is dead code.

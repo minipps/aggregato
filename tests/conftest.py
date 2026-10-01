@@ -1,8 +1,8 @@
 """Shared test infrastructure.
 
-Two fixtures here are project infrastructure rather than convenience (testing guidance,
-research.md ): ``block_sockets`` makes network access in a test a hard failure, and ``clock``
-is the injectable time source the scheduler and retry ladder take so no test sleeps.
+Two fixtures here are project infrastructure rather than convenience: ``block_sockets`` makes
+network access in a test a hard failure, and ``clock`` is the injectable time source the scheduler
+and retry ladder take so no test sleeps.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ class NetworkAccessInTest(RuntimeError):
 def block_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail any test that reaches the network.
 
-    Autouse and unconditional:  and  require every test to run offline and without
-    credentials, so this is not opt-in. Loopback is blocked too — an in-process ASGI transport
+    Autouse and unconditional: every test runs offline and without credentials, so this is not
+    opt-in. Loopback is blocked too — an in-process ASGI transport
     needs no socket, and a test that binds one has stopped being deterministic.
     """
 

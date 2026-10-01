@@ -177,7 +177,7 @@ def test_backup_ignores_a_non_sqlite_url() -> None:
 
 
 def test_downgrade_is_refused() -> None:
-    """Forward-only is a deliberate policy (data-model.md §6): the way back is the backup."""
+    """Migrations are forward-only; restore the backup to go back."""
     spec = importlib.util.spec_from_file_location("initial_revision", REVISION)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

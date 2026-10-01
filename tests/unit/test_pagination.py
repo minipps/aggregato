@@ -2,7 +2,7 @@
 
 The load-bearing test here is :func:`test_paging_tied_sort_keys_visits_every_row_once`: the whole
 reason the cursor carries ``id`` is bulk-imported history where thousands of entries share one
-timestamp (research.md ), so tied keys are the case that must be proven, not the happy path.
+timestamp, so tied keys are the case that must be proven, not the happy path.
 That test drives a real ``sqlite://`` in-memory table through :func:`keyset_where` — in-process,
 no socket, so the autouse socket blocker in ``tests/conftest.py`` stays satisfied.
 """

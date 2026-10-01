@@ -66,7 +66,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            # UTC-aware, never naive — every timestamp in this system is (data-model.md).
+            # UTC-aware, never naive — every timestamp in this system is stored in UTC.
             "ts": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,

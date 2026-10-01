@@ -125,8 +125,8 @@ async def test_a_fresh_install_makes_no_outbound_request(data_dir: Path) -> None
 async def test_the_scheduler_migrates_when_it_starts_first(data_dir: Path) -> None:
     """The regression test for the crash-looping scheduler.
 
-    research.md  wants this process independently restartable, so it cannot assume the API went
-    first and created the schema for it.
+    The scheduler must be independently restartable, so it cannot assume the API went first and
+    created the schema for it.
     """
     from aggregato.db.migrate import upgrade_to_head
 

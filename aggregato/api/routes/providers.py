@@ -989,7 +989,7 @@ def _public_settings(schema: dict[str, Any], settings: dict[str, Any]) -> dict[s
 
 
 def _aware(value: datetime | None) -> datetime | None:
-    """SQLite hands back naive datetimes; everything is stored UTC (data-model.md)."""
+    """SQLite hands back naive datetimes; stored timestamps are UTC."""
     if value is None:
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

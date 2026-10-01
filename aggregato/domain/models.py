@@ -10,8 +10,8 @@ These models cross the process boundary between the plugin child and host parent
   field is a provider bug to surface at the boundary, not a long tail to absorb. The only
   exceptions are ``payload`` and ``metadata``, which are intentionally open dictionaries.
 
-Field names match the column names in data-model.md §2 so the ingest writer needs no translation
-table. Host-assigned columns (surrogate ids, ``work_id``, ``provider_item_id``, ``source``,
+Field names match the ingest writer's insert fields, so it needs no translation table.
+Host-assigned columns (surrogate ids, ``work_id``, ``provider_item_id``, ``source``,
 ``sort_title``, ``ingested_at``) are absent: a provider cannot know them, and accepting them would
 invite a plugin to try.
 """
@@ -117,8 +117,7 @@ class NormalizedEntry(BaseModel):
     display a time it never had."""
     native_id: str | None = None
     """``None`` where the platform gives the event no id of its own; such entries are deduplicated
-    on ``(provider_item_id, kind, logged_at, subject_ref)`` by the writer instead (data-model.md
-    §2)."""
+    on ``(provider_item_id, kind, logged_at, subject_ref)`` by the writer instead."""
     subject_ref: SubjectRef | None = None
     progress_value: Decimal | None = None
     progress_unit: str | None = None

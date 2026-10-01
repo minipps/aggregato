@@ -1,4 +1,4 @@
-"""JSON logging and the contextvars run binding (research.md )."""
+"""JSON logging and the contextvars run binding."""
 
 from __future__ import annotations
 

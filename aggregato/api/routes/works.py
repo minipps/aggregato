@@ -1,6 +1,6 @@
 """``GET /works`` and ``GET /works/{id}``.
 
-``media_family`` is derived from ``media_type`` on the way out and never stored (data-model.md §1).
+``media_family`` is derived from ``media_type`` on the way out and never stored.
 The two can never disagree. ``entry_count`` and ``providers`` are batched per page, not per row.
 
 ``/works`` has no ``sort`` parameter, so it pages by ``(created_at desc, id desc)`` — a total order

@@ -184,7 +184,7 @@ def test_progress_value_requires_a_unit() -> None:
 
 
 def test_naive_logged_at_is_rejected() -> None:
-    # Every timestamp is UTC-aware (data-model.md preamble); a naive one is an unknown offset.
+    # Every timestamp is UTC-aware; a naive one is an unknown offset.
     with pytest.raises(ValidationError, match="should have timezone info"):
         NormalizedEntry(
             kind=EntryKind.WATCH,

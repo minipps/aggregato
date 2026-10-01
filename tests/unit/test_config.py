@@ -1,4 +1,4 @@
-"""Configuration precedence and failure modes (research.md , , )."""
+"""Configuration precedence and failure modes."""
 
 from __future__ import annotations
 

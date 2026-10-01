@@ -1,11 +1,11 @@
-"""Apply pending migrations at startup, backing up an embedded database first .
+"""Apply pending migrations at startup, backing up an embedded database first.
 
 Alembic owns the version table and the revision chain; this module is only the hook that runs it,
-so there is no second migration mechanism to keep in step (data-model.md §6).
+so there is no second migration mechanism to keep in step.
 
-``upgrade_to_head`` is **synchronous** and must be called before the event loop starts — Alembic's
-environment runs its own ``asyncio.run``. That is also what makes the plain-file backup safe: at
-that point nothing else has opened the database.
+``upgrade_to_head`` is synchronous. Call it outside a running event loop, such as in a dedicated
+thread, because Alembic's environment runs its own ``asyncio.run``. SQLite backups use the database
+backup API so committed WAL contents are included.
 """
 
 from __future__ import annotations

@@ -43,6 +43,6 @@ def test_clock_moves_only_when_a_test_moves_it(clock: FrozenClock) -> None:
 
 
 def test_clock_is_timezone_aware(clock: FrozenClock) -> None:
-    # Every timestamp in the system is UTC-aware (data-model.md); a naive clock would seed naive
+    # Every timestamp in the system is UTC-aware; a naive clock would seed naive
     # values into the database through the scheduler.
     assert clock.now().tzinfo is not None

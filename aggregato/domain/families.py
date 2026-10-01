@@ -1,6 +1,6 @@
 """``media_type`` → ``media_family``.
 
-A pure function over a total mapping, not a stored column (data-model.md §1): the grouping is a
+A pure function over a total mapping, not a stored column: the grouping is a
 property of the type, so storing it would mean two sources of truth and a migration every time one
 drifted from the other. API ``media_family`` filters expand to a ``media_type IN (…)`` predicate,
 which keeps individual types separately addressable.

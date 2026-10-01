@@ -1,4 +1,4 @@
-"""Child-process supervision (, , , §6.7).
+"""Child-process supervision.
 
 These drive **real subprocesses**, because the whole point of the child is what a process gives you
 that a task does not: it can be killed, it can crash without taking the parent down, and it cannot
@@ -393,7 +393,7 @@ async def test_now_playing_rejects_unexpected_protocol_messages(tmp_path: Path) 
 
 
 async def test_a_hanging_child_is_killed_at_the_wall_clock(tmp_path: Path) -> None:
-    """§6.7 — "no output and no exit" must not be forever."""
+    """A child that never emits output or exits must still be terminated."""
     script = HEADER + "time.sleep(300)\n"
     outcome = await _run_child(script, tmp_path, wall_clock=1.0)
 

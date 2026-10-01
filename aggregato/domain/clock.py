@@ -12,7 +12,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class Clock(Protocol):
-    """Reads the current instant. Always timezone-aware UTC (data-model.md §preamble)."""
+    """Reads the current instant as a timezone-aware UTC value."""
 
     def now(self) -> datetime: ...
 

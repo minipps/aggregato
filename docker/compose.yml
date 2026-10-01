@@ -1,6 +1,6 @@
 # Two services and one data volume. There is no database server or broker: scheduling state is in
-# the database (see docs/research.md), and SQLite is stored in the volume below. The frontend is
-# present in the normal stack; compose.dev.yml overlays it with Vite for development.
+# the database, and SQLite is stored in the volume below. The frontend is present in the normal
+# stack; compose.dev.yml overlays it with Vite for development.
 services:
   aggregato:
     # The published backend image, so `docker compose pull` works (docs/operations.md) — pin a

@@ -60,7 +60,7 @@ select = [
     "RUF",
     "ASYNC",
     "S",                # bandit
-    "DTZ",              # naive datetime — every timestamp is UTC-aware (data-model.md)
+    "DTZ",              # naive datetime — stored timestamps must be timezone-aware
 ]
 ignore = [
     "S101",  # asserts are how tests assert
@@ -112,8 +112,8 @@ name = "Providers cannot reach storage, ingest, or an HTTP client of their own"
 type = "forbidden"
 source_modules = ["aggregato.providers"]
 forbidden_modules = ["aggregato.db", "aggregato.ingest", "httpx"]
-# `providers/http.py` is the host-owned client wrapper for request pacing (see docs/research.md), so
-# it is exempted from the rule against importing httpx. The import rule applies to bundled provider
+# `providers/http.py` is the host-owned client wrapper for request pacing, so it is exempted from
+# the rule against importing httpx. The import rule applies to bundled provider
 # code; drop-in packages are unreviewed Python and are not sandboxed.
 #
 # `providers/base.py` gets no exemption and needs none: it takes the httpx *type* behind

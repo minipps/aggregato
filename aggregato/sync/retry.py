@@ -1,9 +1,8 @@
 """The retry ladder, run lineage, and the degraded threshold.
 
 Pure decision logic: given a classification, the provider's current retry state, and its normal
-interval, say what should happen next. Nothing here touches the database — the caller persists
-``next_run_at``, ``retry_step``, ``consecutive_failures``, and ``status`` onto ``provider_state``
-(data-model.md §7). That split is what makes this module arithmetic rather than fixtures.
+interval, say what should happen next. The caller persists the resulting schedule and status;
+this module does not touch the database.
 
 Time is injected through ``Clock``; these functions do not read a wall clock.
 """
@@ -97,7 +96,7 @@ def plan_after_success(*, clock: Clock, normal_interval: timedelta) -> RetryDeci
         normal_interval: The provider's declared interval.
 
     Returns:
-        A decision resetting the ladder and the failure counter to 0 (data-model.md §7) and putting
+        A decision resetting the ladder and the failure counter to 0 and putting
         the provider back to ``idle``, due again one normal interval from now. The lineage is
         dropped: the next run is new work, not another attempt at this one.
     """
