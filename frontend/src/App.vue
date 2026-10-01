@@ -16,6 +16,7 @@ onMounted(() => void loadSession())
       <RouterLink class="brand" :to="{ name: 'dashboard' }">Aggregato</RouterLink>
       <ul class="site-nav">
         <li><RouterLink :to="{ name: 'log' }">Log</RouterLink></li>
+        <li><RouterLink :to="{ name: 'media' }">Media</RouterLink></li>
         <li><RouterLink :to="{ name: 'stats' }">Statistics</RouterLink></li>
         <li><RouterLink :to="{ name: 'creators' }">Creators</RouterLink></li>
         <li><RouterLink :to="{ name: 'providers' }">Providers</RouterLink></li>

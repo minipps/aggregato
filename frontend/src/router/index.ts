@@ -6,6 +6,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/', name: 'dashboard', component: () => import('@/views/Dashboard.vue') },
   { path: '/login', name: 'login', component: () => import('@/views/Login.vue') },
   { path: '/log', name: 'log', component: () => import('@/views/Log.vue') },
+  { path: '/media', name: 'media', component: () => import('@/views/Media.vue') },
   { path: '/works/:id', name: 'work', component: () => import('@/views/Work.vue') },
   { path: '/providers', name: 'providers', component: () => import('@/views/Providers.vue') },
   { path: '/sync-history', name: 'sync-history', component: () => import('@/views/SyncHistory.vue') },
