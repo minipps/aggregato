@@ -135,14 +135,13 @@ introduce external requirement identifiers.
 
 | Document | Authority over |
 |---|---|
-| `docs/requirements.md` | Product behaviour and acceptance scenarios |
 | `docs/architecture.md` | Architecture, stack, and declared performance budgets |
-| `docs/research.md` | Technical decisions and rationale |
 | `docs/data-model.md` | Tables, constraints, state transitions, and migration rules |
 | `docs/contracts/provider-plugin.md` | The plugin contract |
 | `docs/contracts/openapi.yaml` | The HTTP contract the SPA consumes, and the only one |
 | `CONTRIBUTING.md` | Acquisition hierarchy, scraping policy, PR checklist |
 | `docs/writing-a-provider.md` | Practical path to a new provider |
+| `docs/roadmap.md` | Pending release checks and future development work |
 
 This repo is indexed by CodeGraph (`.codegraph/`) — prefer `codegraph_explore` over grep/read loops.
 

@@ -1,6 +1,6 @@
 # Provider acquisition roadmap
 
-Phase 7 keeps one stable provider id per service as its acquisition surface improves. Imports and
+Keep one stable provider id per service as its acquisition surface improves. Imports and
 automatic synchronization therefore normalize into the same `provider_item` identity space rather
 than creating a replacement provider or duplicating an archive.
 
@@ -29,8 +29,7 @@ When Goodreads provides a supported personal-library feed or export endpoint, th
 4. Bump `schema_version` and require a full resync only if the new endpoint exposes different
    native book identifiers.
 
-That makes the future automatic path additive while refusing to pretend an unsupported endpoint is
-safe to poll today.
+Retain historical payload support when changing acquisition surfaces.
 
 ## Koito
 

@@ -58,7 +58,8 @@ migration is pending and the database already exists; names look like
 `aggregato.db.YYYYMMDDTHHMMSSffffff.bak`. Backups use sqlite3's backup API rather than `cp`, so each
 copy includes committed WAL data. No migration backup is made for PostgreSQL, an in-memory database,
 a new SQLite database, or a SQLite database already at head. The copies are not pruned automatically;
-manage their storage yourself. Migrations are forward-only (data-model.md §6).
+manage their storage yourself. Migrations are forward-only; see
+[the migration rules](data-model.md#migrations).
 
 Two failure modes look different and are both recoverable.
 
@@ -71,12 +72,17 @@ pending. A container left crash-looping can therefore fill `/data`; once it is h
 remove surplus copies yourself, keeping a backup from before the migration.
 
 **A migration applied cleanly but rows are missing.** The likeliest cause on SQLite is a table
-rebuild that cascaded into child tables (data-model.md §6). Roll back to the backup and replay the
-fixed revision:
+rebuild that cascaded into child tables ([migration rules](data-model.md#migrations)). Roll back to
+the backup after obtaining a corrected release or repair instructions. Do not restart the same
+failing migration. First identify a backup that contains the missing rows by checking its
+`alembic_version` and row counts for `entries` and `opinions`. The example below assumes the default
+SQLite path; substitute the configured path when using a different one.
+Run the commands from the same Compose project as the deployment. If it uses a custom project name,
+pass that same `-p <name>` option to each command.
 
 ```bash
-docker stop docker-aggregato-1                      # nothing may hold the database open
-docker run --rm -v docker_aggregato-data:/data --entrypoint python aggregato:dev -c "
+docker compose -f docker/compose.yml stop aggregato
+docker compose -f docker/compose.yml run --rm --no-deps --entrypoint python aggregato -c "
 import sqlite3, glob, os, shutil
 live = '/data/aggregato.db'
 shutil.copy2(live, live + '.broken')                # keep the evidence
@@ -85,19 +91,12 @@ with sqlite3.connect('/data/aggregato.db.TIMESTAMP.bak') as src, sqlite3.connect
     src.backup(dst)
 os.replace(live + '.tmp', live)
 "
-docker start docker-aggregato-1                     # startup migrates it forward again
+docker compose -f docker/compose.yml start aggregato
 ```
 
-Pick the newest backup that still has the rows, and confirm what you are about to restore before
-swapping it in — `select version_num from alembic_version` plus a `count(*)` on `entries` and
-`opinions` tells you the revision and whether the data is there. Afterwards, `pragma integrity_check`
-and `pragma foreign_key_check` should both come back clean.
-
-The volume name matters: the Compose stack's volume is **`docker_aggregato-data`** (Compose prefixes
-the project directory). A one-off `docker run -v aggregato-data:/data` does not fail — Docker creates
-a new empty volume of that name, and the command then reports an empty database with no revision
-history, which reads exactly like data loss. Confirm with
-`docker inspect docker-aggregato-1 -f '{{range .Mounts}}{{.Name}}{{end}}'`.
+The Compose `run` command uses the backend service's configured `/data` mount and project volume.
+After restart, check `pragma integrity_check` and `pragma foreign_key_check`; both should return clean
+results.
 
 ## Retention and storage growth
 

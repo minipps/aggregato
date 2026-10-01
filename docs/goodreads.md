@@ -25,10 +25,9 @@ writes idempotent.
 
 ## Full history
 
-The RSS endpoint is a rolling snapshot. On 4 August 2026, the supplied feed contained 100 items,
-so it must not be treated as a complete historical export. The bundled Goodreads provider does not
-accept the platform's CSV export; use the RSS feed for the supported path and retain a copy of any
-older export separately until a distinct generic import provider is available.
+The RSS endpoint is a rolling snapshot, not a complete historical export. The bundled Goodreads
+provider does not accept the platform's CSV export; use RSS for the supported path and retain older
+exports separately until a distinct import provider is available.
 
 ## Failures
 

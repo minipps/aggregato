@@ -142,38 +142,23 @@ you expected — [docs/operations.md](docs/operations.md) is written for exactly
 
 ## Contributing
 
-Python 3.13 and [uv](https://docs.astral.sh/uv/); Node 22+ only if you are changing the frontend.
+Use Python 3.13 and [uv](https://docs.astral.sh/uv/); install Node 22 only when changing the
+frontend. [CONTRIBUTING.md](CONTRIBUTING.md) covers provider policy and releases. The development
+commands and validation checks are in [docs/validation.md](docs/validation.md).
 
 ```bash
 uv sync --all-extras --dev
 export AGGREGATO_TOKEN=dev-token AGGREGATO_DATA=./data
-
-uv run uvicorn aggregato.main:app --reload   # API process
-uv run python -m aggregato.worker            # scheduler process, separate on purpose
-
-cd frontend && npm install && npm run dev    # dev server proxies /api to :8000
 ```
 
-To develop the frontend entirely in Docker, start the normal service plus the development overlay and
-open <http://localhost:8000>; the overlay replaces the production frontend image with Vite and
-bind-mounts `frontend/`, so edits hot-reload immediately. Backend Python edits reload the API too.
+The API and scheduler run as separate processes. To develop the frontend in Docker, start the normal
+service with the development overlay; Vite and the API reload local changes.
 
 ```bash
 docker compose -f docker/compose.yml -f docker/compose.dev.yml up
 ```
 
-Migrations run automatically at startup; `uv run alembic upgrade head` if you want them separately.
-
-### Quality gates
-
-All four must be clean before anything merges. Warnings are errors.
-
-```bash
-uv run ruff format --check . && uv run ruff check . && uv run mypy
-uv run lint-imports          # the decoupling contract, a merge gate rather than a convention
-uv run pytest -m "not bench" # merge-gate suite; run `uv run pytest -m bench tests/bench` separately
-cd frontend && npm run type-check && npm run test:unit
-```
+Migrations run automatically at startup. Run them separately with `uv run alembic upgrade head`.
 
 ### Adding a platform
 
@@ -192,34 +177,11 @@ contact in [SECURITY.md](SECURITY.md).
 | [docs/operations.md](docs/operations.md) | Running it: failure states, retention, storage, Docker specifics |
 | [docs/writing-a-provider.md](docs/writing-a-provider.md) | Adding a platform of your own |
 | [docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md) | Why each platform reads the surface it does, and how that will change |
-| [docs/accessibility.md](docs/accessibility.md) | The accessibility commitments the UI is held to |
+| [docs/roadmap.md](docs/roadmap.md) | Pending release checks and development work |
+| [docs/accessibility.md](docs/accessibility.md) | UI accessibility conventions and manual checks |
 | [AGENTS.md](AGENTS.md) | Engineering principles, architecture guardrails, and contributor workflow |
-| [docs/requirements.md](docs/requirements.md) | What the product does, in capability terms |
-| [docs/architecture.md](docs/architecture.md) | Architecture, stack, and declared performance budgets |
+| [docs/architecture.md](docs/architecture.md) | Architecture and stack |
+| [docs/data-model.md](docs/data-model.md) | Tables, constraints, state transitions, and migrations |
 | [docs/contracts/provider-plugin.md](docs/contracts/provider-plugin.md) | The plugin contract — normative |
 | [docs/contracts/openapi.yaml](docs/contracts/openapi.yaml) | The HTTP contract the UI consumes, and the only one |
-| [docs/validation.md](docs/validation.md) | Commands and regression suites for validating the application |
-| [Publication checks and screenshots](docs/publication-review/implementation.md) | Implemented review findings and validation limits |
-
-## Candidate providers
-
-None of these providers are bundled yet. The acquisition ladder is `api` > `feed` > `export` >
-`file` > `scrape`; a provider uses the best surface that exposes the history it needs. A platform
-without an API may still offer a feed or export.
-
-| Platform | What it would add | Surface |
-|---|---|---|
-| **MyAnimeList** | anime + manga, with scores | `api` — official v2 API, OAuth2 |
-| **Kitsu** (kitsu.app) | anime + manga, with ratings | `api` — public JSON:API |
-| **Last.fm** | scrobbles (tracks) + loved tracks | `api` — documented, API key. Another listens provider beside ListenBrainz, Koito, and Spotify |
-| **AOTY** | album ratings + reviews | unconfirmed — no official public API found; likely `export` or `scrape` |
-| **RateYourMusic** | album ratings + reviews | **no API** — `export` at best |
-| **Hardcover** | books, with ratings and reviews | `api` — public GraphQL, token |
-| **The StoryGraph** | books, with ratings and reviews | To be checked; a feed or export may be available |
-
-The likely acquisition path for each candidate needs checking before implementation. See
-[docs/provider-acquisition-roadmap.md](docs/provider-acquisition-roadmap.md) for how a provider keeps
-one id when its acquisition surface changes.
-
-What a platform offers changes. Re-check the surface before starting work rather than trusting this
-table — it records what was true when it was written, not what is true today.
+| [docs/validation.md](docs/validation.md) | Local development and validation commands |

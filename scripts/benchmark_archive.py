@@ -1,6 +1,6 @@
-"""Measure the published 1M-entry API and writer targets with local synthetic SQLite data.
+"""Measure API latency and writer throughput with local synthetic SQLite data.
 
-Run from the repository root with ``.venv/bin/python scripts/publication_benchmark.py``. The script
+Run from the repository root with ``.venv/bin/python scripts/benchmark_archive.py``. The script
 leaves its databases in a fresh ``/tmp`` directory unless ``--workdir`` is supplied.
 """
 
@@ -398,10 +398,7 @@ def main() -> None:
                     "million_vs_10k_delta_percent": round((ratio - 1) * 100, 2),
                 },
                 "limits": [
-                    (
-                        "local x86_64 results do not establish the 4-core ARM / 2 GiB "
-                        "throughput budget"
-                    ),
+                    ("short synthetic trials do not establish sustained deployment throughput"),
                     (
                         "the seed has one work and one original provider item; it does not model "
                         "archive identity or credit diversity"

@@ -1,11 +1,11 @@
 # Contributing to Aggregato
 
 Aggregato collects the operator's own media logs from services where they have an account. Read the
-acquisition and scraping rules before writing a provider.
+acquisition and scraping rules before adding a provider.
 
-The normative documents are [the engineering guidance](AGENTS.md) and
-[the provider contract](docs/contracts/provider-plugin.md). This file is
-the provider review checklist.
+The [provider contract](docs/contracts/provider-plugin.md) defines the implementation requirements;
+this guide covers acquisition policy, safety, and the contribution checklist. See
+[docs/validation.md](docs/validation.md) for development and quality-check commands.
 
 ---
 
@@ -52,8 +52,8 @@ It MUST NOT:
 
 Bundled providers must use `ctx.http`. That host client applies the rate
 `max(your declared rate, the floor for your acquisition mode)`, allows one in-flight request per host
-for scrapers, and honors `Retry-After`. The import-linter contract rejects direct `httpx` imports.
-Python providers are not sandboxed, so review drop-in source before enabling it.
+for scrapers, and honors `Retry-After`. Providers cannot import `httpx` directly. Python providers
+are not sandboxed, so inspect drop-in source before enabling it.
 
 A scraping provider must ship recorded HTML fixtures, including one with a changed structure that
 raises `StructureChangedError`. A structural failure must raise that error rather than return an
@@ -61,45 +61,29 @@ empty result, which could be mistaken for an empty history.
 
 ---
 
-## The hard rules for provider code
+## Provider checklist
 
-| Rule | Why |
+| Requirement | Reason |
 |---|---|
-| `normalize` is pure — no network, clock, randomness, or storage | Enables offline testing and replay; conformance checks compare repeated output for the same fixture |
-| A provider has no database engine and imports only the selected provider | The child process limits provider access, but is not an OS sandbox; drop-ins retain service filesystem and network permissions |
-| A provider never constructs its own HTTP client | The host client enforces request pacing and rate limits |
-| A provider uses the closed `media_type`, `role`, and `subject_ref` vocabularies | Invalid records are stored as ingest failures rather than written |
-| Extract every identifier found in the payload | Aggregato does not enrich records from third-party metadata sources |
-| `logged_precision` is required on every entry | This preserves the precision the platform supplied |
-| `role_raw` preserves the platform's role term verbatim | The term can be used when the normalized role vocabulary changes |
-| `now_playing` is an explicit optional capability | A provider returns one normalized current item or `None`; playback is transient and never becomes history |
+| Keep `normalize` pure: no network, clock, randomness, or storage | Stored payloads can be replayed deterministically |
+| Use the closed `media_type`, `role`, and `subject_ref` vocabularies | Invalid records are retained as ingest failures instead of being written |
+| Extract every identifier and preserve `logged_precision` and `role_raw` | Aggregato does not enrich from third-party metadata |
+| Declare optional capabilities such as `now_playing` accurately | Capabilities control the UI and runtime behavior |
 
 ---
 
-## Checklist before you open the pull request
+## Before opening a pull request
 
-- [ ] Acquisition surfaces evaluated, and the reasoning is in the PR description
-- [ ] `uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run lint-imports`
-- [ ] `uv run pytest` — including `tests/conformance/` with your provider registered
-- [ ] Fixtures recorded per [tests/fixtures/README.md](tests/fixtures/README.md), redacted, no credentials
-- [ ] `config_model` fields documented; secrets marked so the settings form renders them write-only
-- [ ] New behaviour has a test that failed before the change (testing guidance)
-- [ ] If `now_playing` is declared, static/runtime capability parity, active/idle/structure-change
-      fixtures, deterministic normalization, and classified rate-limit/auth tests are present; the
-      monitor/WebSocket tests use injected clocks and never sleep or open sockets
-- [ ] Any migration follows [data-model.md §6](docs/data-model.md#migrations):
-      foreign keys off around a SQLite table rebuild, a test that seeds rows at the previous revision
-      and asserts they survive, and no edits to a revision that has already been applied
-- [ ] Any new dependency justified against stdlib, native platform features, and what is already installed
+- [ ] Explain which acquisition surfaces you checked and why the selected surface is appropriate.
+- [ ] Record provider fixtures under [tests/fixtures](tests/fixtures/README.md), sanitized and without credentials.
+- [ ] Document `config_model` fields and mark secrets so the settings form keeps them write-only.
+- [ ] Add a deterministic test for new behavior; run the checks in [docs/validation.md](docs/validation.md).
+- [ ] Follow [the migration rules](docs/data-model.md#migrations); migrations are forward-only.
+- [ ] Justify each new dependency against the standard library and installed packages.
 
 ## Cutting a release
 
-`scripts/release.sh <version>` — updates the package versions, lockfiles, and documented image
-examples, then creates the release commit and tag. Pushing the tag *is* the release
-([release.yml](.github/workflows/release.yml)): it runs the same CI gates as a push to main, then
-publishes a source archive, a GitHub release, and multi-arch images tagged `x.y.z`, `x.y`, `latest`.
-
-The script exists for one reason worth knowing: the workflow refuses a tag whose version disagrees
-with those two files, and by then the tag is already public. It runs that same check locally first,
-alongside refusing a dirty tree, a branch other than main, a main that differs from origin, and a tag
-that already exists. It shows what will ship and asks before pushing anything.
+Run `scripts/release.sh <version>` from a clean `main` that matches `origin/main`. It updates package
+versions, lockfiles, and the image-version examples, then shows the release commit and tag for review.
+Pushing the tag starts [the release workflow](.github/workflows/release.yml), which runs CI and
+publishes the source archive, GitHub release, and multi-architecture images.
