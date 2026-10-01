@@ -4,8 +4,8 @@ This is intentionally a process-level smoke check rather than a pytest test: the
 suite unconditionally blocks sockets, while this job deliberately connects to its declared local
 PostgreSQL service. It covers the database behaviours that SQLite cannot represent: concurrent
 migration DDL, previous-revision data preservation, an atomic claim race, transactional release/
-retry state, no-id writer idempotency, savepoint-atomic invalid records, writer persistence, and
-tsvector search.
+retry state, no-id writer idempotency, savepoint-atomic invalid records, writer persistence,
+manual creator split replay, and tsvector search.
 """
 
 from __future__ import annotations
@@ -20,42 +20,53 @@ from decimal import Decimal
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, select
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from aggregato.api.routes.settings import _payload_byte_length
 from aggregato.db import migrate as migration_module
 from aggregato.db.engine import create_engine, transaction
 from aggregato.db.migrate import upgrade_to_head
 from aggregato.db.schema import (
+    creator_external_ids,
     entries,
     external_ids,
+    ingest_failures,
     provider_items,
     provider_state,
     providers,
     sync_runs,
+    work_credits,
     works,
 )
 from aggregato.db.search import SearchKind, matching_ref_ids
 from aggregato.domain.enums import (
+    Confidence,
+    CreatorKind,
     EntryKind,
     ErrorClass,
     LoggedPrecision,
     MediaType,
     ProviderStatus,
+    Role,
     RunStatus,
     ScaleKind,
 )
 from aggregato.domain.models import (
     NormalizedBatch,
+    NormalizedCreatorId,
+    NormalizedCredit,
     NormalizedEntry,
     NormalizedOpinion,
     NormalizedWork,
     RawRecord,
 )
 from aggregato.domain.ratings import RatingScale
+from aggregato.ingest.split import split_creator
 from aggregato.ingest.writer import WriteContext, write_batches
 from aggregato.sync.scheduler import claim, release
+from aggregato.worker import single_worker_lock
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 PREVIOUS_REVISION = "0013"
@@ -83,6 +94,24 @@ async def _concurrent_head_upgrades(url: str) -> None:
             loop.run_in_executor(pool, _upgrade_to_head, url),
             loop.run_in_executor(pool, _upgrade_to_head, url),
         )
+
+
+async def _check_worker_lock(engine: AsyncEngine, url: str) -> None:
+    """Verify PostgreSQL worker ownership refuses overlap and releases on exit/error."""
+    async with single_worker_lock(engine, url) as owner:
+        assert owner, "PostgreSQL worker lock was not acquired"
+        async with single_worker_lock(engine, url) as overlap:
+            assert not overlap, "overlapping PostgreSQL worker acquired the singleton lock"
+
+    try:
+        async with single_worker_lock(engine, url) as owner:
+            assert owner, "PostgreSQL worker lock was not released"
+            raise RuntimeError("simulated worker startup error")
+    except RuntimeError as exc:
+        assert str(exc) == "simulated worker startup error"
+
+    async with single_worker_lock(engine, url) as restarted:
+        assert restarted, "PostgreSQL worker lock was not released after startup error"
 
 
 async def _create_database(url: str, database: str) -> None:
@@ -213,6 +242,7 @@ async def smoke(url: str) -> None:
     await _concurrent_head_upgrades(url)
     engine = create_engine(url)
     try:
+        await _check_worker_lock(engine, url)
         async with transaction(engine) as conn:
             await conn.execute(
                 providers.insert().values(
@@ -276,34 +306,119 @@ async def smoke(url: str) -> None:
             error_message="postgres smoke retry",
         )
 
-        async with transaction(engine) as conn:
-            await write_batches(
-                conn,
-                WriteContext(
-                    provider_id="fixture",
-                    sync_run_id=run_id,
-                    schema_version=1,
-                    now=NOW,
-                ),
-                [
-                    (
-                        RawRecord(native_id="postgres-event", payload={"title": "smoke"}),
-                        NormalizedBatch(
-                            work=NormalizedWork(media_type=MediaType.FILM, title="Postgres Smoke"),
-                            entries=[
-                                NormalizedEntry(
-                                    kind=EntryKind.WATCH,
-                                    logged_at=NOW,
-                                    logged_precision=LoggedPrecision.EXACT,
-                                    native_id="postgres-entry",
-                                )
-                            ],
-                        ),
+        smoke_context = WriteContext(
+            provider_id="fixture",
+            sync_run_id=run_id,
+            schema_version=1,
+            now=NOW,
+        )
+        smoke_record = (
+            RawRecord(native_id="postgres-event", payload={"title": "smöké"}),
+            NormalizedBatch(
+                work=NormalizedWork(media_type=MediaType.FILM, title="Postgres Smoke"),
+                credits=[
+                    NormalizedCredit(
+                        creator_name="Postgres Artist",
+                        creator_kind=CreatorKind.PERSON,
+                        role=Role.PERFORMER,
+                        role_raw="artists",
+                        position=0,
                     )
                 ],
+                creator_external_ids=[
+                    NormalizedCreatorId(
+                        creator_name="Postgres Artist",
+                        namespace="fixture",
+                        value="artist-1",
+                        confidence=Confidence.ASSERTED,
+                    )
+                ],
+                entries=[
+                    NormalizedEntry(
+                        kind=EntryKind.WATCH,
+                        logged_at=NOW,
+                        logged_precision=LoggedPrecision.EXACT,
+                        native_id="postgres-entry",
+                    )
+                ],
+            ),
+        )
+        async with transaction(engine) as conn:
+            written = await write_batches(conn, smoke_context, [smoke_record])
+            if written.written != 1 or written.failed != 0:
+                failures = await conn.execute(
+                    select(ingest_failures.c.error).where(
+                        ingest_failures.c.id.in_(written.failure_ids)
+                    )
+                )
+                raise AssertionError(
+                    "PostgreSQL creator write failed: "
+                    f"written={written.written}, failed={written.failed}, "
+                    f"errors={list(failures.scalars())!r}"
+                )
+
+            work_id = await conn.scalar(
+                select(provider_items.c.work_id).where(
+                    provider_items.c.native_id == "postgres-event"
+                )
             )
+            assert work_id is not None
+            original_credit = (
+                await conn.execute(
+                    select(work_credits.c.id, work_credits.c.creator_id).where(
+                        work_credits.c.work_id == work_id
+                    )
+                )
+            ).one()
+            split = await split_creator(
+                conn,
+                creator_id=original_credit.creator_id,
+                credit_ids=[original_credit.id],
+                new_name="Corrected Postgres Artist",
+                now=NOW,
+            )
+            resynced = await write_batches(conn, smoke_context, [smoke_record])
+            if resynced.written != 1 or resynced.failed != 0:
+                failures = await conn.execute(
+                    select(ingest_failures.c.error).where(
+                        ingest_failures.c.id.in_(resynced.failure_ids)
+                    )
+                )
+                raise AssertionError(
+                    "PostgreSQL creator resync failed: "
+                    f"written={resynced.written}, failed={resynced.failed}, "
+                    f"errors={list(failures.scalars())!r}"
+                )
+
+            credits = list(
+                await conn.execute(select(work_credits).where(work_credits.c.work_id == work_id))
+            )
+            assert len(credits) == 1, "PostgreSQL resync recreated the original creator credit"
+            assert credits[0].creator_id == split.winner_id
+            assert credits[0].manual_from_creator_id == original_credit.creator_id
+            assert credits[0].link_confidence == "manual"
+            asserted_creator = await conn.scalar(
+                select(creator_external_ids.c.creator_id).where(
+                    creator_external_ids.c.namespace == "fixture",
+                    creator_external_ids.c.value == "artist-1",
+                )
+            )
+            assert asserted_creator == original_credit.creator_id
+
             ref_ids = await matching_ref_ids(conn, SearchKind.WORK_TITLE, "postgres smoke")
             assert ref_ids, "PostgreSQL tsvector search did not find the written work"
+            payload = (
+                await conn.execute(
+                    select(
+                        cast(provider_items.c.raw_payload, Text).label("text"),
+                        _payload_byte_length(provider_items.c.raw_payload, conn.dialect.name).label(
+                            "byte_length"
+                        ),
+                    ).where(provider_items.c.native_id == "postgres-event")
+                )
+            ).one()
+            assert payload.byte_length == len(payload.text.encode("utf-8"))
+            assert payload.byte_length > len(payload.text), "JSONB byte count lost UTF-8 width"
 
         no_id_record = (
             RawRecord(native_id="postgres-no-id-item", payload={"title": "no-id"}),

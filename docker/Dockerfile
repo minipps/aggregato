@@ -10,10 +10,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --extra postgres --no-install-project
 COPY aggregato/ ./aggregato/
-COPY README.md ./
-RUN uv sync --frozen --no-dev
+COPY README.md LICENSE ./
+RUN uv sync --frozen --no-dev --extra postgres
 
 # --- Stage 2: runtime — venv and code, no toolchain -------------------------------------------
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS runtime

@@ -1,7 +1,6 @@
 #!/bin/sh
-# Two processes from one image (docs/architecture.md): the API serves regardless of what the
-# scheduler is doing, which is what 's containment requires. The scheduler is restarted on its
-# own if it dies; a dead scheduler must never take browsing down with it.
+# The entrypoint supervises the API and scheduler in one container. It restarts the scheduler if it
+# exits while keeping the API process available.
 set -eu
 
 api_pid=""
@@ -21,6 +20,7 @@ trap shutdown TERM INT
 # Trust forwarded scheme/host headers only from the explicitly configured proxy addresses. When a
 # trusted proxy reports HTTPS, the API derives Secure session cookies from that request scheme.
 uvicorn aggregato.main:app \
+    --loop asyncio \
     --host "${AGGREGATO_HOST:-0.0.0.0}" \
     --port "${AGGREGATO_PORT:-8000}" \
     --proxy-headers \

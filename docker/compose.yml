@@ -1,6 +1,6 @@
-# Two services, one volume, one command. No database server and no broker: the schedule is a table
-# (research.md) and the default store is SQLite in the volume below. The frontend is always present
-# in the normal stack; compose.dev.yml overlays it with Vite for development.
+# Two services and one data volume. There is no database server or broker: scheduling state is in
+# the database (see docs/research.md), and SQLite is stored in the volume below. The frontend is
+# present in the normal stack; compose.dev.yml overlays it with Vite for development.
 services:
   aggregato:
     # The published backend image, so `docker compose pull` works (docs/operations.md) — pin a
@@ -13,14 +13,14 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
-    # Every setting the application reads, with the defaults shown. Uncommented lines are the ones
-    # this image sets: those it needs, plus optional ones forwarded from your .env, which are empty
+    # Environment variables accepted by the application, with their defaults. Active lines are the
+    # values the container sets, plus optional ones forwarded from your .env, which are empty
     # when you leave them out and an empty value counts as unset. The rest are commented examples,
     # and .env.example is the same contract for a non-Docker run. Settings resolve:
     # defaults <- AGGREGATO_CONFIG file <- environment. Provider settings saved in the UI are stored
     # in the database and read by the worker when it starts a provider run.
     environment:
-      # The only fatal configuration error . Generate: openssl rand -hex 32
+      # Required API token. Generate one with: openssl rand -hex 32
       AGGREGATO_TOKEN: ${AGGREGATO_TOKEN:?set AGGREGATO_TOKEN before starting}
       AGGREGATO_DATA: /data
       # Import storage quotas include the upload currently being admitted.
@@ -41,7 +41,7 @@ services:
       # AGGREGATO_HOST: 0.0.0.0
       # The container-internal API port. The frontend proxy uses this service port.
       # AGGREGATO_PORT: 8000
-      # Optional: point at Postgres past roughly 1M entries. Default is SQLite under AGGREGATO_DATA.
+      # Optional PostgreSQL URL. SQLite under AGGREGATO_DATA is the default.
       # AGGREGATO_DATABASE_URL: postgresql+asyncpg://aggregato:secret@db/aggregato
       # Optional YAML config file, for settings the UI then shows as file-pinned. Mount it first.
       # AGGREGATO_CONFIG: /data/config.yaml
@@ -55,9 +55,8 @@ services:
     volumes:
       - aggregato-data:/data
     healthcheck:
-      # Every endpoint requires auth , so there is no URL to probe without holding the
-      # token. Accepting the listening socket as the liveness signal is the honest check here;
-      # per-provider health is what GET /health is for, and that is an operator question.
+      # Check that the API accepts connections. Use an authenticated GET /health request to inspect
+      # per-provider status.
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"]
       interval: 30s
       timeout: 5s

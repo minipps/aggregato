@@ -20,6 +20,7 @@ export default defineConfig({
         // keeps the familiar localhost default without needing an environment file.
         target: process.env.VITE_API_TARGET ?? 'http://localhost:8000',
         changeOrigin: true,
+        ws: true,
       },
     },
   },

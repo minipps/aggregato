@@ -10,6 +10,7 @@ def test_container_entrypoint_explicitly_scopes_forwarded_headers() -> None:
     entrypoint = (root / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
 
     assert "--proxy-headers" in entrypoint
+    assert "--loop asyncio" in entrypoint
     assert '--forwarded-allow-ips "${AGGREGATO_FORWARDED_ALLOW_IPS:-127.0.0.1}"' in entrypoint
 
 

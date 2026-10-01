@@ -7,7 +7,7 @@ on:
   # So the release workflow runs these same gates instead of a second copy of them that can drift.
   workflow_call:
 
-# Constitution "Quality Gates": all four must be clean, warnings are errors.
+# Run the repository's quality gates; warnings are errors.
 jobs:
   python:
     runs-on: ubuntu-latest
@@ -75,7 +75,7 @@ jobs:
       - run: uv sync --all-extras --dev
       - name: Benchmark collection
         run: uv run pytest --collect-only -q -m bench tests/bench
-      - name: Benchmark budgets
+      - name: Benchmark harness checks
         run: timeout --foreground --signal=TERM --kill-after=30s 15m uv run pytest -m bench tests/bench -q --durations=25
 
   postgres:
