@@ -1,20 +1,8 @@
-"""The scheduler: a due-queue poll loop (research.md ).
+"""Poll and claim the database-backed provider due queue.
 
-There is no scheduling library and no cron expression. ``provider_state.next_run_at`` **is** the
-schedule. The loop wakes every few seconds, selects providers whose time has come, and dispatches up
-to a concurrency cap; every run's outcome rewrites ``next_run_at``.
-
-Why that is the right shape rather than a smaller-looking one: what §7 actually requires is a
-per-provider interval the *plugin* declares , jitter on boot, an escalating ladder that
-overrides the interval after a failure , a ``degraded`` state that collapses the ladder back
-, a rate-limit response that lengthens the interval for the session , and a full
-record of every attempt with lineage . All of that is state that must survive a restart and
-be visible in the UI, so it has to be in the database whatever triggers it. Once ``next_run_at`` is
-persisted, the scheduler is a ``SELECT`` and a loop — and observability comes free, because the
-schedule is a queryable table.
-
-The loop never lets one provider affect another: each run is its own task around its own child
-process, and a failure is recorded rather than raised .
+``provider_state.next_run_at`` is the polling schedule; ``NULL`` means unscheduled. Queued checks,
+imports, and replays have their own admission conditions. The worker lock and process lifecycle live
+in :mod:`aggregato.worker`.
 """
 
 from __future__ import annotations
@@ -22,14 +10,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, exists, or_, select, update
+from sqlalchemy import ColumnElement, and_, case, exists, or_, select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -69,10 +56,8 @@ DEFAULT_MAX_CONCURRENT_RUNS = 3
 # failures.  Other backends retain the normal parallelism.
 SQLITE_MAX_CONCURRENT_RUNS = 1
 
-#: Spread on the first scheduling after boot. Without it, providers enabled in one sitting sync in
-#: lockstep forever after, turning a restart into a thundering herd against several platforms at
-#: once .
-BOOT_JITTER_SECONDS = 120
+#: Leave room inside Docker's default 10-second stop grace for child termination and reaping.
+SHUTDOWN_GRACE_SECONDS = 3.0
 
 log = logging.getLogger(__name__)
 _UNSET = object()
@@ -124,7 +109,7 @@ def _pollable_provider_ids(provider_dir: Path | None = None) -> frozenset[str]:
 
 def _state_is_due(now: datetime) -> ColumnElement[bool]:
     """Build the provider-state predicate shared by due listing and the atomic claim."""
-    return or_(provider_state.c.next_run_at.is_(None), provider_state.c.next_run_at <= now)
+    return provider_state.c.next_run_at <= now
 
 
 def _claim_due_state(now: datetime) -> ColumnElement[bool]:
@@ -198,12 +183,23 @@ def _check_requested() -> ColumnElement[bool]:
     )
 
 
-def _provider_ready_for_claim() -> ColumnElement[bool]:
-    """Allow checks to use a disabled provider while preserving ordinary sync admission."""
+def _provider_ready_for_claim(now: datetime) -> ColumnElement[bool]:
+    """Admit ordinary polls only when enabled, while honoring explicit queued operations."""
     return or_(
         and_(
             providers.c.enabled.is_(True),
             providers.c.status.in_((str(ProviderStatus.IDLE), str(ProviderStatus.DEGRADED))),
+        ),
+        and_(
+            _has_claimable_worker_job(now),
+            providers.c.status.in_(
+                (
+                    str(ProviderStatus.IDLE),
+                    str(ProviderStatus.DEGRADED),
+                    str(ProviderStatus.DISABLED),
+                    str(ProviderStatus.MISCONFIGURED),
+                )
+            ),
         ),
         and_(
             _check_requested(),
@@ -229,10 +225,9 @@ async def due_providers(
 ) -> list[DueProvider]:
     """The providers whose ``next_run_at`` has arrived.
 
-    This is the whole of the schedule (research.md ). ``next_run_at IS NULL`` counts as due, which
-    is how a newly enabled provider gets its first run without a separate code path. A reclaimable
-    import or replay job is due independently of that timestamp, so queued work cannot be stranded
-    behind a prior run's future reschedule.
+    A NULL ``next_run_at`` means unscheduled. Enabling and manual requests set an explicit due time.
+    A reclaimable import or replay job is due independently of that timestamp, so queued work cannot
+    be stranded behind a prior run's future reschedule.
 
     Args:
         engine: The database engine.
@@ -258,7 +253,7 @@ async def due_providers(
         .where(
             and_(
                 _admission_capability(now, pollable_ids),
-                _provider_ready_for_claim(),
+                _provider_ready_for_claim(now),
                 _state_due_or_worker_job(now),
             )
         )
@@ -304,13 +299,39 @@ async def claim(
                 and_(
                     providers.c.id == provider_id,
                     _admission_capability(now, pollable_ids),
-                    _provider_ready_for_claim(),
+                    _provider_ready_for_claim(now),
                     _claim_due_or_worker_job(now),
                 )
             )
             .values(status=str(ProviderStatus.SYNCING), updated_at=now)
         )
         return result.rowcount == 1
+
+
+async def unclaim(
+    engine: AsyncEngine, provider_id: str, *, status: ProviderStatus, now: datetime
+) -> None:
+    """Restore the prior provider status when shutdown wins after a claim but before dispatch."""
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(providers)
+            .where(
+                providers.c.id == provider_id,
+                providers.c.status == str(ProviderStatus.SYNCING),
+            )
+            .values(
+                status=case(
+                    (
+                        providers.c.enabled.is_(True),
+                        str(
+                            status if status is not ProviderStatus.DISABLED else ProviderStatus.IDLE
+                        ),
+                    ),
+                    else_=str(ProviderStatus.DISABLED),
+                ),
+                updated_at=now,
+            )
+        )
 
 
 async def recover_interrupted_runs(engine: AsyncEngine, *, now: datetime) -> list[str]:
@@ -436,8 +457,7 @@ async def release(
 ) -> None:
     """Record a run's outcome and reschedule.
 
-    Every field here comes from :mod:`aggregato.sync.retry`'s decision. The scheduler does not
-    decide retry policy; it persists what the ladder said ( through ).
+    The scheduler does not decide retry policy; it persists the retry ladder's outcome.
     """
     async with transaction(engine) as conn:
         if run_id is not None and run_status is not None:
@@ -472,16 +492,23 @@ async def release(
                 )
             )
             if run_result.rowcount != 1:
-                raise RuntimeError(f"run {run_id} was not open when release finalized it")
+                # Recovery or a newer owner already closed this attempt. Its late completion has
+                # no authority to update provider state or replace the newer owner's schedule.
+                return
 
-        provider_values: dict[str, object] = {"status": str(status), "updated_at": now}
+        provider_values: dict[str, object] = {
+            "status": case(
+                (providers.c.enabled.is_(True), str(status)),
+                else_=str(ProviderStatus.DISABLED),
+            ),
+            "updated_at": now,
+        }
         if last_error is not None or status is ProviderStatus.IDLE:
             provider_values["last_error"] = last_error
         await conn.execute(
             update(providers)
             .where(
                 providers.c.id == provider_id,
-                providers.c.enabled.is_(True),
                 providers.c.status == str(ProviderStatus.SYNCING),
             )
             .values(provider_values)
@@ -524,8 +551,7 @@ async def release(
 class Scheduler:
     """The poll loop.
 
-    Time and randomness are injected (testing guidance): ``Clock`` so a test can advance to a due
-    moment without waiting, ``Random`` so jitter is reproducible. Neither is read ambiently.
+    Time is injected so a test can advance to a due moment without waiting.
     """
 
     def __init__(
@@ -534,7 +560,6 @@ class Scheduler:
         *,
         dispatch: Callable[[DueProvider], Awaitable[None]],
         clock: Clock = SYSTEM_CLOCK,
-        rng: random.Random | None = None,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT_RUNS,
         poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
         provider_dir: Path | None = None,
@@ -546,7 +571,6 @@ class Scheduler:
                 imported so the loop can be tested without spawning processes, and so the API's
                 "sync now" path and the loop share one execution route.
             clock: Time source.
-            rng: Jitter source.
             max_concurrent: In-flight run cap.
             poll_interval_seconds: How long to sleep between polls.
             provider_dir: Optional reviewed/unreviewed drop-in provider directory.
@@ -554,7 +578,6 @@ class Scheduler:
         self._engine = engine
         self._dispatch = dispatch
         self._clock = clock
-        self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._max_concurrent = max_concurrent
         self._provider_dir = provider_dir
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -562,16 +585,14 @@ class Scheduler:
         self._running: dict[str, asyncio.Task[None]] = {}
         self._stopped = asyncio.Event()
 
-    def boot_jitter(self) -> timedelta:
-        """A spread for the first scheduling after boot, so providers do not sync in lockstep."""
-        return timedelta(seconds=self._rng.uniform(0, BOOT_JITTER_SECONDS))
-
     async def poll_once(self) -> int:
         """Dispatch every currently-due provider. Returns how many runs were started.
 
         Separated from :meth:`run_forever` so tests drive one iteration at a time against a frozen
         clock rather than racing a sleep.
         """
+        if self._stopped.is_set():
+            return 0
         started = 0
         available_slots = self._max_concurrent - len(self._running)
         if available_slots <= 0:
@@ -580,6 +601,8 @@ class Scheduler:
         for due in await due_providers(
             self._engine, now=self._clock.now(), provider_dir=self._provider_dir
         ):
+            if self._stopped.is_set():
+                break
             if due.provider_id in self._running:
                 continue
             # Claiming is itself a database write. Do not claim work that must wait for the
@@ -595,6 +618,14 @@ class Scheduler:
             ):
                 # Someone else got it. Not an error; the next poll will find it if it is still due.
                 continue
+            if self._stopped.is_set():
+                await unclaim(
+                    self._engine,
+                    due.provider_id,
+                    status=due.status,
+                    now=self._clock.now(),
+                )
+                break
             task = asyncio.create_task(self._guarded(due), name=f"sync:{due.provider_id}")
             self._running[due.provider_id] = task
             task.add_done_callback(self._forget(due.provider_id))
@@ -613,8 +644,9 @@ class Scheduler:
     async def _guarded(self, due: DueProvider) -> None:
         """Run one provider, holding the concurrency slot, swallowing nothing silently.
 
-        An exception escaping here would kill the loop and with it every other provider, which is
-        precisely what  forbids — so it is logged against the provider and the loop continues.
+        Dispatch runs in its own task, so one provider's failure cannot stop polling
+        other providers.
+        The scheduler records an internal failure and keeps the task error tied to that provider.
         """
         async with self._semaphore:
             # bind_run is a sync context manager: contextvars need no await, and the binding
@@ -658,8 +690,17 @@ class Scheduler:
                 async with asyncio.timeout(self._poll_interval):
                     await self._stopped.wait()
 
-    async def stop(self) -> None:
-        """Ask the loop to finish and wait for in-flight runs."""
+    def request_stop(self) -> None:
+        """Stop admitting work; the owner calls :meth:`stop` to drain and reap active runs."""
         self._stopped.set()
-        if self._running:
-            await asyncio.gather(*self._running.values(), return_exceptions=True)
+
+    async def stop(self) -> None:
+        """Stop admission, drain briefly, then cancel and await remaining runs."""
+        self.request_stop()
+        tasks = tuple(self._running.values())
+        if not tasks:
+            return
+        _, pending = await asyncio.wait(tasks, timeout=SHUTDOWN_GRACE_SECONDS)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

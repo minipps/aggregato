@@ -14,10 +14,19 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import Connection, Engine
 
 from aggregato.db.engine import transaction
-from aggregato.db.schema import import_jobs, metadata, provider_state, providers, sync_runs
-from aggregato.domain.enums import Capability, ErrorClass, ProviderStatus, RunStatus
+from aggregato.db.schema import (
+    import_jobs,
+    ingest_failures,
+    metadata,
+    provider_state,
+    providers,
+    replay_jobs,
+    sync_runs,
+)
+from aggregato.domain.enums import Capability, ErrorClass, FetchMode, ProviderStatus, RunStatus
 from aggregato.providers.registry import ProviderInfo
 from aggregato.sync import scheduler as scheduler_module
+from aggregato.sync.retry import plan_after_failure
 from aggregato.sync.scheduler import DueProvider, Scheduler, claim, due_providers, release
 from tests.conftest import FrozenClock
 from tests.unit._sync_connection import SyncConnectionAdapter
@@ -108,7 +117,7 @@ async def _insert_provider(
     *,
     enabled: bool = True,
     status: ProviderStatus = ProviderStatus.IDLE,
-    next_run_at: datetime | None = None,
+    next_run_at: datetime | None = NOW,
     requested_mode: str | None = None,
     requested_lineage_id: uuid.UUID | None = None,
 ) -> None:
@@ -198,17 +207,19 @@ async def test_claim_revalidates_every_admission_predicate(
 async def test_non_poll_provider_with_a_queued_import_is_admitted(
     engine: _SyncAsyncEngine, static_metadata: None, tmp_path: Path
 ) -> None:
-    await _insert_provider(engine, "non-poll", next_run_at=NOW + timedelta(hours=1))
+    await _insert_provider(
+        engine,
+        "non-poll",
+        enabled=False,
+        status=ProviderStatus.DISABLED,
+        next_run_at=None,
+    )
     async with transaction(engine) as conn:
         await conn.execute(
             import_jobs.insert().values(
                 provider_id="non-poll",
                 path=str(tmp_path / "queued.csv"),
                 created_at=NOW,
-                started_at=NOW - timedelta(minutes=20),
-                lease_owner="dead-worker",
-                lease_expires_at=NOW - timedelta(minutes=1),
-                attempts=0,
             )
         )
 
@@ -218,10 +229,121 @@ async def test_non_poll_provider_with_a_queued_import_is_admitted(
     assert await claim(engine, "non-poll", now=NOW)
 
 
+async def test_disabled_provider_with_a_queued_replay_is_admitted(
+    engine: _SyncAsyncEngine, static_metadata: None
+) -> None:
+    await _insert_provider(
+        engine,
+        "non-poll",
+        enabled=False,
+        status=ProviderStatus.DISABLED,
+        next_run_at=None,
+    )
+    async with transaction(engine) as conn:
+        run_result = await conn.execute(
+            sync_runs.insert()
+            .values(
+                provider_id="non-poll",
+                lineage_id=uuid.uuid4(),
+                attempt=1,
+                mode="incremental",
+                status=str(RunStatus.FAILED),
+                started_at=NOW,
+            )
+            .returning(sync_runs.c.id)
+        )
+        failure_result = await conn.execute(
+            ingest_failures.insert()
+            .values(
+                provider_id="non-poll",
+                sync_run_id=int(run_result.scalar_one()),
+                native_id="item-1",
+                raw_payload={"item": 1},
+                error="normalize failed",
+                stage="normalize",
+                created_at=NOW,
+            )
+            .returning(ingest_failures.c.id)
+        )
+        await conn.execute(
+            replay_jobs.insert().values(
+                failure_id=int(failure_result.scalar_one()),
+                provider_id="non-poll",
+                lineage_id=uuid.uuid4(),
+                created_at=NOW,
+            )
+        )
+
+    due = await due_providers(engine, now=NOW)
+
+    assert [item.provider_id for item in due] == ["non-poll"]
+    assert await claim(engine, "non-poll", now=NOW)
+
+
+async def test_null_schedule_is_unscheduled_but_a_queued_check_is_still_admitted(
+    engine: _SyncAsyncEngine, static_metadata: None
+) -> None:
+    await _insert_provider(engine, "healthy", next_run_at=None)
+    await _insert_provider(
+        engine,
+        "disabled",
+        enabled=False,
+        status=ProviderStatus.DISABLED,
+        next_run_at=None,
+        requested_mode=str(FetchMode.CHECK),
+    )
+
+    due = await due_providers(engine, now=NOW)
+
+    assert [item.provider_id for item in due] == ["disabled"]
+    assert not await claim(engine, "healthy", now=NOW)
+    assert await claim(engine, "disabled", now=NOW)
+
+
+@pytest.mark.parametrize(
+    "error_class", [ErrorClass.AUTH, ErrorClass.BLOCKED, ErrorClass.STRUCTURE_CHANGED]
+)
+async def test_never_retry_release_stays_unscheduled_until_manual_due_time(
+    engine: _SyncAsyncEngine,
+    static_metadata: None,
+    error_class: ErrorClass,
+) -> None:
+    await _insert_provider(engine, "healthy", next_run_at=NOW)
+    assert await claim(engine, "healthy", now=NOW)
+    decision = plan_after_failure(
+        clock=FrozenClock(NOW),
+        error_class=error_class,
+        retry_step=0,
+        consecutive_failures=0,
+        normal_interval=timedelta(hours=1),
+        lineage_id=uuid.uuid4(),
+    )
+    await release(
+        engine,
+        "healthy",
+        status=decision.status,
+        next_run_at=decision.next_run_at,
+        retry_step=decision.retry_step,
+        consecutive_failures=decision.consecutive_failures,
+        now=NOW,
+    )
+
+    assert await due_providers(engine, now=NOW) == []
+    assert not await claim(engine, "healthy", now=NOW)
+
+    async with transaction(engine) as conn:
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "healthy")
+            .values(next_run_at=NOW, requested_mode=str(FetchMode.INCREMENTAL))
+        )
+    assert await claim(engine, "healthy", now=NOW)
+
+
 async def test_release_refuses_to_overwrite_state_while_another_run_is_open(
     engine: _SyncAsyncEngine, static_metadata: None
 ) -> None:
-    await _insert_provider(engine, "healthy")
+    await _insert_provider(engine, "healthy", next_run_at=NOW)
     assert await claim(engine, "healthy", now=NOW)
     async with transaction(engine) as conn:
         first_result = await conn.execute(
@@ -265,7 +387,61 @@ async def test_release_refuses_to_overwrite_state_while_another_run_is_open(
         statuses = [row.status for row in await conn.execute(select(sync_runs.c.status))]
         state = (await conn.execute(select(provider_state.c.next_run_at))).scalar_one()
     assert statuses == [str(RunStatus.RUNNING), str(RunStatus.RUNNING)]
-    assert state is None
+    assert state == NOW.replace(tzinfo=None)
+
+
+async def test_stale_run_completion_cannot_replace_recovered_state(
+    engine: _SyncAsyncEngine, static_metadata: None
+) -> None:
+    await _insert_provider(engine, "healthy", next_run_at=NOW)
+    assert await claim(engine, "healthy", now=NOW)
+    async with transaction(engine) as conn:
+        result = await conn.execute(
+            sync_runs.insert()
+            .values(
+                provider_id="healthy",
+                lineage_id=uuid.uuid4(),
+                attempt=1,
+                mode="incremental",
+                status=str(RunStatus.RUNNING),
+                started_at=NOW,
+            )
+            .returning(sync_runs.c.id)
+        )
+        run_id = int(result.scalar_one())
+        recovered_schedule = NOW + timedelta(minutes=5)
+        await conn.execute(
+            update(sync_runs)
+            .where(sync_runs.c.id == run_id)
+            .values(status=str(RunStatus.FAILED), finished_at=NOW)
+        )
+        await conn.execute(
+            update(providers)
+            .where(providers.c.id == "healthy")
+            .values(status=str(ProviderStatus.IDLE))
+        )
+        await conn.execute(
+            update(provider_state)
+            .where(provider_state.c.provider_id == "healthy")
+            .values(next_run_at=recovered_schedule)
+        )
+
+    await release(
+        engine,
+        "healthy",
+        status=ProviderStatus.DEGRADED,
+        next_run_at=NOW + timedelta(hours=1),
+        retry_step=3,
+        consecutive_failures=4,
+        now=NOW + timedelta(seconds=1),
+        run_id=run_id,
+        run_status=RunStatus.SUCCESS,
+    )
+
+    provider, state = await _provider_and_state(engine, "healthy")
+    assert provider.status == str(ProviderStatus.IDLE)
+    assert state.next_run_at == recovered_schedule.replace(tzinfo=None)
+    assert state.retry_step == 0
 
 
 async def test_guarded_dispatch_persists_host_error_details(
@@ -348,3 +524,59 @@ async def test_release_does_not_reenable_a_provider_disabled_while_running(
     assert state.consecutive_failures == 3
     assert state.requested_mode == "full"
     assert state.requested_lineage_id == lineage
+
+
+async def test_stop_cancels_and_awaits_remaining_dispatches(
+    engine: _SyncAsyncEngine,
+    static_metadata: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _insert_provider(engine, "healthy", next_run_at=NOW)
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def wait_for_stop(_: DueProvider) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.set()
+
+    monkeypatch.setattr(scheduler_module, "SHUTDOWN_GRACE_SECONDS", 0)
+    scheduler = Scheduler(engine, dispatch=wait_for_stop, clock=FrozenClock(NOW))
+
+    assert await scheduler.poll_once() == 1
+    await started.wait()
+    await scheduler.stop()
+
+    assert cleaned_up.is_set()
+    assert await scheduler.poll_once() == 0
+
+
+async def test_stop_during_claim_releases_provider_without_dispatch(
+    engine: _SyncAsyncEngine,
+    static_metadata: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _insert_provider(engine, "healthy")
+    scheduler: Scheduler
+    original_claim = scheduler_module.claim
+
+    async def stop_after_claim(*args: object, **kwargs: object) -> bool:
+        claimed = await original_claim(*args, **kwargs)  # type: ignore[arg-type]
+        scheduler.request_stop()
+        return claimed
+
+    monkeypatch.setattr(scheduler_module, "claim", stop_after_claim)
+    dispatched = False
+
+    async def record_dispatch(_: DueProvider) -> None:
+        nonlocal dispatched
+        dispatched = True
+
+    scheduler = Scheduler(engine, dispatch=record_dispatch, clock=FrozenClock(NOW))
+
+    assert await scheduler.poll_once() == 0
+    provider, _ = await _provider_and_state(engine, "healthy")
+    assert provider.status == str(ProviderStatus.IDLE)
+    assert not dispatched
