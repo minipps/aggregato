@@ -1,14 +1,12 @@
-"""``GET /entries`` — the primary log feed .
+"""The ``GET /entries`` route for the primary log feed.
 
 The most heavily filtered read in the system, and the one whose defaults matter most:
 
-* ``include_subunits`` defaults **false**. A per-episode logger's feed shows seasons, not 300
-  episodes, unless asked (, research.md ).
-* ``include_deleted`` defaults **false**. Tombstoned rows exist forever but are not the log
-  .
-* Paging is keyset-only. There is no ``offset`` parameter here or anywhere else .
-* ``logged_at`` always travels with ``logged_precision``, so a client cannot invent an exact time
-  .
+* ``include_subunits`` defaults **false**. Work-level results exclude sub-unit records unless
+  requested.
+* ``include_deleted`` defaults **false**; tombstoned rows are excluded by default.
+* Paging uses keyset cursors.
+* ``logged_at`` travels with ``logged_precision`` so callers can respect the source's precision.
 
 An entry has no score column of its own — a score belongs to an opinion — so ``score_min``,
 ``score_max``, ``has_review`` and ``sort=score`` all read the opinion that came from the same
@@ -77,7 +75,7 @@ async def list_entries(
     ; repeated ``media_type``/``media_family``/``provider`` values are ORed within a
     parameter and ANDed across parameters. ``status=completed`` expands the same way over
     ``kind`` (``COMPLETED_KINDS``), and ANDs with ``kind`` if both are given. ``q`` searches
-    indexed work titles and review text .
+    indexed work titles and review text.
 
     Failure modes: 400 problem+json for a cursor this API did not issue — never a silent restart;
     422 problem+json for a value outside a closed vocabulary; 401 without credentials.
@@ -127,10 +125,11 @@ async def list_entries(
 
     async with transaction(request.app.state.engine) as conn:
         if q:
-            titles = await title_matches(conn, q)
-            reviews = await review_matches(conn, q)
             conditions.append(
-                or_(entries.c.work_id.in_(titles), entries.c.provider_item_id.in_(reviews))
+                or_(
+                    title_matches(conn.dialect.name, entries.c.work_id, q),
+                    review_matches(conn.dialect.name, q),
+                )
             )
 
         statement = (

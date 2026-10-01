@@ -1,10 +1,7 @@
-"""Free-text search over titles and review text (, research.md ).
+"""Free-text search over titles and review text.
 
 Two real implementations behind one interface, which is the one place in the codebase where that is
 justified: SQLite uses an FTS5 virtual table, Postgres a ``tsvector`` column with a GIN index.
-``LIKE '%term%'`` is not a third option — it cannot deliver 's 1 s p95 first page over a
-million entries, and performance guidance says budgets are measured rather than asserted.
-
 The index is maintained by the ingest writer **inside the same transaction as the row it
 describes**, not by database triggers. That keeps one implementation of *when* to index, and avoids
 writing trigger DDL twice, once per dialect.
@@ -17,8 +14,22 @@ on the other — so this index cannot live in ``schema.py``'s ``MetaData``.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
-from sqlalchemy import ColumnElement, Connection, Text, column, select, text
+from sqlalchemy import (
+    ColumnElement,
+    Connection,
+    Text,
+    and_,
+    bindparam,
+    case,
+    cast,
+    column,
+    func,
+    literal_column,
+    select,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from aggregato.db.schema import provider_items, works
@@ -62,8 +73,7 @@ _POSTGRES_DDL = (
 async def create_search_index(conn: AsyncConnection) -> None:
     """Create the dialect's search index if it does not exist.
 
-    Called from the Alembic revision rather than at startup, so the DDL runs once under migration
-    control like every other schema change .
+    Called from an Alembic revision so the DDL runs under migration control.
 
     Raises:
         ValueError: The dialect is neither SQLite nor Postgres.
@@ -163,12 +173,11 @@ def search_condition(
 ) -> ColumnElement[bool]:
     """Build the ``WHERE`` fragment restricting ``target`` to rows matching ``term``.
 
-    Expressed as an ``IN (SELECT ref_id …)`` subquery rather than a join, because that is the one
-    shape both dialects express identically while their match operators do not.
+    Expressed as an ``IN (SELECT ref_id …)`` subquery rather than materializing matches in Python.
 
     Args:
         dialect: ``"sqlite"`` or ``"postgresql"``.
-        target: The id column to constrain, cast to text by the caller where needed.
+        target: An id column with the same text representation as the indexed ``ref_id``.
         kind: Which documents to search.
         term: Raw operator input. **Not** a query language — see :func:`_sanitize_sqlite_term`;
             a user typing ``AND`` or a stray quote gets a search for those characters, not a syntax
@@ -180,23 +189,63 @@ def search_condition(
     Raises:
         ValueError: Unsupported dialect.
     """
+    matches = _matching_refs(dialect, kind, term).subquery()
+    return target.in_(select(matches.c.ref_id))
+
+
+def work_title_condition(
+    dialect: str, target: ColumnElement[object], term: str
+) -> ColumnElement[bool]:
+    """Match UUID work ids across SQLite's hex and Postgres's dashed text forms."""
+    matches = _matching_refs(dialect, SearchKind.WORK_TITLE, term).subquery()
     if dialect == "sqlite":
-        subquery = text(
+        matching_ids = select(func.replace(matches.c.ref_id, "-", ""))
+    else:
+        valid_uuid = matches.c.ref_id.op("~*")(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        )
+        matching_ids = select(case((valid_uuid, cast(matches.c.ref_id, target.type)), else_=None))
+    return target.in_(matching_ids)
+
+
+def review_condition(dialect: str, target: ColumnElement[object], term: str) -> ColumnElement[bool]:
+    """Match review documents by their ``provider_item_id:position`` key prefix."""
+    matches = _matching_refs(dialect, SearchKind.REVIEW_TEXT, term).subquery()
+    colon: ColumnElement[Any] = literal_column("':'")
+    one: ColumnElement[Any] = literal_column("1")
+    if dialect == "sqlite":
+        prefix = func.substr(matches.c.ref_id, one, func.instr(matches.c.ref_id, colon) - one)
+        valid_prefix = and_(prefix != "", ~prefix.op("GLOB")("*[^0-9]*"))
+        matching_ids = select(cast(prefix, target.type)).where(valid_prefix)
+    else:
+        prefix = func.split_part(matches.c.ref_id, colon, one)
+        number = case((prefix.op("~")(r"^[0-9]+$"), cast(prefix, target.type)), else_=None)
+        matching_ids = select(number)
+    return target.in_(matching_ids)
+
+
+def _matching_refs(dialect: str, kind: SearchKind, term: str) -> Any:
+    """The dialect-specific FTS query, named for composing its result in SQLAlchemy."""
+    if dialect == "sqlite":
+        query = text(
             "SELECT ref_id FROM search_index WHERE kind = :search_kind "
             "AND search_index MATCH :search_term"
-        ).bindparams(search_kind=str(kind), search_term=_sanitize_sqlite_term(term))
+        ).bindparams(
+            bindparam("search_kind", str(kind), unique=True),
+            bindparam("search_term", _sanitize_sqlite_term(term), unique=True),
+        )
     elif dialect == "postgresql":
-        # websearch_to_tsquery is the parser designed for untrusted input: it never raises on
-        # malformed queries, where plainto_tsquery and to_tsquery do.
-        subquery = text(
+        # websearch_to_tsquery accepts web-style operators and turns them into a valid tsquery.
+        query = text(
             "SELECT ref_id FROM search_index WHERE kind = :search_kind "
             "AND tsv @@ websearch_to_tsquery('simple', :search_term)"
-        ).bindparams(search_kind=str(kind), search_term=term)
+        ).bindparams(
+            bindparam("search_kind", str(kind), unique=True),
+            bindparam("search_term", term, unique=True),
+        )
     else:
         raise ValueError(f"unsupported dialect {dialect!r}; expected sqlite or postgresql")
-    # .columns() must NAME the returned column: an untyped TextualSelect has no column to
-    # compare against, and `.in_()` fails on it rather than degrading.
-    return target.in_(subquery.columns(column("ref_id", Text)))
+    return query.columns(column("ref_id", Text))
 
 
 async def matching_ref_ids(
@@ -204,12 +253,9 @@ async def matching_ref_ids(
 ) -> list[str]:
     """The ``ref_id``s matching ``term``, as text.
 
-    Use this instead of :func:`search_condition` when the id being filtered is a **UUID**. The two
-    dialects render a UUID to text differently — SQLite stores ``CHAR(32)`` with no dashes, Postgres
-    casts to the canonical dashed form — so a ``CAST(id AS TEXT) IN (SELECT ref_id ...)`` subquery
-    silently matches nothing on one of them. Fetching the ids and parsing them in Python is
-    dialect-neutral. Callers may provide an explicit limit when they intentionally want a bounded
-    candidate set; the default is complete so a large search result cannot silently lose matches.
+    This materializing helper is for small diagnostic and test results. Use
+    :func:`work_title_condition` or :func:`review_condition` to filter rows in SQL without building
+    a Python list of matches.
 
     Args:
         conn: Any connection.
@@ -224,29 +270,10 @@ async def matching_ref_ids(
         ValueError: Unsupported dialect.
     """
     dialect = conn.dialect.name
-    if dialect == "sqlite":
-        if limit is None:
-            statement = text(
-                "SELECT ref_id FROM search_index WHERE kind = :kind AND search_index MATCH :term"
-            ).bindparams(kind=str(kind), term=_sanitize_sqlite_term(term))
-        else:
-            statement = text(
-                "SELECT ref_id FROM search_index WHERE kind = :kind "
-                "AND search_index MATCH :term LIMIT :limit"
-            ).bindparams(kind=str(kind), term=_sanitize_sqlite_term(term), limit=limit)
-    elif dialect == "postgresql":
-        if limit is None:
-            statement = text(
-                "SELECT ref_id FROM search_index WHERE kind = :kind "
-                "AND tsv @@ websearch_to_tsquery('simple', :term)"
-            ).bindparams(kind=str(kind), term=term)
-        else:
-            statement = text(
-                "SELECT ref_id FROM search_index WHERE kind = :kind "
-                "AND tsv @@ websearch_to_tsquery('simple', :term) LIMIT :limit"
-            ).bindparams(kind=str(kind), term=term, limit=limit)
-    else:
-        raise ValueError(f"unsupported dialect {dialect!r}; expected sqlite or postgresql")
+    matches = _matching_refs(dialect, kind, term).subquery()
+    statement = select(matches.c.ref_id)
+    if limit is not None:
+        statement = statement.limit(limit)
     result = await conn.execute(statement)
     return [row[0] for row in result]
 

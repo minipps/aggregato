@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import create_engine, select, text
 
+from aggregato.api.pagination import Cursor, keyset_where
 from aggregato.api.queries import opinion_facts
 from aggregato.db.schema import entries, metadata
 
@@ -31,21 +32,28 @@ def test_live_entry_keyset_sorts_use_composite_indexes() -> None:
     try:
         with engine.begin() as conn:
             metadata.create_all(conn)
-            for column, index in (
-                (entries.c.logged_at, "ix_entries_active_logged_at_id"),
-                (entries.c.ingested_at, "ix_entries_active_ingested_at_id"),
+            for sort, column, index in (
+                ("logged_at", entries.c.logged_at, "ix_entries_active_logged_at_id"),
+                ("ingested_at", entries.c.ingested_at, "ix_entries_active_ingested_at_id"),
             ):
                 statement = (
                     select(entries.c.id)
                     .where(
                         entries.c.deleted_at.is_(None),
                         entries.c.subject_ref.is_(None),
-                        column < datetime(2026, 1, 1, tzinfo=UTC),
+                        keyset_where(
+                            column,
+                            entries.c.id,
+                            "desc",
+                            Cursor(sort, datetime(2026, 1, 1, tzinfo=UTC), "1000000"),
+                        ),
                     )
                     .order_by(column.desc(), entries.c.id.desc())
                     .limit(51)
                 )
-                assert index in _plan_for(conn, statement)
+                plan = _plan_for(conn, statement)
+                assert index in plan
+                assert f"{column.name}<?" in plan
     finally:
         engine.dispose()
 

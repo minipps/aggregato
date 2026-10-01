@@ -1,10 +1,10 @@
-"""``GET /works`` and ``GET /works/{id}`` .
+"""``GET /works`` and ``GET /works/{id}``.
 
 ``media_family`` is derived from ``media_type`` on the way out and never stored (data-model.md §1).
 The two can never disagree. ``entry_count`` and ``providers`` are batched per page, not per row.
 
 ``/works`` has no ``sort`` parameter, so it pages by ``(created_at desc, id desc)`` — a total order
-with the same keyset guarantees as the feed . ``/works/{id}`` answers with the parent and the
+with the same keyset guarantees as the feed. ``/works/{id}`` answers with the parent and the
 sibling seasons as well, which is what lets a client walk the hierarchy without a request per hop.
 """
 
@@ -73,9 +73,9 @@ async def list_works(
 ) -> PageResponse[Work]:
     """One keyset page of works, most recently added first.
 
-    Inputs: the contract's filters. ``media_family`` expands to its member media types ;
+    Inputs: the contract's filters. ``media_family`` expands to its member media types;
     ``provider`` matches any provider holding an item for the work, so a work known only through a
-    rating still matches; ``q`` searches indexed titles, including original-language forms .
+    rating still matches; ``q`` searches indexed titles, including original-language forms.
 
     Failure modes: 400 problem+json for a cursor this API did not issue; 401 without credentials.
     """
@@ -101,7 +101,7 @@ async def list_works(
 
     async with transaction(request.app.state.engine) as conn:
         if q:
-            conditions.append(works.c.id.in_(await title_matches(conn, q)))
+            conditions.append(title_matches(conn.dialect.name, works.c.id, q))
         page = await fetch_page(
             conn,
             select(works).where(*conditions),
@@ -130,10 +130,10 @@ async def get_work(
     """One work with its identifiers, credits, entries, opinions, parent and sibling seasons.
 
     Inputs: the work id, and ``include_subunits`` — false by default, so the entries and opinions
-    listed are the ones about the work itself rather than about its episodes .
+    listed are the ones about the work itself rather than about its episodes.
 
     Failure modes: 404 problem+json for an unknown or malformed UUID. Tombstoned entries and
-    opinions are excluded .
+    opinions are excluded.
     """
     try:
         work_id = uuid.UUID(id)

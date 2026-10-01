@@ -1,24 +1,22 @@
 """Keyset pagination: the opaque cursor codec and its WHERE clause.
 
-The cursor encodes the last row's sort value **plus its ``id``**, and the ``id`` is the entire
-reason this module exists. A cursor holding only ``logged_at`` cannot page through a bulk-imported
+The cursor encodes the last row's sort value **plus its ``id``**. A cursor holding only
+``logged_at`` cannot page through a bulk-imported
 history where thousands of entries share one timestamp: every row with that timestamp either
 repeats on the next page or is skipped, depending on which way the comparison is written. Adding
 ``id`` makes the sort order *total*, so ``(sort_col, id)`` is unique and every row appears exactly
-once (research.md ).
+once.
 
-There is no offset parameter here or anywhere else — . ``OFFSET`` degrades linearly and the
+There is no offset parameter here or elsewhere. ``OFFSET`` degrades linearly and the
 spec names it a footgun.
 
-The cursor is opaque, not secret. It is base64-encoded JSON, unsigned: signing it would introduce a
-key to configure and rotate for no benefit, since the only thing it protects is a comparison value
-the client already saw. What *is* required is failing cleanly — anything that is not a cursor this
-module wrote raises :class:`InvalidCursor`, which the API renders as a 400. Never a 500, and never
-a silent "start from the beginning", which would quietly re-serve page one forever.
+The cursor is base64-encoded JSON without a signature. Invalid input raises
+:class:`InvalidCursor`, which the API renders as a 400 rather than silently restarting at page one.
 
 Null ordering convention: a ``NULL`` sort value (an entry with no score) sorts **last in both
-directions**. SQLite and Postgres disagree on the default, so callers must order by
-``(sort_col IS NULL), sort_col <dir>, id <dir>`` to match the clause :func:`keyset_where` builds.
+directions**. SQLite and Postgres disagree on the default, so callers must order nullable sort
+expressions with nulls last to match :func:`keyset_where`. For a non-null cursor, the helper omits
+the ``IS NULL`` branch when the sort column declares ``nullable=False``.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, and_, literal, or_, tuple_
+from sqlalchemy import Column, ColumnElement, and_, literal, or_, tuple_
 
 SortKey = Literal["logged_at", "ingested_at", "score"]
 """The ``sort`` values the ``/entries`` contract permits."""
@@ -107,8 +105,7 @@ def clamp_limit(limit: int | None) -> int:
 
     Returns:
         ``LIMIT_DEFAULT`` when ``limit`` is ``None``, otherwise ``limit`` clamped to
-        ``[LIMIT_MIN, LIMIT_MAX]``. Out-of-range values are clamped rather than rejected — the
-        contract states a maximum, not a validation rule, and a 400 on ``limit=500`` helps nobody.
+        ``[LIMIT_MIN, LIMIT_MAX]``. Out-of-range values are clamped to that range.
     """
     if limit is None:
         return LIMIT_DEFAULT
@@ -182,8 +179,9 @@ def keyset_where(
     """Build the "strictly after this row, in this order" predicate.
 
     For a non-null cursor value this is the row comparison ``(sort_col, id) < (:value, :id)`` for
-    ``desc`` (``>`` for ``asc``), which is both compact and index-friendly — plus the rows whose
-    sort value is ``NULL``, since nulls sort last in both directions (see the module docstring).
+    ``desc`` (``>`` for ``asc``). Nullable columns and expressions also include rows whose sort
+    value is ``NULL``, since nulls sort last in both directions (see the module docstring); a
+    declared non-null column omits that impossible branch so the database can use the sort range.
     Once the cursor itself sits in the null block, only ``id`` can advance.
 
     The table and columns are arguments rather than imports so this stays a pure unit under test
@@ -214,6 +212,8 @@ def keyset_where(
     strictly_after = row > key if order == "asc" else row < key
     # NULLs compare as NULL inside the row comparison above, so they must be added explicitly —
     # this is the clause that keeps unscored entries from vanishing from page two onward.
+    if isinstance(sort_col, Column) and not sort_col.nullable:
+        return strictly_after
     return or_(strictly_after, sort_col.is_(None))
 
 

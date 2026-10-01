@@ -1,4 +1,4 @@
-"""Archive statistics .
+"""Archive statistics.
 
 The statistics surface deliberately consumes the same :func:`aggregate_filters` helper as every
 other aggregate.  That keeps an episode or track from quietly becoming a whole-work count simply
@@ -11,7 +11,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy import ColumnElement, cast, func, select
+from sqlalchemy import ColumnElement, Integer, cast, func, select
 from sqlalchemy.sql.sqltypes import String
 from starlette.requests import Request
 
@@ -77,7 +77,11 @@ def _bucket(period: Period, dialect_name: str) -> ColumnElement[str]:
     """
     if period == "all":
         return cast("all", String)
-    sqlite_patterns = {"year": "%Y", "month": "%Y-%m", "week": "%Y-W%W", "day": "%Y-%m-%d"}
+    if period == "week" and dialect_name == "sqlite":
+        thursday = func.date(entries.c.logged_at, "-3 days", "weekday 4")
+        week = (cast(func.strftime("%j", thursday), Integer) - 1) / 7 + 1
+        return cast(func.printf("%s-W%02d", func.strftime("%Y", thursday), week), String)
+    sqlite_patterns = {"year": "%Y", "month": "%Y-%m", "day": "%Y-%m-%d"}
     postgres_patterns = {
         "year": "YYYY",
         "month": "YYYY-MM",

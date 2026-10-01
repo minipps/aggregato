@@ -14,18 +14,22 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Table, select
-from sqlalchemy.dialects import postgresql
+from sqlalchemy import Table, func, literal, or_, select, text
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from aggregato.api.queries import title_matches
 from aggregato.db.engine import create_engine, transaction
+from aggregato.db.schema import works
 from aggregato.db.search import (
     SearchKind,
     _sanitize_sqlite_term,
     create_search_index,
     index_document,
+    review_condition,
     search_condition,
     unindex_document,
+    work_title_condition,
 )
 
 
@@ -191,6 +195,72 @@ async def test_multiple_terms_narrow_rather_than_widen(conn: AsyncConnection) ->
     assert await _matching(conn, SearchKind.WORK_TITLE, "blade runner") == ["work-1"]
 
 
+@requires_fts5
+async def test_title_search_keeps_large_match_sets_in_the_database(conn: AsyncConnection) -> None:
+    """A result larger than old SQLite bind limits remains one bounded-parameter query."""
+    import uuid
+    from datetime import UTC, datetime
+
+    await conn.run_sync(lambda sync: works.create(sync))
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    ids = [uuid.uuid4() for _ in range(1_100)]
+    await conn.execute(
+        works.insert(),
+        [
+            {
+                "id": work_id,
+                "media_type": "film",
+                "title": "Dune",
+                "sort_title": "dune",
+                "created_at": now,
+                "updated_at": now,
+            }
+            for work_id in ids
+        ],
+    )
+    await conn.execute(
+        text("INSERT INTO search_index (kind, ref_id, content) VALUES (:kind, :ref_id, :content)"),
+        [
+            {
+                "kind": str(SearchKind.WORK_TITLE),
+                "ref_id": str(work_id),
+                "content": "Dune Needle" if work_id == ids[0] else "Dune",
+            }
+            for work_id in ids
+        ],
+    )
+
+    statement = (
+        select(func.count()).select_from(works).where(title_matches("sqlite", works.c.id, "dune"))
+    )
+    assert await conn.scalar(statement) == len(ids)
+    assert len(statement.compile().params) <= 4
+
+    rare = select(works.c.id).where(title_matches("sqlite", works.c.id, "needle"))
+    sql = rare.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True})
+    plan = await conn.execute(text(f"EXPLAIN QUERY PLAN {sql}"))
+    assert any("SEARCH works" in row[3] for row in plan)
+
+
+@requires_fts5
+async def test_review_search_matches_provider_item_prefix(conn: AsyncConnection) -> None:
+    await index_document(conn, SearchKind.REVIEW_TEXT, "17:0", "Dune was excellent")
+    await index_document(conn, SearchKind.REVIEW_TEXT, "17:1", "A second Dune review")
+
+    assert (
+        await conn.scalar(
+            select(literal(17)).where(review_condition("sqlite", literal(17), "dune"))
+        )
+        == 17
+    )
+    assert (
+        await conn.scalar(
+            select(literal(18)).where(review_condition("sqlite", literal(18), "dune"))
+        )
+        is None
+    )
+
+
 # --- The Postgres implementation --------------------------------------------------------------
 
 
@@ -203,8 +273,50 @@ def test_postgres_condition_compiles_and_uses_websearch_to_tsquery() -> None:
 
     assert "websearch_to_tsquery" in sql
     assert "tsv @@" in sql
-    # to_tsquery and plainto_tsquery both raise on input like "alien AND", so neither may appear.
+    # plainto_tsquery treats operators as text; this implementation uses web-style query syntax.
     assert "plainto_tsquery" not in sql
+
+
+def test_postgres_title_condition_normalizes_uuid_text() -> None:
+    from aggregato.db.schema import works
+
+    condition = work_title_condition("postgresql", works.c.id, "dune")
+    sql = str(condition.compile(dialect=postgresql.dialect()))
+
+    assert "works.id IN" in sql
+    assert "CASE WHEN (anon_2.ref_id ~*" in sql
+    assert "CAST(anon_2.ref_id AS UUID)" in sql
+    assert "replace(CAST(works.id" not in sql
+
+
+def test_postgres_review_condition_uses_portable_item_prefix() -> None:
+    from aggregato.db.schema import entries
+
+    condition = review_condition("postgresql", entries.c.provider_item_id, "dune")
+    sql = str(condition.compile(dialect=postgresql.dialect()))
+
+    assert "entries.provider_item_id IN" in sql
+    assert "CASE WHEN (split_part(anon_2.ref_id, ':', 1) ~" in sql
+    assert "CAST(split_part(anon_2.ref_id, ':', 1) AS BIGINT)" in sql
+    assert "CAST(entries.provider_item_id" not in sql
+
+
+def test_postgres_combined_search_conditions_keep_independent_binds() -> None:
+    from aggregato.api.queries import review_matches
+    from aggregato.db.schema import entries
+
+    statement = select(entries.c.id).where(
+        or_(
+            title_matches("postgresql", entries.c.work_id, "echo"),
+            review_matches("postgresql", "echo"),
+        )
+    )
+    params = statement.compile(dialect=postgresql.dialect()).params
+
+    kinds = [value for name, value in params.items() if "search_kind" in name]
+    terms = [name for name in params if "search_term" in name]
+    assert set(kinds) == {str(SearchKind.WORK_TITLE), str(SearchKind.REVIEW_TEXT)}
+    assert len(terms) == 2
 
 
 def test_an_unsupported_dialect_is_rejected_rather_than_silently_degraded() -> None:

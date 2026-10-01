@@ -245,6 +245,15 @@ def test_where_clause_for_a_null_cursor_advances_by_id_only(order: SortOrder, op
     assert "logged_at <" not in sql
 
 
+def test_non_nullable_sort_column_omits_impossible_null_fallback() -> None:
+    sort_col = Column("logged_at", DateTime, nullable=False)
+    clause = keyset_where(sort_col, entries.c.id, "desc", Cursor("logged_at", TIE, "e-1"))
+    sql = str(clause.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+
+    assert "(logged_at, entries.id) <" in sql
+    assert "logged_at IS NULL" not in sql
+
+
 # --- helper ------------------------------------------------------------------------------------
 
 

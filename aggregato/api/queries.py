@@ -1,14 +1,12 @@
-"""The read path's shared query pieces (–).
+"""Shared query helpers for the read routes.
 
 Three endpoints read the log, and two of their filters are defaults that must not be re-decided per
 endpoint:
 
 * ``include_subunits`` defaults **false** — a record with a non-null ``subject_ref`` is a sub-unit
-  (an episode, a track) and is excluded from work-level results unless asked for (,
-  research.md ). Getting the direction backwards corrupts every statistic a per-episode logger
-  sees, silently, so the direction is decided once in :func:`aggregate_filters`.
-* ``include_deleted`` defaults **false** — tombstoned rows are excluded . They are never
-  hard-deleted, so the filter is the only thing standing between "deleted" and "still there".
+  (an episode or track) and is excluded from work-level results unless requested. The default is
+  decided once in :func:`aggregate_filters` so routes use the same filter.
+* ``include_deleted`` defaults **false** — tombstoned rows are excluded unless requested.
 
 Everything else here exists to keep the routes free of N+1 queries: :func:`work_aggregates` and
 :func:`credits_for` take a whole page of ids and answer in one statement each.
@@ -38,7 +36,7 @@ from aggregato.api.pagination import (
     keyset_where,
 )
 from aggregato.db.schema import creators, entries, opinions, provider_items, work_credits, works
-from aggregato.db.search import SearchKind, matching_ref_ids
+from aggregato.db.search import review_condition, work_title_condition
 from aggregato.domain.enums import MediaFamily, MediaType, Role
 from aggregato.domain.families import types_in_families
 
@@ -62,8 +60,8 @@ def aggregate_filters(
     Args:
         subject_ref_col: The table's ``subject_ref`` column.
         deleted_at_col: The table's ``deleted_at`` column.
-        include_subunits: When false — the default — sub-unit records are excluded .
-        include_deleted: When false — the default — tombstoned rows are excluded .
+        include_subunits: When false — the default — sub-unit records are excluded.
+        include_deleted: When false — the default — tombstoned rows are excluded.
 
     Returns:
         Conditions to AND into the query, possibly empty when the caller asked for everything.
@@ -82,9 +80,8 @@ def media_type_values(
 ) -> list[str] | None:
     """Resolve the ``media_type`` and ``media_family`` parameters to one list of type values.
 
-    A ``media_family`` expands to its member types  so individual types stay separately
-    addressable. Passing both is the union of the two, which is the only reading under which each
-    parameter still means what it says on its own.
+    A ``media_family`` expands to its member types so individual types stay separately
+    addressable. When both parameters are provided, this returns their union.
 
     Returns:
         The type values to filter on, or ``None`` when neither parameter was given.
@@ -172,7 +169,7 @@ async def fetch_page(
         conn: Connection to read on.
         statement: The filtered select, without ORDER BY or LIMIT.
         sort_col: The column named by the endpoint's sort key.
-        id_col: The primary key, the tiebreaker that makes the order total .
+        id_col: The primary key, the tiebreaker that makes the order total.
         sort: The cursor key, carried in the cursor so it cannot be replayed elsewhere.
         order: ``asc`` or ``desc``.
         cursor: The client's ``cursor`` parameter, or ``None`` for the first page.
@@ -183,7 +180,7 @@ async def fetch_page(
 
     Raises:
         ProblemError: 400 when ``cursor`` is not a cursor this API issued. Never a silent restart
-            from the beginning, which would re-serve page one forever .
+            from the beginning, which would re-serve page one forever.
     """
     direction: Callable[[ColumnElement[Any]], ColumnElement[Any]] = (
         (lambda column: column.asc()) if order == "asc" else (lambda column: column.desc())
@@ -318,7 +315,7 @@ async def credits_for(
 ) -> dict[uuid.UUID, list[Row[Any]]]:
     """Credits with their creator's name, for several works in one statement.
 
-    Ordered by ``position``, which is billing order where the platform expressed one .
+    Ordered by ``position``, which is billing order where the platform expressed one.
     """
     ids = list(dict.fromkeys(work_ids))
     if not ids:
@@ -346,44 +343,22 @@ async def credits_for(
     return grouped
 
 
-async def title_matches(conn: AsyncConnection, term: str) -> list[uuid.UUID]:
-    """Work ids whose indexed titles match ``term`` .
-
-    Uses :func:`~aggregato.db.search.matching_ref_ids` rather than a subquery, because rendering a
-    UUID to text differs between dialects and the subquery form silently matches nothing on one.
-    Ids the index holds that are no longer parseable as UUIDs are skipped rather than raising.
-    """
-    found: list[uuid.UUID] = []
-    for ref_id in await matching_ref_ids(conn, SearchKind.WORK_TITLE, term):
-        try:
-            found.append(uuid.UUID(ref_id))
-        except ValueError:  # pragma: no cover - only reachable from a hand-edited index
-            continue
-    return found
+def title_matches(dialect: str, work_id: ColumnElement[Any], term: str) -> ColumnElement[bool]:
+    """Restrict rows to indexed title matches without loading work IDs into Python."""
+    return work_title_condition(dialect, work_id, term)
 
 
-async def review_matches(conn: AsyncConnection, term: str) -> list[int]:
-    """``provider_item_id``s whose indexed review text matches ``term``.
-
-    The review index keys documents as ``"<provider_item_id>:<position>"`` (ingest/writer.py),
-    since an opinion's surrogate id is not known until after the upsert. The provider item is the
-    granularity a review-text search filters on: it is the record the review and entry came from.
-    """
-    found: list[int] = []
-    for ref_id in await matching_ref_ids(conn, SearchKind.REVIEW_TEXT, term):
-        item_id, _, _ = ref_id.partition(":")
-        if item_id.isdigit():
-            found.append(int(item_id))
-    return found
+def review_matches(dialect: str, term: str) -> ColumnElement[bool]:
+    """Restrict entries to provider items with matching indexed review text."""
+    return review_condition(dialect, entries.c.provider_item_id, term)
 
 
 def opinion_facts(*, include_deleted: bool) -> Any:
     """The per-provider-item rating and review facts an entry is scored and filtered by.
 
     An entry has no score of its own: the score belongs to an opinion. This joins the two on
-    ``provider_item_id`` — the same platform record the ingest writer created both from — which is
-    the tightest available pairing, and the only one that does not attribute a series rating to an
-    episode watch.
+    ``provider_item_id`` — the same platform record the ingest writer created both from. This
+    keeps a series rating from being attributed to an episode watch.
 
     Returns:
         A subquery with ``provider_item_id``, ``score`` and ``reviewed`` columns.
