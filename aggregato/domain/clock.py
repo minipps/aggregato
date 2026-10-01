@@ -1,8 +1,7 @@
 """The injectable time source.
 
-testing guidance makes time injectable rather than ambient so the scheduler and the retry ladder
-can be tested without sleeping. Everything that needs "now" takes a ``Clock``; nothing calls
-``datetime.now`` directly outside this module.
+The scheduler and retry logic take a ``Clock`` so tests control time without sleeping. Other code
+uses this interface rather than calling ``datetime.now`` directly.
 """
 
 from __future__ import annotations

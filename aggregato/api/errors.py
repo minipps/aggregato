@@ -1,4 +1,4 @@
-"""One error shape for every failure in the system (UI consistency guidance).
+"""One problem-detail response shape for API errors.
 
 Every response body below is the RFC 9457 problem detail from ``contracts/openapi.yaml`` —
 ``type``, ``title``, ``status``, ``detail``, ``instance`` — served as

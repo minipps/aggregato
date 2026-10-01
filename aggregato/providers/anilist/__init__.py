@@ -1,4 +1,4 @@
-"""AniList GraphQL provider , using the documented API surface only."""
+"""AniList GraphQL provider using the documented API surface."""
 
 from __future__ import annotations
 
@@ -142,8 +142,8 @@ class AniListProvider:
         ``COMPLETED``, or a brand new entry, could never be seen again. Re-reading both collections
         is two requests against a 90-per-minute limit, which is what makes that affordable.
 
-        Yielding no ``Checkpoint`` is the honest declaration for one unpaginated request per media
-        type: there is no mid-fetch position to resume from, so the provider accepts full resyncs
+        This provider yields no ``Checkpoint`` because each media type is fetched in one
+        unpaginated request with no mid-fetch position to resume from. It accepts full resyncs
         (contract §1) and the host stores no cursor to go stale.
         """
         config = _config(ctx)

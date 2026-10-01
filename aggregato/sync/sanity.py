@@ -1,4 +1,4 @@
-"""Guard deletion inference against implausibly small full-fetch windows ."""
+"""Guard deletion inference against implausibly small full-fetch windows."""
 
 from __future__ import annotations
 

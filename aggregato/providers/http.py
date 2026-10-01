@@ -1,14 +1,9 @@
-"""The host's HTTP client (research.md , ).
+"""Host-managed HTTP client for provider requests.
 
-This module lives in the providers tree because architecture.md puts it here, but it is **host
-code**: it is
-the one thing in this package allowed to import ``httpx``, and the import-linter contract in
-pyproject.toml names that single exemption. Every actual provider package still cannot reach
-``httpx``, which is the rule that matters — a provider able to construct its own client would be a
-provider able to raise its own rate limit.
-
-The politeness guarantees are therefore structural rather than reviewed. A provider is *handed* the
-client in ``ProviderContext.http`` and has no way to obtain an unwrapped one:
+This module is the only provider-tree module exempted from the import-linter rule against importing
+``httpx``. Bundled providers are checked by that rule and conformance tests; drop-ins are unreviewed
+Python code and are not sandboxed. Provider code must use the client supplied as
+``ProviderContext.http``:
 
 * a token bucket at ``max(provider_declared, host_floor_for_acquisition_mode)`` — a ``max``, never a
   plugin-supplied value, so declaring a huge rate cannot lower the floor;
@@ -336,7 +331,7 @@ class PoliteClient:
         self._process_host_state = (
             ProcessHostState(host_state_dir) if host_state_dir is not None else None
         )
-        # Injected so retry jitter is reproducible in tests (testing guidance).
+        # An injected RNG makes retry jitter reproducible in tests.
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._now = now or SYSTEM_CLOCK.now
         self._on_response = on_response
@@ -391,10 +386,10 @@ class PoliteClient:
 
         Raises:
             BlockedError: The platform answered 403 or 451. Retrying deepens a block, so this
-                short-circuits the ladder entirely .
+                short-circuits the ladder entirely.
             RateLimited: Still 429 after ``MAX_ATTEMPTS``, carrying ``Retry-After`` when the
                 platform sent one, so the scheduler can lengthen the interval for the whole
-                session .
+                session.
             httpx.TransportError: The transport failed on every attempt.
         """
         unexpected = set(kwargs) - _ALLOWED_REQUEST_KWARGS

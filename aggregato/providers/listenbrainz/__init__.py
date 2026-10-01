@@ -1,8 +1,7 @@
 """The ``listenbrainz`` provider: listens from ListenBrainz, or any API-compatible server.
 
-``acquisition`` is ``api`` and no lower surface was evaluated as sufficient (, contract §6):
-ListenBrainz publishes a documented REST API for a user's listens, so a feed, an export or a scrape
-would each carry strictly less than ``GET /1/user/{name}/listens`` already gives.
+``acquisition`` is ``api``. ListenBrainz publishes a documented REST API for a user's listens, so
+feeds, exports, or scraping provide no additional history beyond ``GET /1/user/{name}/listens``.
 
 **The base URL is configurable on purpose.** The wire surface is not ListenBrainz's alone — Maloja
 exposes a compatible endpoint under a path prefix (``http://maloja.lan:42010/apis/listenbrainz``) —
@@ -11,11 +10,11 @@ nothing assumes the path starts at ``/1/`` on the origin, because a prefix that 
 construction is a provider that only works against one server.
 
 Paging walks **backwards** in time by ``max_ts``. A ``Checkpoint`` after each page carries the
-oldest ``listened_at`` seen, so a run that dies resumes at that boundary without duplicates or gaps
-. ``incremental`` pins ``min_ts`` to the newest prior listen and walks only what is new.
+oldest ``listened_at`` seen, so a run that dies resumes at that boundary without duplicates or gaps.
+``incremental`` pins ``min_ts`` to the newest prior listen and walks only what is new.
 
 A listen is a **track** and nothing else. The payload names a release, but emitting an album entry
-per listen would fabricate a listening event the operator never had ; the release name rides
+per listen would fabricate a listening event the operator never had; the release name rides
 along in ``work.metadata`` instead.
 
 Tolerance is deliberate and asymmetric. A compatible server that omits fields ListenBrainz always
@@ -101,7 +100,7 @@ invent a new core namespace .
 
 
 class ListenBrainzConfig(BaseModel):
-    """Settings for the ListenBrainz provider — and the settings form the UI renders .
+    """Settings for the ListenBrainz provider — and the settings form the UI renders.
 
     Flat scalars with descriptions, because the description is the label an operator reads.
     """
@@ -174,7 +173,7 @@ class ListenBrainzProvider:
     # ListenBrainz documents its rate limit as a per-window budget reported in the X-RateLimit-*
     # headers (a few hundred requests per ten-second window), with no daily quota. The platform's
     # own limit constrains a *burst*, not a schedule, and the polling interval is a courtesy figure
-    # rather than a quota division . Fifteen minutes keeps a listening session near-live at
+    # rather than a quota division. Fifteen minutes keeps a listening session near-live at
     # ~96 requests a day, which is nothing next to that window budget.
     default_poll_interval: timedelta = timedelta(minutes=15)
 
@@ -185,10 +184,10 @@ class ListenBrainzProvider:
 
         Args:
             ctx: Host context. ``ctx.config`` must be a ``ListenBrainzConfig``; ``ctx.http`` is the
-                only client used .
+                only client used.
             cursor: ``{"newest_ts": int | None, "max_ts": int | None}`` from a previous checkpoint.
                 ``max_ts`` is the oldest ``listened_at`` already emitted. A resumed run continues
-                there rather than restarting . ``newest_ts`` is the high-water mark an
+                there rather than restarting. ``newest_ts`` is the high-water mark an
                 ``incremental`` run pins ``min_ts`` to.
             mode: ``incremental`` walks only listens newer than ``newest_ts``; anything else walks
                 the whole history backwards. Only ``poll`` and ``backfill`` are declared, so
@@ -237,7 +236,7 @@ class ListenBrainzProvider:
             newest_ts = max([*stamps, newest_ts]) if newest_ts is not None else max(stamps)
             max_ts = oldest
             # After the page, not before: the cursor names where to continue, so a crash here
-            # re-emits nothing that was already ingested .
+            # re-emits nothing that was already ingested.
             yield Checkpoint(cursor=Cursor(state={"newest_ts": newest_ts, "max_ts": max_ts}))
 
     async def now_playing(self, ctx: ProviderContext) -> NowPlayingItem | None:
@@ -262,7 +261,7 @@ class ListenBrainzProvider:
 
         ``listened_at`` is a unix timestamp *in the payload*, converted with
         ``datetime.fromtimestamp(ts, tz=UTC)`` — never a wall clock. Replay re-runs this over old
-        payloads, and a clock read would rewrite history on the second pass .
+        payloads, and a clock read would rewrite history on the second pass.
 
         Args:
             raw: A listen as ``fetch`` yielded it, or as replay read it back.
@@ -270,7 +269,7 @@ class ListenBrainzProvider:
         Returns:
             A ``NormalizedBatch`` — identical on every call for the same input. Every identifier in
             the payload is extracted  and ``role_raw`` keeps the platform's own field name
-            verbatim .
+            verbatim.
 
         Raises:
             StructureChangedError: The stored payload is not a listen — no ``listened_at``, or no
@@ -287,9 +286,8 @@ class ListenBrainzProvider:
                 NormalizedEntry(
                     kind=EntryKind.LISTEN,
                     logged_at=datetime.fromtimestamp(listened_at, tz=UTC),
-                    # `exact`, and honestly so: the platform recorded a unix second at submission
-                    # time. It is not a date the provider widened or narrowed, so there is nothing
-                    # here for 's precision to protect against.
+                    # The platform records a Unix second at submission time, so `exact` preserves
+                    # its stated precision.
                     logged_precision=LoggedPrecision.EXACT,
                     native_id=raw.native_id,
                 )
@@ -459,7 +457,7 @@ def _normalize_item(listen: Mapping[str, Any], *, native_id: str | None = None) 
             title=track_name,
             sequence_number=_track_number(additional),
             # The release is context for the track, not a work of its own: emitting an album
-            # entry per listen would invent an event the operator never logged .
+            # entry per listen would invent an event the operator never logged.
             metadata={"release_name": release_name} if release_name else {},
         ),
         credits=[
@@ -493,7 +491,7 @@ def _listens(body: object) -> list[dict[str, Any]]:
 
     Raises:
         StructureChangedError: The response is not that shape. Never a silent empty result, because
-            silence plus delete inference is how an archive gets erased .
+            silence plus delete inference is how an archive gets erased.
     """
     if not isinstance(body, dict):
         raise StructureChangedError("listens response is not a JSON object")
@@ -545,7 +543,7 @@ def _work_identifiers(
     additional: Mapping[str, Any],
     mapping: Mapping[str, Any],
 ) -> list[tuple[str, str, Confidence]]:
-    """Every work-level identifier in the payload, deduplicated and sorted .
+    """Every work-level identifier in the payload, deduplicated and sorted.
 
     Confidence is the real distinction between the two sources: ``additional_info`` is what the
     submitting client **asserted**, while ``mbid_mapping`` is ListenBrainz's own fuzzy match of the
@@ -554,7 +552,7 @@ def _work_identifiers(
 
     Returns:
         ``(namespace, value, confidence)`` triples, sorted so the output is order-stable across
-        calls: purity has to survive JSON dict ordering .
+        calls: purity has to survive JSON dict ordering.
     """
     seen: dict[tuple[str, str], Confidence] = {}
     sources = (

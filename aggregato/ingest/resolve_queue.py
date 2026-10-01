@@ -1,4 +1,4 @@
-"""Persist conservative identity ambiguities for an operator to decide ."""
+"""Persist conservative identity ambiguities for an operator to decide."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ async def queue_cross_family_creator_suggestions(
     family: MediaFamily,
     now: datetime,
 ) -> None:
-    """Surface same-name creators in another family without joining them .
+    """Surface same-name creators in another family without joining them.
 
     A family-local lookup in :func:`resolve_creators` intentionally creates a separate creator.
     This records the potentially useful cross-family relationship for operator review, preserving

@@ -1,4 +1,4 @@
-"""The operator's open identity-resolution queue ."""
+"""The operator's open identity-resolution queue."""
 
 from __future__ import annotations
 

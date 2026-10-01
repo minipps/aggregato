@@ -45,7 +45,7 @@ async def create_session(request: Request, response: Response) -> Response:
     """
     cookie_value, csrf = await issue_session(request)
     # Secure only over TLS: forcing it would silently break the plain-HTTP LAN install, which is a
-    # supported deployment . Uvicorn's --proxy-headers makes this correct behind a TLS proxy.
+    # supported deployment. Uvicorn's --proxy-headers makes this correct behind a TLS proxy.
     secure = request.url.scheme == "https"
     max_age = int(SESSION_TTL.total_seconds())
     response.set_cookie(

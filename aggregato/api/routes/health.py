@@ -1,7 +1,8 @@
-"""``GET /health`` — per-provider status .
+"""Return per-provider status and health summaries.
 
-Authenticated like every other route : there is no public health endpoint, because the
-provider list and its failure counts are operational detail about someone's private log.
+The route follows the configured authentication policy. Provider status and failure counts are
+operational details, so unauthenticated reads are available only when public read-only access is
+enabled.
 """
 
 from __future__ import annotations

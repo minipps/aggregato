@@ -1,9 +1,7 @@
-"""The closed vocabularies.
+"""Closed vocabularies used by providers and the storage contract.
 
-A provider cannot extend any of these ; widening one is a core change with a migration.
-Every one is a ``StrEnum`` stored as a text column with a ``CHECK`` constraint rather than a native
-database enum — adding a value then migrates identically on SQLite and Postgres, where a native
-enum would need an ``ALTER TYPE`` with no SQLite equivalent (research.md ).
+Providers cannot add values. Persisted enum columns use text with ``CHECK`` constraints rather
+than dialect-specific native enums; widening a stored vocabulary requires a migration.
 """
 
 from __future__ import annotations
@@ -56,9 +54,9 @@ grouping is a property of the kind, so storing it would mean two sources of trut
 
 
 class LoggedPrecision(StrEnum):
-    """How much of ``logged_at`` the platform actually knew .
+    """Precision the platform supplied for ``logged_at``.
 
-    There is deliberately no default anywhere: a default would silently fabricate exactness.
+    There is no default: one would silently claim more precision than the source supplied.
     """
 
     EXACT = "exact"
@@ -69,7 +67,7 @@ class LoggedPrecision(StrEnum):
 
 
 class Confidence(StrEnum):
-    """How an identity link was established. ``manual`` survives resync ."""
+    """How an identity link was established. Manual links are preserved during resync."""
 
     ASSERTED = "asserted"
     MATCHED = "matched"
@@ -132,11 +130,11 @@ class Capability(StrEnum):
     HAS_CREDITS = "has_credits"
     SCRAPES = "scrapes"
     PUSH = "push"
-    """Reserved. Declared for forward compatibility and ignored in v1."""
+    """Reserved; ignored by provider API v1."""
 
 
 class Acquisition(StrEnum):
-    """Which surface a provider takes its data from. Ordered best-to-worst ."""
+    """Source category declared by a provider; selection follows ``CONTRIBUTING.md``."""
 
     API = "api"
     FEED = "feed"

@@ -3,7 +3,7 @@
 A pure function over a total mapping, not a stored column (data-model.md §1): the grouping is a
 property of the type, so storing it would mean two sources of truth and a migration every time one
 drifted from the other. API ``media_family`` filters expand to a ``media_type IN (…)`` predicate,
-which keeps individual types separately addressable .
+which keeps individual types separately addressable.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def family_of(media_type: MediaType) -> MediaFamily:
 
 
 def types_in_family(family: MediaFamily) -> frozenset[MediaType]:
-    """The media types a ``media_family`` filter expands to ."""
+    """The media types a ``media_family`` filter expands to."""
     return _FAMILY_MEMBERS[family]
 
 

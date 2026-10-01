@@ -1,33 +1,9 @@
-"""Discovery of the providers that are installed — and nothing more.
+"""Discover provider metadata without importing provider packages.
 
-This is a function that lists what is on disk. It is not a plugin manager: it holds no registry
-state, fires no hooks, and never decides anything. Enablement, scheduling and credentials belong to
-the host, which reads this list and acts on it .
-
-**Discovery is inert.** Listing a provider must not fetch, authenticate, open a socket, write a
-file, or schedule anything — a fresh install makes exactly zero outbound requests , and
-discovery is where that is either true or false. It follows that importing a provider module must be
-side-effect free: module bodies define classes and construct the provider object, and that is all.
-Anything a provider needs to do to start working, it does in ``fetch`` or ``check``, when the host
-calls it because the operator enabled it.
-
-The convention, which third parties will follow, so it is deliberately boring:
-
-1. A provider is a **package** directly under ``aggregato/providers/`` — a directory with an
-   ``__init__.py``. Plain modules in this tree are host code (``base``, ``errors``, ``http``,
-   ``registry``) and are never treated as providers.
-2. The package's ``__init__.py`` exposes a **module-level object named ``provider``** implementing
-   the ``Provider`` protocol. One attribute, no factory, no decorator: a factory would only exist to
-   defer work, and no work is permitted at import time anyway.
-3. ``provider.id`` equals the package name. The slug is the directory, so the same name identifies
-   the provider in the tree, in the database, in the API and in ``tests/fixtures/<id>/``.
-4. Constructing the provider object is free of side effects: no I/O, no network, no clock.
-
-Bundled providers are ``reviewed=True`` because they ship with the core and went through review.
-Drop-in providers are read from the explicitly configured operator directory using a required
-static ``manifest.json``, marked ``reviewed=False``, and imported only inside the selected child
-process. A drop-in is trusted code with the child process's filesystem/network/resource limits;
-discovery is metadata parsing, not a sandbox.
+Bundled metadata comes from ``BUNDLED_MANIFESTS``; drop-ins use a static ``manifest.json`` in the
+configured directory. Discovery reads metadata without importing providers or making network
+requests, and marks drop-ins as unreviewed. The worker imports selected code in a child process;
+that boundary contains crashes and hangs but does not sandbox Python.
 """
 
 from __future__ import annotations
@@ -48,8 +24,8 @@ from typing import Any
 from .base import Provider
 from .manifest import BUNDLED_MANIFESTS
 
-#: This module's own directory, which is the provider tree. Derived from __file__ rather than by
-#: importing the package into itself, which is a cycle waiting to bite during interpreter startup.
+#: This module's directory. Derive it from ``__file__`` without importing the provider package
+#: during its own initialization.
 _PROVIDERS_DIR = Path(__file__).parent
 
 PROVIDER_ATTR = "provider"
@@ -58,12 +34,7 @@ PROVIDER_ATTR = "provider"
 
 @dataclass(frozen=True)
 class ProviderInfo:
-    """What is installed, without asking the provider to do anything.
-
-    Declared metadata only — everything here is a constant the provider states about itself, so
-    building it cannot cause work. The host uses it to render the provider list and to decide
-    scheduling for the ones the operator enabled.
-    """
+    """Validated static metadata used to list and schedule a provider."""
 
     id: str
     name: str
@@ -75,31 +46,27 @@ class ProviderInfo:
     schema_version: int
     default_poll_interval: timedelta
     reviewed: bool
-    """``True`` for bundled providers; ``False`` for drop-ins, which the UI labels as unreviewed
-    and warns about on the enable action ."""
+    """False for drop-ins, which the UI labels unreviewed."""
     api_visible: bool
     """Whether the provider should be advertised by the operator-facing API."""
     config_schema: dict[str, Any]
-    """Static settings schema; reading it never imports provider code."""
+    """Static settings schema loaded without importing provider code."""
     rating_scales: tuple[Any, ...]
-    """Host-owned rating declarations used by parent-side validation and writing."""
+    """Host-side rating declarations used to validate normalized opinions."""
 
 
 def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
-    """List installed providers using static manifests only.
+    """Return installed provider metadata in ID order without importing provider modules.
 
-    A provider package is extension code, not metadata. Discovery therefore reads host-owned
-    bundled manifests or a drop-in's manifest.json and never imports __init__.py. A drop-in without
-    a manifest is warned about and skipped, and a malformed drop-in is quarantined on its own, so
-    unrelated extension files cannot hide bundled or otherwise valid providers.
+    Bundled providers use host-owned manifests; drop-ins use ``manifest.json``. Malformed drop-ins
+    are warned about and skipped independently.
 
     Returns:
-        One ``ProviderInfo`` per bundled provider, sorted by ``id`` so the UI order is stable.
+        One ``ProviderInfo`` per discovered provider, sorted by ``id``.
 
     Raises:
-        RuntimeError: A package in this tree does not follow the convention — no ``provider``
-            attribute, or an ``id`` that disagrees with its directory name. A merge gate, not a
-            runtime condition: it means a bundled provider is malformed.
+        RuntimeError: The drop-in path is not a directory, bundled metadata is invalid, or a
+            drop-in ID conflicts with a bundled provider.
     """
     infos = [_info(name, reviewed=True) for name in _bundled_package_names()]
     drop_ins = _discover_drop_ins(drop_in_dir)
@@ -114,17 +81,18 @@ def discover_providers(drop_in_dir: Path | None = None) -> list[ProviderInfo]:
 
 
 def load_provider(provider_id: str, drop_in_dir: Path | None = None) -> Provider:
-    """Return the provider object for ``provider_id``.
+    """Import and return the provider object for ``provider_id``.
 
     Args:
         provider_id: The slug, equal to the package name.
 
     Returns:
-        The module-level ``provider`` object. It has not been asked to do anything yet.
+        The module-level ``provider`` object.
 
     Raises:
         LookupError: No installed provider has that id.
-        RuntimeError: The package exists but breaks the convention (see ``discover_providers``).
+        RuntimeError: The module has no valid ``provider`` object, or its ID does not match the
+            package name.
     """
     for info in discover_providers(drop_in_dir):
         if info.id == provider_id:

@@ -1,7 +1,7 @@
-"""Conservative work identity resolution .
+"""Resolve work identity conservatively.
 
-The order is deliberate: provider-asserted identifiers are proof, an exact title/year key is only
-usable when it has one candidate, and every ambiguity creates a separate work plus a queue item.
+Provider-asserted identifiers take precedence. Title/year matching is used only when it has one
+candidate; multiple title/year candidates are retained for review with a new work.
 """
 
 from __future__ import annotations

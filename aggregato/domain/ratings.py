@@ -1,6 +1,6 @@
-"""Rating normalization to 0–100 (, research.md ).
+"""Normalize declared provider rating scales to values from 0 to 100.
 
-Two kinds of scale, because platforms genuinely have two:
+Two scale kinds are supported:
 
 * **linear** — 0–10 in halves, 1–5 in whole stars. ``round(100 * (raw - min) / (max - min))``.
 * **ordinal** — a fixed set of labels with no arithmetic between them ("liked" vs "loved", a
@@ -9,7 +9,7 @@ Two kinds of scale, because platforms genuinely have two:
 
 The normalized value is **derived and recomputable**: the raw value and the scale id are what get
 stored, so a scale definition corrected later is repaired by replay rather than by re-syncing every
-platform (the same principle as normalization replay, research.md ).
+platform; replay can recompute it from the retained raw value and scale id.
 
 A normalized value is comparable *within* a scale. It is not a cross-platform equivalence claim,
 and the API says so rather than leaving the caller to assume otherwise.

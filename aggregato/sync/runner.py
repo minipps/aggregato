@@ -1,20 +1,8 @@
-"""Spawning and supervising one sync run (research.md , ).
+"""Spawn and supervise one sync child process.
 
-The parent owns everything the child cannot be trusted with: the database, the cursor, retry policy,
-and the clock on the child's life. It reads the child's stdout line by line, validates each line,
-and performs every write itself.
-
-What supervision has to survive, because each has happened to somebody:
-
-* the child **crashes** — non-zero exit, no error message. Classified ``internal``.
-* the child is **killed** — SIGKILL, no chance to report anything. The API keeps serving and other
-  providers keep syncing, because they are different processes .
-* the child **hangs** — no output, no exit. Killed at the wall clock, then classified (§6.7).
-* the child **lies** — malformed lines, an unknown message type, an unbounded line. Rejected at the
-  boundary rather than written .
-
-A run that fails **after** checkpointing is ``partial``, and the cursor advances only as far as the
-last checkpoint the child actually flushed — never to where the child said it got to .
+The parent validates the child's JSON-lines output, writes all records, and enforces a wall-clock
+limit. It advances the cursor only through checkpoints the child flushed. A failure after a
+checkpoint leaves the run partial and preserves records already received.
 """
 
 from __future__ import annotations
@@ -71,7 +59,7 @@ class RunOutcome:
     status: RunStatus
     #: Records the child produced, paired with their raw payloads, in arrival order.
     records: list[tuple[RawRecord, NormalizedBatch]] = field(default_factory=list)
-    #: Records the child could not normalize, to store for replay .
+    #: Records the child could not normalize, to store for replay.
     failures: list[FailureMessage] = field(default_factory=list)
     #: The last checkpoint the child actually flushed. The cursor advances to here and no further.
     cursor_after: Cursor | None = None
@@ -106,7 +94,7 @@ class RunRequest:
     #: Shared host pacing state stored outside the child so separately spawned runs coordinate.
     host_state_dir: Path | None = None
     #: Stored raw records to normalize again after a provider schema-version bump.  This is kept
-    #: separate from ``fetch`` so replay is credential-free and makes no network request .
+    #: separate from ``fetch`` so replay is credential-free and makes no network request.
     replay_records: list[RawRecord] = field(default_factory=list)
     wall_clock_seconds: float = DEFAULT_WALL_CLOCK_SECONDS
 
@@ -155,7 +143,7 @@ async def execute_run(
     Returns:
         A :class:`RunOutcome`. This function does not raise for provider failures — a failed run is
         an outcome to record, not an exception to propagate, or one bad provider would take down the
-        scheduler loop .
+        scheduler loop.
     """
     spawn_options: dict[str, Any] = {
         "stdin": asyncio.subprocess.PIPE,
@@ -255,13 +243,13 @@ async def execute_run(
 
     if outcome.error_class is not None:
         # The child reported and exited cleanly. Partial if it had already checkpointed, because the
-        # work before the checkpoint is real and must not be redone .
+        # work before the checkpoint is real and must not be redone.
         outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
         return outcome
 
     if process.returncode != 0:
         # Crashed or was killed without reporting. There is nothing to classify from, so `internal`
-        # with the exit code is the honest answer.
+        # The exit code is the only available failure detail, so classify it as internal.
         outcome.status = RunStatus.PARTIAL if outcome.checkpointed else RunStatus.FAILED
         outcome.error_class = ErrorClass.INTERNAL
         outcome.error_message = (
@@ -303,7 +291,7 @@ async def _consume(
     """Read and validate the child's stdout, message by message.
 
     Every line is validated here, in the parent, before anything derived from it is kept: the
-    boundary between plugin-controlled output and host data .
+    boundary between plugin-controlled output and host data.
     """
     assert process.stdout is not None
     total_bytes = 0

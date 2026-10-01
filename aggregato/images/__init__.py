@@ -1,1 +1,1 @@
-"""Lazy, content-addressed cache for platform-supplied images (research.md )."""
+"""Lazy, content-addressed cache for platform-supplied images."""

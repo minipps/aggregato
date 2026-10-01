@@ -1,9 +1,7 @@
-"""Host-owned metadata for bundled providers.
+"""Host-owned static metadata for bundled providers.
 
-Discovery must be safe even when a provider package is broken or unreviewed.  The metadata used by
-the API, scheduler, and parent-side writer therefore lives here rather than being imported from a
-provider module.  A provider module is loaded only after a worker has selected that provider for a
-child run.
+The API, scheduler, and parent-side validation read these manifests without importing provider
+code. The worker imports a selected provider in its child process.
 """
 
 from __future__ import annotations
@@ -42,8 +40,8 @@ def _string(
     value: dict[str, Any] = {
         "type": "string",
         "description": description,
-        # The host can safely render only fields explicitly annotated by the manifest author.
-        # Drop-in providers without this annotation get no settings reflected in the API.
+        # Only fields marked public are included in public settings responses. Unmarked drop-in
+        # fields stay private.
         "x-aggregato-public": not secret,
     }
     if default is not None:

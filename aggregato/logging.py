@@ -1,11 +1,7 @@
-"""JSON structured logging with a ``contextvars`` run binding (research.md ).
+"""JSON logging with run context fields.
 
-Stdlib ``logging`` plus a formatter and a filter, no dependency: ``structlog`` is the upgrade path
-if binding ever gets painful, noted rather than pre-adopted. ``sync_runs.log_excerpt``
-reads the tail of these records for a failed run, so every field it needs is on the record itself.
-
-The module name shadows nothing: Python 3 imports are absolute, so ``import logging`` below is the
-stdlib module.
+The formatter and filter use the standard ``logging`` module. Run fields are bound with
+``contextvars`` and are available to the sync-run log capture.
 """
 
 from __future__ import annotations
