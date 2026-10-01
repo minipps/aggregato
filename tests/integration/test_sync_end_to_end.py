@@ -131,6 +131,7 @@ async def enable_provider(
         await conn.execute(
             provider_state.insert().values(
                 provider_id=provider_id,
+                next_run_at=NOW,
                 effective_interval_seconds=interval_seconds,
                 consecutive_failures=0,
                 retry_step=0,
@@ -154,7 +155,7 @@ async def count(engine: AsyncEngine, table: object) -> int:
 
 
 async def test_a_newly_enabled_provider_is_immediately_due(engine: AsyncEngine) -> None:
-    """``next_run_at IS NULL`` counts as due, so a first run needs no separate code path."""
+    """Enable writes an explicit due time; a NULL schedule remains unscheduled."""
     await enable_fixture(engine)
     due = await due_providers(engine, now=NOW)
     assert [d.provider_id for d in due] == ["fixture"]

@@ -24,8 +24,10 @@ from typing import Any
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+import aggregato.ingest.writer as writer_module
 from aggregato.db.engine import create_engine
 from aggregato.db.schema import (
     creator_aliases,
@@ -127,11 +129,11 @@ async def conn(tmp_path: Path) -> AsyncIterator[AsyncConnection]:
         await engine.dispose()
 
 
-def ctx(now: datetime = NOW) -> WriteContext:
+def ctx(now: datetime = NOW, *, schema_version: int = 1) -> WriteContext:
     return WriteContext(
         provider_id="test",
         sync_run_id=1,
-        schema_version=1,
+        schema_version=schema_version,
         now=now,
         rating_scales={STARS_5.id: STARS_5},
     )
@@ -246,6 +248,83 @@ async def test_a_changed_rating_updates_rather_than_duplicating(conn: AsyncConne
     assert Decimal(str(row.rating_raw)) == Decimal("4.5")
     # (4.5 - 0.5) / (5 - 0.5) * 100 = 88.89 -> 89
     assert row.rating_normalized == 89
+
+
+async def test_replay_rejection_preserves_existing_facts_and_schema_version(
+    conn: AsyncConnection,
+) -> None:
+    raw = RawRecord(native_id="replay-item", payload={"id": "replay-item"})
+    old = batch(rating=Decimal("4.5"), review="distinctive replay review")
+    await write_batches(conn, ctx(), [(raw, old)])
+    old_opinion = (await conn.execute(select(opinions.c.id))).scalar_one()
+    item_id = (await conn.execute(select(provider_items.c.id))).scalar_one()
+
+    invalid = NormalizedBatch(
+        work=NormalizedWork(media_type=MediaType.FILM, title="The Sound of Rain"),
+        opinions=[NormalizedOpinion(rating_raw=Decimal("4"), rating_scale_id="undeclared-scale")],
+    )
+    counts = await write_batches(
+        conn, ctx(schema_version=2), [(raw, invalid)], replace_existing=True
+    )
+
+    assert counts.failed == 1
+    assert counts.written == 0
+    assert (await conn.execute(select(entries.c.deleted_at))).scalar_one() is None
+    opinion = (
+        await conn.execute(select(opinions.c.deleted_at).where(opinions.c.id == old_opinion))
+    ).scalar_one()
+    assert opinion is None
+    assert (await conn.execute(select(provider_items.c.schema_version))).scalar_one() == 1
+    assert await matching_ref_ids(conn, SearchKind.REVIEW_TEXT, "distinctive") == [f"{item_id}:0"]
+
+
+async def test_replay_write_failure_rolls_back_retirement(
+    conn: AsyncConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = RawRecord(native_id="replay-item", payload={"id": "replay-item"})
+    old = batch(rating=Decimal("4.5"), review="distinctive replay review")
+    await write_batches(conn, ctx(), [(raw, old)])
+    old_opinion = (await conn.execute(select(opinions.c.id))).scalar_one()
+    item_id = (await conn.execute(select(provider_items.c.id))).scalar_one()
+
+    async def fail_after_retirement(*_args: Any, **_kwargs: Any) -> int:
+        raise SQLAlchemyError("injected provider-item upsert failure")
+
+    monkeypatch.setattr(writer_module, "_upsert_provider_item", fail_after_retirement)
+    empty = NormalizedBatch(
+        work=NormalizedWork(media_type=MediaType.FILM, title="The Sound of Rain")
+    )
+    counts = await write_batches(conn, ctx(schema_version=2), [(raw, empty)], replace_existing=True)
+
+    assert counts.failed == 1
+    assert (await conn.execute(select(entries.c.deleted_at))).scalar_one() is None
+    opinion = (
+        await conn.execute(select(opinions.c.deleted_at).where(opinions.c.id == old_opinion))
+    ).scalar_one()
+    assert opinion is None
+    assert (await conn.execute(select(provider_items.c.schema_version))).scalar_one() == 1
+    assert await matching_ref_ids(conn, SearchKind.REVIEW_TEXT, "distinctive") == [f"{item_id}:0"]
+
+
+async def test_successful_replay_retires_only_removed_derivatives(conn: AsyncConnection) -> None:
+    raw = RawRecord(native_id="replay-item", payload={"id": "replay-item"})
+    old = batch(rating=Decimal("4.5"), review="distinctive replay review")
+    await write_batches(conn, ctx(), [(raw, old)])
+    old_opinion = (await conn.execute(select(opinions.c.id))).scalar_one()
+
+    empty = NormalizedBatch(
+        work=NormalizedWork(media_type=MediaType.FILM, title="The Sound of Rain")
+    )
+    counts = await write_batches(conn, ctx(schema_version=2), [(raw, empty)], replace_existing=True)
+
+    assert counts.written == 1
+    assert (await conn.execute(select(entries.c.deleted_at))).scalar_one() is not None
+    opinion = (
+        await conn.execute(select(opinions.c.deleted_at).where(opinions.c.id == old_opinion))
+    ).scalar_one()
+    assert opinion is not None
+    assert (await conn.execute(select(provider_items.c.schema_version))).scalar_one() == 2
+    assert await matching_ref_ids(conn, SearchKind.REVIEW_TEXT, "distinctive") == []
 
 
 async def test_a_rating_scale_definition_cannot_change_in_place(conn: AsyncConnection) -> None:

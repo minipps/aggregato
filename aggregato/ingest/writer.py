@@ -1,35 +1,22 @@
-"""The validated writer — the only thing in the system that writes ingested data .
+"""Validate provider output and persist it through SQLAlchemy Core.
 
-Everything a provider produces passes through here, and it is validated **in this process**, never
-trusted from the child: the child runs plugin code (research.md , ). A record that fails
-validation becomes an ``ingest_failure`` with its payload, and the run continues .
-
-Three properties this module exists to guarantee:
-
-**Idempotency .** A resync writes nothing new. For rows the platform identifies, that is a
-unique constraint plus ``ON CONFLICT`` — never a pre-``SELECT``, which races. For entries the
-platform gives no event id, there is no key to conflict on, so the writer deduplicates on
-``(provider_item_id, kind, logged_at, subject_ref)`` itself. That fallback is the interesting half:
-without it, every resync of a feed without event ids would duplicate the entire history.
-
-**Search stays in step.** The search index is written in the **same transaction** as the row it
-describes (research.md ). A rolled-back write cannot leave a searchable ghost, and there is one
-implementation of *when* to index rather than two dialects' worth of trigger DDL.
-
-**Nothing is destroyed.** Deletes are tombstones (``deleted_at``), never row removal, and the
-inferred-delete path is guarded three ways over (see :func:`infer_deletes`,  completes it).
+Each record is written in a savepoint. Validation and database failures roll back that record,
+capture an ingest failure, and allow later records to continue. During schema replay, retirement of
+old entries, opinions, and review search documents shares the savepoint with the replacement, so a
+rejected record keeps its last valid facts and item version.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from collections import ChainMap
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -99,11 +86,11 @@ async def infer_deletes(
     provider_id: str,
     seen_since: datetime,
 ) -> int:
-    """Tombstone stale entries only after dispatch has passed all three safety guards.
+    """Tombstone facts from provider items not seen since a full run began.
 
-    This function deliberately has no configuration or run-status arguments: callers must prove
-    those guards before reaching this destructive operation, making it impossible for a normal
-    incremental write to accidentally infer deletion.
+    Dispatch is responsible for checking full mode, provider capability, operator opt-in, window
+    sanity, and record failures before calling this function; this function does not enforce those
+    conditions itself.
     """
     stale_items = select(provider_items.c.id).where(
         provider_items.c.provider_id == provider_id,
@@ -126,15 +113,18 @@ async def write_batches(
     conn: AsyncConnection,
     ctx: WriteContext,
     records: Sequence[tuple[RawRecord, NormalizedBatch]],
+    *,
+    replace_existing: bool = False,
 ) -> WriteCounts:
     """Write every batch, capturing the ones that fail without stopping.
 
     Args:
-        conn: Connection inside one transaction. The caller owns commit, so a failed run leaves the
-            archive exactly as it was.
+        conn: Connection inside the caller's transaction. Accepted records remain pending for the
+            caller to commit; a rejected record is rolled back to its savepoint and gets a failure
+            row in the surrounding transaction.
         ctx: Provider, run, and clock context.
         records: Pairs of the raw record and what ``normalize`` made of it. The raw record is needed
-            because ``provider_items.raw_payload`` stores it as the replay source .
+            because ``provider_items.raw_payload`` stores it as the replay source.
 
     Returns:
         Counts for the run row.
@@ -146,7 +136,7 @@ async def write_batches(
         # Resolution creates rows as it goes and caches the result for the rest of the batch. Keep
         # both effects record-local until the savepoint commits: a later rating/index failure must
         # not leave either a rolled-back creator id in the memo or a partial relational graph.
-        record_memo = dict(creator_memo)
+        record_memo: CreatorResolutionMemo = {}
         record_counts = (
             counts.entries_written,
             counts.entries_retracted,
@@ -156,7 +146,15 @@ async def write_batches(
         failure_stage = IngestStage.VALIDATE
         failure_error: BaseException | None = None
         try:
-            await _write_one(conn, ctx, raw, batch, counts, record_memo)
+            await _write_one(
+                conn,
+                ctx,
+                raw,
+                batch,
+                counts,
+                ChainMap(record_memo, creator_memo),
+                replace_existing=replace_existing,
+            )
         except (ValidationRejection, ValueError) as exc:
             failure_error = exc
             await savepoint.rollback()
@@ -202,14 +200,21 @@ async def _write_one(
     batch: NormalizedBatch,
     counts: WriteCounts,
     creator_memo: CreatorResolutionMemo,
+    *,
+    replace_existing: bool = False,
 ) -> None:
     """Write one normalized batch. Raises rather than half-writing."""
     batch = _canonicalize_batch_identifiers(batch)
     _validate(ctx, batch)
+    retired_work_ids = (
+        await _retire_replay_derivatives(conn, ctx, raw.native_id)
+        if replace_existing and raw.native_id is not None
+        else set()
+    )
 
     # A manual queue decision changes the provider item's durable work link.  Honor it before
     # reevaluating automatic evidence on resync: otherwise a cautious operator correction would be
-    # overwritten by the exact heuristic it was made to correct .
+    # overwritten by the exact heuristic it was made to correct.
     existing_work_id = (
         await conn.execute(
             select(provider_items.c.work_id).where(
@@ -248,7 +253,7 @@ async def _write_one(
     if batch.work.image_url:
         # Backfill artwork onto a work this run did not create: a matched, manually linked, or
         # pre-artwork-support work carries NULL forever otherwise. Only when NULL — an existing
-        # URL is another provider's stated payload, and resync must not churn it .
+        # URL is another provider's stated payload, and resync must not churn it.
         await conn.execute(
             update(works)
             .where(works.c.id == work_id, works.c.image_url.is_(None))
@@ -276,6 +281,7 @@ async def _write_one(
         source=ctx.provider_id,
         now=ctx.now,
         memo=creator_memo,
+        work_id=work_id,
     )
     await queue_cross_family_creator_suggestions(
         conn,
@@ -318,8 +324,10 @@ async def _write_one(
         await _upsert_opinion(conn, ctx, work_id, item_id, opinion)
         counts.opinions_written += 1
 
-    # In the same transaction as the rows above (research.md ).
+    # Keep the search index in the same transaction as the rows it describes.
     await rebuild_work_document(conn, work_id)
+    for retired_work_id in retired_work_ids - {work_id}:
+        await rebuild_work_document(conn, retired_work_id)
     for position, opinion in enumerate(batch.opinions):
         if opinion.review_text:
             await index_document(
@@ -330,12 +338,44 @@ async def _write_one(
             )
 
 
+async def _retire_replay_derivatives(
+    conn: AsyncConnection, ctx: WriteContext, native_id: str
+) -> set[uuid.UUID]:
+    """Retire one item's old facts inside the same savepoint as its replacement."""
+    row = (
+        await conn.execute(
+            select(provider_items.c.id, provider_items.c.work_id).where(
+                provider_items.c.provider_id == ctx.provider_id,
+                provider_items.c.native_id == native_id,
+            )
+        )
+    ).first()
+    if row is None:
+        return set()
+
+    item_id = int(row.id)
+    await conn.execute(
+        update(entries)
+        .where(entries.c.provider_item_id == item_id, entries.c.deleted_at.is_(None))
+        .values(deleted_at=ctx.now)
+    )
+    await conn.execute(
+        update(opinions)
+        .where(opinions.c.provider_item_id == item_id, opinions.c.deleted_at.is_(None))
+        .values(deleted_at=ctx.now)
+    )
+    await conn.execute(
+        text("DELETE FROM search_index WHERE kind = :kind AND ref_id LIKE :ref_prefix"),
+        {"kind": str(SearchKind.REVIEW_TEXT), "ref_prefix": f"{item_id}:%"},
+    )
+    return {row.work_id} if row.work_id is not None else set()
+
+
 def _validate(ctx: WriteContext, batch: NormalizedBatch) -> None:
     """Re-validate what the child sent, at the boundary, before anything is written.
 
-    The Pydantic models already rejected most of this on the way in, but the child process runs
-    plugin code and this is the parent. Re-checking the things a plugin could get wrong is cheap;
-    trusting them is how a bad ``subject_ref`` reaches storage (, research.md ).
+    The child process runs plugin code. Repeat validation in the parent before accepting values
+    into the database, including a ``subject_ref`` check that rejects empty objects.
     """
     for entry in batch.entries:
         # validate_subject_ref, not the model's own type: the parent-side check is the one that
@@ -390,7 +430,7 @@ def _canonicalize_batch_identifiers(batch: NormalizedBatch) -> NormalizedBatch:
 def _normalized_rating(ctx: WriteContext, opinion: Any) -> int | None:
     """Derive the 0–100 value.
 
-    Recomputable from stored data, so a corrected scale is replayable (research.md ).
+    Recomputable from stored raw values and their scale id, so a corrected scale can be replayed.
     """
     if opinion.rating_raw is None:
         return None
@@ -529,7 +569,7 @@ async def _upsert_entry(
     * ``native_id`` absent — there is no key to conflict on, so the writer looks for an existing row
       matching ``(provider_item_id, kind, logged_at, subject_ref)`` and skips if it finds one. This
       is the fallback data-model.md §2 requires; without it a feed with no event ids duplicates its
-      whole history on every resync .
+      whole history on every resync.
     """
     subject = entry.subject_ref.as_dict() if entry.subject_ref else None
     values = {
@@ -662,8 +702,8 @@ async def _upsert_opinion(
 async def ensure_rating_scales(conn: AsyncConnection, scales: Sequence[RatingScale]) -> None:
     """Store the scales a provider declares, so ``rating_normalized`` stays recomputable.
 
-    Without the scale definition in the database, a corrected scale could not be replayed and the
-    normalized values would be unrepairable without re-syncing every platform (research.md ).
+    Retaining scale definitions lets normalization replay repair derived values without fetching
+    provider history again.
     """
     from aggregato.db.schema import rating_scales
 

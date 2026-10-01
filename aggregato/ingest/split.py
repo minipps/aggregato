@@ -1,4 +1,4 @@
-"""Credit-granular, reversible creator splits ."""
+"""Credit-granular, reversible creator splits."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from aggregato.db.schema import creators, merge_log, work_credits
-from aggregato.domain.enums import ResolutionSubject
+from aggregato.db.schema import creators, merge_log, work_credits, works
+from aggregato.domain.enums import Confidence, ResolutionSubject
 from aggregato.ingest.merge import _snapshot
 from aggregato.ingest.titles import normalize_title
 
@@ -29,6 +29,17 @@ async def split_creator(
     source = (await conn.execute(select(creators).where(creators.c.id == creator_id))).first()
     if source is None:
         raise LookupError("unknown creator")
+    selected = list(
+        await conn.execute(select(work_credits).where(work_credits.c.id.in_(credit_ids)))
+    )
+    if len(selected) != len(credit_ids) or any(
+        credit.creator_id != creator_id for credit in selected
+    ):
+        raise LookupError("one or more credits do not belong to this creator")
+    work_ids = {credit.work_id for credit in selected}
+    await conn.execute(
+        select(works.c.id).where(works.c.id.in_(work_ids)).order_by(works.c.id).with_for_update()
+    )
     credits = list(
         await conn.execute(
             select(work_credits).where(
@@ -61,9 +72,16 @@ async def split_creator(
             updated_at=now,
         )
     )
-    await conn.execute(
-        update(work_credits).where(work_credits.c.id.in_(credit_ids)).values(creator_id=new_id)
-    )
+    for credit in credits:
+        await conn.execute(
+            update(work_credits)
+            .where(work_credits.c.id == credit.id)
+            .values(
+                creator_id=new_id,
+                link_confidence=str(Confidence.MANUAL),
+                manual_from_creator_id=credit.manual_from_creator_id or creator_id,
+            )
+        )
     return (
         await conn.execute(
             merge_log.insert()

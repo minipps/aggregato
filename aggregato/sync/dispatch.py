@@ -1,19 +1,8 @@
-"""One sync run, end to end: spawn, ingest, classify, reschedule.
+"""Own the parent-side lifecycle for one provider run.
 
-This is the seam where the four pieces built separately meet — :mod:`runner` supervises the child,
-:mod:`aggregato.ingest.writer` writes what it produced, :mod:`errors` classifies a failure, and
-:mod:`retry` decides when to try again. Keeping it separate means the scheduler holds a poll loop
-and nothing else, and the API's "sync now" path calls the same route rather than a parallel one that
-drifts.
-
-The order matters and is not arbitrary:
-
-1. Write the ``sync_runs`` row **first**, because ``ingest_failures`` references it and because a
-   run that vanishes without a trace is the failure mode operators cannot diagnose.
-2. Run the child, and write what it produced even if it ended badly — records that arrived and
-   validated are real, and discarding them would make a mid-run failure lose data .
-3. Advance the cursor only to the last checkpoint the child actually flushed. Never further.
-4. Reschedule from the ladder's decision, never from a number computed here.
+Dispatch opens the run row, supervises the child, ingests returned records, and releases the
+provider through the scheduler. Records produced before a child failure are still ingested, while
+the cursor advances only to a checkpoint the child flushed.
 """
 
 from __future__ import annotations
@@ -21,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.config import Config
@@ -44,7 +34,7 @@ from aggregato.domain.enums import (
 )
 from aggregato.domain.models import Cursor, RawRecord
 from aggregato.ingest.failures import capture_failure
-from aggregato.ingest.normalize_replay import records_needing_replay, tombstone_replay_derivatives
+from aggregato.ingest.normalize_replay import records_needing_replay
 from aggregato.ingest.resolve_queue import supersede_stale_open_items
 from aggregato.ingest.writer import WriteContext, ensure_rating_scales, infer_deletes, write_batches
 from aggregato.providers.registry import ProviderInfo, discover_providers
@@ -59,94 +49,20 @@ from aggregato.sync.jobs import (
 )
 from aggregato.sync.progress import RunProgress
 from aggregato.sync.retry import plan_after_failure, plan_after_success
-from aggregato.sync.runner import RunOutcome, RunRequest, execute_run
+from aggregato.sync.runner import (
+    MAX_PAYLOAD_BYTES,
+    MAX_REPLAY_RECORDS,
+    RunOutcome,
+    RunRequest,
+    execute_run,
+)
 from aggregato.sync.sanity import assess_window
 from aggregato.sync.scheduler import DueProvider, release
 
 log = logging.getLogger(__name__)
 
-
-@dataclass(frozen=True, slots=True)
-class RunPlan:
-    """Immutable child invocation plan shared by check, replay, import, and fetch paths."""
-
-    provider_id: str
-    mode: FetchMode
-    config: dict[str, object]
-    secrets: dict[str, str]
-    provider_dir: Path | None
-    host_state_dir: Path | None
-    cursor: Cursor | None = None
-    import_path: Path | None = None
-    replay_records: tuple[RawRecord, ...] = ()
-
-    def request(self) -> RunRequest:
-        """Build the runner request at the one child-process boundary."""
-        return RunRequest(
-            provider_id=self.provider_id,
-            mode=self.mode,
-            cursor=self.cursor,
-            config=self.config,
-            secrets=self.secrets,
-            import_path=self.import_path,
-            provider_dir=self.provider_dir,
-            host_state_dir=self.host_state_dir,
-            replay_records=list(self.replay_records),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RunFinalization:
-    """All durable outcome fields passed to the normal run release transition."""
-
-    status: ProviderStatus
-    next_run_at: datetime | None
-    retry_step: int
-    consecutive_failures: int
-    last_success_at: datetime | None
-    last_error: dict[str, str] | None
-    effective_interval_seconds: int | None
-    run_status: RunStatus
-    items_seen: int
-    items_written: int
-    items_failed: int
-    error_class: ErrorClass | None
-    error_message: str | None
-    log_excerpt: str | None
-    log: str | None
-    raw_responses: list[dict[str, object]]
-    cursor_after: dict[str, object] | None
-    requested_lineage_id: uuid.UUID | None
-
-    async def persist(
-        self, engine: AsyncEngine, *, provider_id: str, run_id: int, now: datetime
-    ) -> None:
-        """Apply the finalization through the scheduler's single transaction owner."""
-        await release(
-            engine,
-            provider_id=provider_id,
-            status=self.status,
-            next_run_at=self.next_run_at,
-            retry_step=self.retry_step,
-            consecutive_failures=self.consecutive_failures,
-            now=now,
-            last_success_at=self.last_success_at,
-            last_error=self.last_error,
-            effective_interval_seconds=self.effective_interval_seconds,
-            run_id=run_id,
-            run_status=self.run_status,
-            items_seen=self.items_seen,
-            items_written=self.items_written,
-            items_failed=self.items_failed,
-            error_class=self.error_class,
-            error_message=self.error_message,
-            log_excerpt=self.log_excerpt,
-            log=self.log,
-            raw_responses=self.raw_responses,
-            cursor_after=self.cursor_after,
-            phase=RunPhase.FINISHED if self.run_status is not RunStatus.FAILED else RunPhase.FAILED,
-            requested_lineage_id=self.requested_lineage_id,
-        )
+# Keep each replay child well below its protocol caps so a large archive spans committed batches.
+_REPLAY_BATCH_RECORDS = min(1_000, MAX_REPLAY_RECORDS)
 
 
 def build_dispatch(
@@ -388,7 +304,7 @@ async def run_once(
     """Execute and record one sync run.
 
     Args:
-        engine: The database engine. The child never sees it .
+        engine: The database engine. The child never sees it.
         config: For the provider's configuration and secrets.
         provider_id: Which provider to run.
         mode: ``incremental``, ``full``, or ``import``.
@@ -455,6 +371,45 @@ async def run_once(
             check_restore_status=check_restore_status,
             check_restore_enabled=check_restore_enabled,
         )
+    except asyncio.CancelledError as exc:
+        try:
+            if mode is FetchMode.CHECK:
+                await _finalize_check(
+                    engine,
+                    provider_id=provider_id,
+                    run_id=run_id,
+                    outcome=RunOutcome(
+                        status=RunStatus.FAILED,
+                        error_class=ErrorClass.INTERNAL,
+                        error_message="diagnostic check was cancelled",
+                    ),
+                    restore_status=check_restore_status
+                    or (
+                        ProviderStatus.DISABLED
+                        if check_restore_enabled is False
+                        else ProviderStatus.IDLE
+                    ),
+                    restore_enabled=check_restore_enabled,
+                    now=clock.now(),
+                )
+            else:
+                await _finalize_host_failure(
+                    engine,
+                    provider_id=provider_id,
+                    run_id=run_id,
+                    retry_step=retry_step,
+                    consecutive_failures=consecutive_failures,
+                    interval_seconds=interval_seconds,
+                    now=clock.now(),
+                    error=exc,
+                    clock=clock,
+                    lineage_id=lineage,
+                    preserve_requested_request=preserve_requested_request,
+                    requested_lineage_id=requested_lineage_id,
+                )
+        except Exception:
+            log.exception("could not finalize cancelled sync run %s", run_id)
+        raise
     except Exception as exc:
         if mode is FetchMode.CHECK:
             outcome = RunOutcome(
@@ -473,6 +428,7 @@ async def run_once(
                     if check_restore_enabled is False
                     else ProviderStatus.IDLE
                 ),
+                restore_enabled=check_restore_enabled,
                 now=clock.now(),
             )
             return outcome
@@ -524,7 +480,7 @@ async def _run_opened(
     """Execute the post-insertion portion of a run."""
     public_settings = _public_provider_settings(provider.config_schema, provider_settings)
     secret_settings = _secret_provider_settings(provider.config_schema, provider_settings)
-    common_plan = RunPlan(
+    request = RunRequest(
         provider_id=provider_id,
         mode=mode,
         config=public_settings,
@@ -536,8 +492,7 @@ async def _run_opened(
     if mode is FetchMode.CHECK:
         await progress.set_phase(RunPhase.CHECKING)
         outcome = await execute_run(
-            replace(common_plan, mode=FetchMode.CHECK).request(),
-            on_message=progress.observe,
+            replace(request, mode=FetchMode.CHECK), on_message=progress.observe
         )
         outcome = _validate_check_outcome(outcome)
         await _finalize_check(
@@ -547,79 +502,137 @@ async def _run_opened(
             outcome=outcome,
             restore_status=check_restore_status
             or (ProviderStatus.DISABLED if check_restore_enabled is False else ProviderStatus.IDLE),
+            restore_enabled=check_restore_enabled,
             now=clock.now(),
         )
         return outcome
 
-    stored_replay_records = (
-        replay_records
-        if replay_records is not None
-        else await records_needing_replay(
-            engine, provider_id=provider_id, schema_version=provider.schema_version
+    replay_written = 0
+    replay_failed = 0
+    replay_seen = 0
+    replay_skipped = 0
+    replay_problem: RunOutcome | None = None
+
+    async def ingest_replay_batch(records: list[RawRecord]) -> RunOutcome | None:
+        nonlocal replay_written, replay_failed, replay_seen
+        child_outcome = await execute_run(
+            replace(request, replay_records=records), on_message=progress.observe
         )
-    )
-    replay_outcome: RunOutcome | None = None
-    if replay_only and not stored_replay_records:
-        await progress.set_phase(RunPhase.REPLAYING, total=0)
-    if stored_replay_records:
-        await progress.set_phase(RunPhase.REPLAYING, total=len(stored_replay_records))
-        replay_plan = RunPlan(
-            provider_id=common_plan.provider_id,
-            mode=common_plan.mode,
-            config=common_plan.config,
-            secrets=common_plan.secrets,
-            provider_dir=common_plan.provider_dir,
-            host_state_dir=common_plan.host_state_dir,
-            replay_records=tuple(stored_replay_records),
+        expected: Counter[str | None] = Counter(record.native_id for record in records)
+        observed: Counter[str | None] = Counter(
+            record.native_id for record, _batch in child_outcome.records
         )
-        replay_outcome = await execute_run(replay_plan.request(), on_message=progress.observe)
-        if replay_outcome.status is RunStatus.SUCCESS:
-            await tombstone_replay_derivatives(
-                engine,
-                provider_id=provider_id,
-                native_ids=[record.native_id for record in stored_replay_records],
-                now=now,
+        observed.update(failure.native_id for failure in child_outcome.failures)
+        has_unexpected = any(count > expected[native_id] for native_id, count in observed.items())
+        if has_unexpected or (child_outcome.status is RunStatus.SUCCESS and observed != expected):
+            return RunOutcome(
+                status=RunStatus.FAILED,
+                error_class=ErrorClass.INTERNAL,
+                error_message="replay child did not return one result for each requested record",
             )
 
-    if replay_only or (
-        replay_outcome is not None and replay_outcome.status is not RunStatus.SUCCESS
-    ):
-        # A stale-payload replay is part of the run's correctness boundary. Do not fetch new pages,
-        # advance the provider schema version, or report success when normalization of a retained
-        # payload failed; the payload must remain available for a later retry.
-        outcome = replay_outcome or RunOutcome(
-            status=RunStatus.SUCCESS,
+        replay_seen += sum(observed.values())
+        written, failed = await _ingest(
+            engine,
+            provider,
+            child_outcome,
+            provider_id=provider_id,
+            run_id=run_id,
+            now=now,
+            replace_existing=True,
+        )
+        replay_written += written
+        replay_failed += failed
+        await progress.record_ingest(items_written=replay_written, items_failed=replay_failed)
+        return child_outcome if child_outcome.status is not RunStatus.SUCCESS else None
+
+    if replay_records is not None:
+        if replay_records:
+            await progress.set_phase(RunPhase.REPLAYING, total=len(replay_records))
+            for raw in replay_records:
+                replay_problem = await ingest_replay_batch([raw])
+                if replay_problem is not None:
+                    break
+    elif not replay_only:
+        await progress.set_phase(RunPhase.REPLAYING)
+        fixed_request_bytes = len(request.payload().encode())
+        replay_bytes = max(0, MAX_PAYLOAD_BYTES - fixed_request_bytes - 64)
+        after_item_id: int | None = None
+        while replay_problem is None:
+            records, next_item_id, oversized = await records_needing_replay(
+                engine,
+                provider_id=provider_id,
+                schema_version=provider.schema_version,
+                after_item_id=after_item_id,
+                limit=_REPLAY_BATCH_RECORDS,
+                max_record_bytes=replay_bytes,
+            )
+            replay_skipped += oversized
+            if records:
+                replay_problem = await ingest_replay_batch(records)
+                if replay_problem is not None:
+                    break
+            if next_item_id is None or next_item_id == after_item_id:
+                break
+            after_item_id = next_item_id
+
+    if replay_problem is None and (replay_failed or replay_skipped):
+        replay_problem = RunOutcome(
+            status=RunStatus.PARTIAL,
+            error_class=ErrorClass.PARSE,
+            error_message=(
+                f"normalization replay rejected {replay_failed} record(s)"
+                if replay_failed
+                else f"normalization replay skipped {replay_skipped} payload(s) over the child "
+                "request byte limit"
+            ),
+        )
+
+    if replay_only and not replay_records:
+        outcome = RunOutcome(
+            status=RunStatus.FAILED,
+            error_class=ErrorClass.PARSE,
             error_message="replay job had no retained payload",
         )
+    elif replay_problem is not None:
+        # A rejected mapping leaves its old schema version and facts in place. Do not fetch or
+        # advance the provider version until every stale payload has a committed replacement.
+        outcome = RunOutcome(
+            status=(
+                replay_problem.status
+                if replay_problem.status is not RunStatus.SUCCESS
+                else RunStatus.PARTIAL
+            ),
+            error_class=replay_problem.error_class or ErrorClass.PARSE,
+            error_message=replay_problem.error_message
+            or f"normalization replay rejected {replay_failed} record(s)",
+            log_excerpt=replay_problem.log_excerpt,
+            log=replay_problem.log,
+            raw_responses=replay_problem.raw_responses,
+        )
+    elif replay_only:
+        outcome = RunOutcome(status=RunStatus.SUCCESS)
     else:
         await progress.set_phase(RunPhase.FETCHING)
-        fetch_plan = RunPlan(
-            provider_id=common_plan.provider_id,
-            mode=common_plan.mode,
-            config=common_plan.config,
-            secrets=common_plan.secrets,
-            provider_dir=common_plan.provider_dir,
-            host_state_dir=common_plan.host_state_dir,
-            cursor=cursor,
-            import_path=import_path,
+        outcome = await execute_run(
+            replace(request, cursor=cursor, import_path=import_path),
+            on_message=progress.observe,
         )
-        outcome = await execute_run(fetch_plan.request(), on_message=progress.observe)
 
-    fetched_count = 0 if replay_only else len(outcome.records) + len(outcome.failures)
-    if (
-        not replay_only
-        and replay_outcome is not None
-        and replay_outcome.status is RunStatus.SUCCESS
-    ):
-        outcome.records = replay_outcome.records + outcome.records
-        outcome.failures = replay_outcome.failures + outcome.failures
-
+    fetched_count = (
+        0
+        if replay_only or replay_problem is not None
+        else (len(outcome.records) + len(outcome.failures))
+    )
     await progress.set_phase(RunPhase.INGESTING, total=progress.progress_total)
     written, failed = await _ingest(
         engine, provider, outcome, provider_id=provider_id, run_id=run_id, now=now
     )
-    await progress.record_ingest(items_written=written, items_failed=failed)
-    if not replay_only and (replay_outcome is None or replay_outcome.status is RunStatus.SUCCESS):
+    await progress.record_ingest(
+        items_written=replay_written + written,
+        items_failed=replay_failed + failed + replay_skipped,
+    )
+    if not replay_only and replay_problem is None:
         await _record_provider_schema_version(
             engine,
             provider_id=provider_id,
@@ -634,6 +647,7 @@ async def _run_opened(
         mode=mode,
         outcome=outcome,
         item_count=fetched_count,
+        failed_count=replay_failed + failed + replay_skipped,
         run_started_at=now,
         config=provider_settings,
     )
@@ -642,8 +656,8 @@ async def _run_opened(
         provider_id=provider_id,
         run_id=run_id,
         outcome=outcome,
-        written=written,
-        failed=failed,
+        written=replay_written + written,
+        failed=replay_failed + failed + replay_skipped,
         retry_step=retry_step,
         consecutive_failures=consecutive_failures,
         interval_seconds=interval_seconds,
@@ -651,6 +665,7 @@ async def _run_opened(
         clock=clock,
         preserve_requested_request=preserve_requested_request,
         requested_lineage_id=requested_lineage_id,
+        items_seen=replay_seen + replay_skipped + fetched_count,
     )
     return outcome
 
@@ -692,6 +707,7 @@ async def _finalize_check(
     run_id: int,
     outcome: RunOutcome,
     restore_status: ProviderStatus,
+    restore_enabled: bool | None,
     now: datetime,
 ) -> None:
     """Close a diagnostic run without changing sync health, cursor, or schedule state."""
@@ -719,17 +735,23 @@ async def _finalize_check(
             )
         )
         if result.rowcount != 1:
-            raise RuntimeError(f"check run {run_id} was not open when finalized")
-        provider_result = await conn.execute(
+            return
+        # An operator transition may already have released this provider. The status predicate
+        # preserves its latest state rather than overwriting it with the state captured at start.
+        await conn.execute(
             update(providers)
             .where(
                 providers.c.id == provider_id,
                 providers.c.status == str(ProviderStatus.SYNCING),
             )
-            .values(status=str(restore_status), updated_at=now)
+            .values(
+                status=case(
+                    (providers.c.enabled.is_(False), str(ProviderStatus.DISABLED)),
+                    else_=str(ProviderStatus.IDLE if restore_enabled is False else restore_status),
+                ),
+                updated_at=now,
+            )
         )
-        if provider_result.rowcount != 1:
-            raise RuntimeError(f"provider {provider_id!r} was not locked by its check")
 
 
 async def _record_provider_schema_version(
@@ -769,18 +791,37 @@ async def _finalize_host_failure(
         lineage_id=lineage_id,
     )
     async with transaction(engine) as conn:
+        current = (
+            await conn.execute(
+                select(sync_runs.c.items_written).where(
+                    sync_runs.c.id == run_id,
+                    sync_runs.c.status == str(RunStatus.RUNNING),
+                )
+            )
+        ).first()
+        if current is None:
+            return
+        run_status = (
+            RunStatus.PARTIAL
+            if isinstance(error, asyncio.CancelledError) and current.items_written > 0
+            else RunStatus.FAILED
+        )
+        run_values: dict[str, object] = {
+            "status": str(run_status),
+            "finished_at": now,
+            "error_class": str(ErrorClass.INTERNAL),
+            "error_message": message,
+            "phase": str(RunPhase.FINISHED if run_status is RunStatus.PARTIAL else RunPhase.FAILED),
+            "updated_at": now,
+            "progress_revision": sync_runs.c.progress_revision + 1,
+        }
+        if isinstance(error, asyncio.CancelledError):
+            # Checkpoints describe child output; they are safe only after its records commit.
+            run_values["cursor_after"] = None
         run_result = await conn.execute(
             update(sync_runs)
             .where(sync_runs.c.id == run_id, sync_runs.c.status == str(RunStatus.RUNNING))
-            .values(
-                status=str(RunStatus.FAILED),
-                finished_at=now,
-                error_class=str(ErrorClass.INTERNAL),
-                error_message=message,
-                phase=str(RunPhase.FAILED),
-                updated_at=now,
-                progress_revision=sync_runs.c.progress_revision + 1,
-            )
+            .values(run_values)
         )
         if run_result.rowcount != 1:
             return
@@ -788,11 +829,13 @@ async def _finalize_host_failure(
             update(providers)
             .where(
                 providers.c.id == provider_id,
-                providers.c.enabled.is_(True),
                 providers.c.status == str(ProviderStatus.SYNCING),
             )
             .values(
-                status=str(decision.status),
+                status=case(
+                    (providers.c.enabled.is_(False), str(ProviderStatus.DISABLED)),
+                    else_=str(decision.status),
+                ),
                 updated_at=now,
                 last_error={
                     "error_class": str(ErrorClass.INTERNAL),
@@ -897,10 +940,15 @@ async def _open_run(
                     )
                 )
             ).first()
+            claimed_disabled_job = mode in (FetchMode.IMPORT, FetchMode.REPLAY)
             if (
                 provider_row is None
                 or provider_row.status != str(ProviderStatus.SYNCING)
-                or (mode is not FetchMode.CHECK and not provider_row.enabled)
+                or (
+                    mode is not FetchMode.CHECK
+                    and not claimed_disabled_job
+                    and not provider_row.enabled
+                )
             ):
                 raise RuntimeError(f"provider {provider_id!r} was not admitted for a sync")
         return int(primary_key[0])
@@ -914,11 +962,12 @@ async def _ingest(
     provider_id: str,
     run_id: int,
     now: datetime,
+    replace_existing: bool = False,
 ) -> tuple[int, int]:
     """Write what the child produced, in one transaction.
 
     Called even when the run failed: records that arrived and validated are real, and throwing them
-    away would turn a mid-run failure into data loss rather than a partial success .
+    away would turn a mid-run failure into data loss rather than a partial success.
     """
     scales = list(provider.rating_scales)
     async with transaction(engine) as conn:
@@ -933,9 +982,10 @@ async def _ingest(
                 rating_scales={scale.id: scale for scale in scales},
             ),
             outcome.records,
+            replace_existing=replace_existing,
         )
         # Records the CHILD could not normalize, stored with their payloads so a fixed provider can
-        # replay them . Distinct from records the writer rejected, which write_batches
+        # replay them. Distinct from records the writer rejected, which write_batches
         # already captured.
         for failure in outcome.failures:
             await capture_failure(
@@ -966,6 +1016,7 @@ async def _reschedule(
     clock: Clock,
     preserve_requested_request: bool,
     requested_lineage_id: uuid.UUID | None,
+    items_seen: int | None = None,
 ) -> None:
     """Advance the cursor and set the next run time from the ladder's decision."""
     from datetime import timedelta
@@ -996,11 +1047,14 @@ async def _reschedule(
         )
         last_success = None
 
-    finalization = RunFinalization(
+    await release(
+        engine,
+        provider_id=provider_id,
         status=status,
         next_run_at=decision.next_run_at,
         retry_step=decision.retry_step,
         consecutive_failures=decision.consecutive_failures,
+        now=clock.now(),
         last_success_at=last_success,
         last_error=(
             None
@@ -1016,8 +1070,11 @@ async def _reschedule(
             if outcome.error_class is ErrorClass.RATE_LIMIT and outcome.retry_after is not None
             else None
         ),
+        items_seen=(
+            len(outcome.records) + len(outcome.failures) if items_seen is None else items_seen
+        ),
+        run_id=run_id,
         run_status=outcome.status,
-        items_seen=len(outcome.records) + len(outcome.failures),
         items_written=written,
         items_failed=failed,
         error_class=outcome.error_class,
@@ -1029,12 +1086,7 @@ async def _reschedule(
         requested_lineage_id=(
             requested_lineage_id if preserve_requested_request else decision.lineage_id
         ),
-    )
-    await finalization.persist(
-        engine,
-        provider_id=provider_id,
-        run_id=run_id,
-        now=clock.now(),
+        phase=RunPhase.FINISHED if outcome.status is not RunStatus.FAILED else RunPhase.FAILED,
     )
 
 
@@ -1046,6 +1098,7 @@ async def _apply_full_run_guards(
     mode: FetchMode,
     outcome: RunOutcome,
     item_count: int,
+    failed_count: int = 0,
     run_started_at: datetime,
     config: dict[str, object],
 ) -> bool:
@@ -1092,7 +1145,9 @@ async def _apply_full_run_guards(
         )
         capabilities = set(provider.capabilities)
         if (
-            bool(config.get("infer_deletes", False))
+            failed_count == 0
+            and not outcome.failures
+            and bool(config.get("infer_deletes", False))
             and Capability.REPORTS_DELETES.value not in capabilities
         ):
             await infer_deletes(conn, provider_id=provider_id, seen_since=run_started_at)

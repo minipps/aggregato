@@ -1,4 +1,4 @@
-"""The JSON-lines protocol spoken across the child-to-parent pipe (research.md ).
+"""JSON-lines messages sent from the provider child to its parent.
 
 One message per line, each a tagged object. This is the boundary where plugin-controlled output
 becomes host data, so the parent validates every line against these models and treats an unparseable
@@ -6,15 +6,15 @@ line as a provider failure rather than as noise to skip.
 
 JSON lines rather than pickle, deliberately: the payload crosses a boundary from code the host does
 not trust, and unpickling arbitrary data from a plugin is remote code execution by design. It is
-also the same shape the recorded fixtures use, so there is one wire format for production and tests
-.
+also the same shape the recorded fixtures use, so production and tests use one wire format.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from aggregato.domain.enums import ErrorClass
 from aggregato.domain.models import (
@@ -47,7 +47,7 @@ class BatchMessage(BaseModel):
 
 
 class CheckpointMessage(BaseModel):
-    """A resume point. The parent persists the cursor so a later failure resumes here ."""
+    """A resume point. The parent persists the cursor so a later failure resumes here."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -74,20 +74,32 @@ class ErrorMessage(BaseModel):
 
 
 class ResponseMessage(BaseModel):
-    """A bounded host-client response snapshot for operator diagnosis."""
+    """Safe host-client metadata for operator diagnosis; response content is never retained."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["response"] = "response"
-    method: str
-    url: str
+    method: str = Field(max_length=32)
+    url: str = Field(max_length=2048)
     status: int
-    headers: dict[str, str]
-    body: str
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _sanitize_url(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        try:
+            parts = urlsplit(value)
+        except ValueError:
+            return ""
+        authority = parts.netloc.rsplit("@", 1)[-1]
+        if parts.scheme not in {"http", "https"} or not authority:
+            return ""
+        return urlunsplit((parts.scheme, authority, parts.path, "", ""))[:2048]
 
 
 class FailureMessage(BaseModel):
-    """One record the child could not normalize. The run continues .
+    """One record the child could not normalize. The run continues.
 
     Carries the payload so the parent can store it for replay. Distinct from ``ErrorMessage``:
     that one ends the run, this one is a single poisoned record.

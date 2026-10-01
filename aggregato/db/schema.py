@@ -1,15 +1,12 @@
-"""Table definitions (data-model.md).
+"""SQLAlchemy Core table definitions.
 
-SQLAlchemy Core rather than the ORM (research.md ): the workload is bulk upsert and analytical
-filtering, so an identity map and lazy loading are liabilities at 50,000 entries/hour, and the hot
-paths are already written as set operations.
+Writers and readers use set-based statements over explicit connections; this schema has no ORM
+models or relationship loading. Dialect-specific types live in ``types.py``. Enum columns use text
+with ``CHECK`` constraints generated from their vocabularies. The application is single-user and
+there is no ``user_id`` column.
 
-Every type choice that differs between SQLite and Postgres lives in ``types.py``; every enum column
-is text plus a ``CHECK`` generated from the vocabulary itself. **There is no ``user_id`` column
-anywhere**  — adding one is a v2 schema break, accepted knowingly.
-
-Timestamps carry no database or Python default on purpose. The caller passes them from the injected
-clock, so tests can control time (testing guidance) and a row's ``ingested_at`` cannot silently
+Timestamps have no database or Python default. The caller passes them from the injected clock, so
+tests control time and a row's ``ingested_at`` cannot silently
 disagree with the run that wrote it.
 """
 
@@ -94,7 +91,7 @@ works = Table(
     # season -> series, track -> album. Self-referential; the writer rejects cycles.
     Column("parent_work_id", UUID_PK, ForeignKey("works.id", ondelete="SET NULL")),
     Column("sequence_number", Integer),
-    # Platform payload only, never a URL we invented .
+    # Platform payload only, never a URL we invented.
     Column("image_url", Text),
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("created_at", TIMESTAMP, nullable=False),
@@ -144,9 +141,9 @@ provider_items = Table(
     Column("schema_version", Integer, nullable=False),
     Column("first_seen_at", TIMESTAMP, nullable=False),
     Column("last_seen_at", TIMESTAMP, nullable=False),
-    # The idempotency key . A resync writes nothing new because of this one constraint.
+    # The idempotency key. A resync writes nothing new because of this one constraint.
     UniqueConstraint("provider_id", "native_id", name="uq_provider_items_provider_id_native_id"),
-    # How replay finds stale rows (research.md ).
+    # Selects retained payloads that need normalization replay.
     Index("ix_provider_items_provider_id_schema_version", "provider_id", "schema_version"),
     Index("ix_provider_items_work_id", "work_id"),
 )
@@ -168,7 +165,7 @@ entries = Table(
     Column("native_id", Text),
     Column("kind", String(16), nullable=False),
     Column("logged_at", TIMESTAMP, nullable=False),
-    # Required, no default: a default would silently fabricate exactness .
+    # Required, no default: a default would silently fabricate exactness.
     Column("logged_precision", String(16), nullable=False),
     Column("subject_ref", JSON_COL),
     # How far through — deliberately distinct from subject_ref, which says *which* sub-unit.
@@ -179,7 +176,7 @@ entries = Table(
     Column("subject_ref_key", Text),
     Column("metadata", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("ingested_at", TIMESTAMP, nullable=False),
-    # Soft delete. Tombstoned rows are never hard-deleted .
+    # Soft delete. Tombstoned rows are never hard-deleted.
     Column("deleted_at", TIMESTAMP),
     check_constraint("kind", EntryKind),
     check_constraint("logged_precision", LoggedPrecision),
@@ -209,11 +206,12 @@ entries = Table(
         sqlite_where=text("native_id IS NULL AND subject_ref_key IS NOT NULL"),
         postgresql_where=text("native_id IS NULL AND subject_ref_key IS NOT NULL"),
     ),
-    # The default keyset order (research.md ). id breaks ties so the order is total, and no row
+    # The default keyset order. id breaks ties so the order is total, and no row
     # is skipped or repeated when timestamps collide — which they will, in bulk-imported history.
     Index("ix_entries_logged_at_id", text("logged_at DESC"), text("id DESC")),
     Index("ix_entries_work_id", "work_id"),
     Index("ix_entries_provider_id", "provider_id"),
+    Index("ix_entries_provider_item_id", "provider_item_id"),
     Index("ix_entries_ingested_at_id", text("ingested_at DESC"), text("id DESC")),
     # The common log path excludes tombstones and sub-units before applying either keyset sort.
     # These composite indexes keep that predicate and each permitted entry sort on one index walk.
@@ -247,7 +245,7 @@ opinions = Table(
     ),
     Column("rating_raw", DECIMAL),
     Column("rating_scale_id", String(64), ForeignKey("rating_scales.id")),
-    # Derived from rating_raw and the scale (research.md ). Recomputable, so a corrected scale
+    # Derived from rating_raw and the scale. Recomputable, so a corrected scale
     # definition is repaired by replay rather than by re-syncing every platform.
     Column("rating_normalized", Integer),
     Column("subject_ref", JSON_COL),
@@ -263,7 +261,7 @@ opinions = Table(
         "provider_id", "provider_item_id", name="uq_opinions_provider_id_provider_item_id"
     ),
     check_constraint("review_format", ReviewFormat),
-    # A raw rating means nothing without the scale it came from .
+    # A raw rating means nothing without the scale it came from.
     CheckConstraint(
         "rating_raw IS NULL OR rating_scale_id IS NOT NULL",
         name="rating_needs_scale",
@@ -326,8 +324,8 @@ creator_aliases = Table(
     Column("creator_id", UUID_PK, ForeignKey("creators.id", ondelete="CASCADE"), nullable=False),
     Column("name", Text, nullable=False),
     Column("normalized", Text, nullable=False),
-    # The scope this name form is trusted in . One creator legitimately holds aliases in
-    # several families — that is exactly what a cross-family merge produces.
+    # The scope this name form is trusted in. A creator can hold aliases in several media families
+    # after a cross-family merge.
     Column("media_family", String(16), nullable=False),
     Column("kind", String(16), nullable=False),
     Column("source", String(64), nullable=False),
@@ -335,7 +333,7 @@ creator_aliases = Table(
         "creator_id", "normalized", "media_family", name="uq_creator_aliases_creator_normalized"
     ),
     check_constraint("kind", AliasKind),
-    # The hot lookup (research.md ): one batched SELECT per run, never one per credit.
+    # One batched lookup per run avoids a query for every credit.
     Index("ix_creator_aliases_normalized_media_family", "normalized", "media_family"),
 )
 
@@ -350,8 +348,8 @@ creator_external_ids = Table(
     Column("confidence", String(16), nullable=False),
     UniqueConstraint("namespace", "value", name="uq_creator_external_ids_namespace_value"),
     check_constraint("confidence", Confidence),
-    # Deliberately **unscoped by family**, unlike aliases: an asserted identifier is identity
-    # everywhere ( against ).
+    # Deliberately **unscoped by family**, unlike aliases: an asserted identifier identifies the
+    # same creator across media families.
     Index("ix_creator_external_ids_namespace_value", "namespace", "value"),
 )
 
@@ -362,17 +360,19 @@ work_credits = Table(
     Column("work_id", UUID_PK, ForeignKey("works.id", ondelete="CASCADE"), nullable=False),
     Column("creator_id", UUID_PK, ForeignKey("creators.id", ondelete="CASCADE"), nullable=False),
     Column("role", String(32), nullable=False),
-    # The platform's own term, verbatim, always — even when `role` maps cleanly . This is
+    # The platform's own term, verbatim, always — even when `role` maps cleanly. This is
     # what replay re-derives from when the role vocabulary widens.
     Column("role_raw", Text),
     Column("credited_as", Text),
     # 0 = first-billed; payload order where the platform does not express billing.
     Column("position", Integer, nullable=False),
     Column("source", String(64), nullable=False),
-    # How this creator's identity was established. Required by : a split must show the
-    # operator which credits were joined by name rather than by an asserted identifier, and per
-    # credit is the only place that information survives.
+    # How this creator's identity was established. A split needs this to show which credits were
+    # joined by name rather than by an asserted identifier.
     Column("link_confidence", String(16), nullable=False),
+    # Set by a manual split. It intentionally has no FK: the source identity may later be merged
+    # or deleted, and active merge-log links resolve that historical ID during ingestion.
+    Column("manual_from_creator_id", UUID_PK),
     UniqueConstraint(
         "work_id", "creator_id", "role", "source", name="uq_work_credits_work_creator_role_source"
     ),
@@ -399,8 +399,8 @@ resolution_queue = Table(
     Column("created_at", TIMESTAMP, nullable=False),
     Column("decided_at", TIMESTAMP),
     Column("decision", String(16)),
-    # Distinguishes a genuine ambiguity from a proactive cross-family creator suggestion .
-    # The two must not be counted together, or queue depth stops being a risk signal .
+    # Distinguishes a genuine ambiguity from a proactive cross-family creator suggestion.
+    # The two must not be counted together, or queue depth stops being a risk signal.
     Column("suggestion_kind", String(32)),
     check_constraint("subject", ResolutionSubject),
     check_constraint("decision", ResolutionDecision),
@@ -437,10 +437,10 @@ providers = Table(
     Column("status", String(16), nullable=False),
     Column("acquisition", String(16), nullable=False),
     Column("schema_version", Integer, nullable=False),
-    # False for drop-in development providers, which the UI labels `unreviewed` .
+    # False for drop-in development providers, which the UI labels `unreviewed`.
     Column("reviewed", Boolean, nullable=False, server_default=true()),
-    # Database overrides only. File values are not copied here, so "file-pinned" stays answerable
-    # (research.md ).
+    # Database overrides only. File values are not copied here, so the API can report them as
+    # file-pinned.
     Column("config", JSON_COL, nullable=False, server_default=text("'{}'")),
     Column("last_error", JSON_COL),
     Column("created_at", TIMESTAMP, nullable=False),
@@ -457,7 +457,7 @@ provider_state = Table(
     ),
     # Opaque and provider-owned. The host persists it and never interprets it.
     Column("cursor", JSON_COL),
-    # The schedule *is* this column (research.md ). No cron expression, no second store.
+    # The next scheduled run time; NULL means the provider is unscheduled.
     Column("next_run_at", TIMESTAMP),
     Column("effective_interval_seconds", Integer, nullable=False),
     Column("consecutive_failures", Integer, nullable=False, server_default=text("0")),
@@ -465,12 +465,12 @@ provider_state = Table(
     Column("last_success_at", TIMESTAMP),
     # Set when an operator asks for a specific mode, read and cleared by the next dispatch. The
     # schedule itself has no mode: a scheduled run is always incremental, so "full" is a one-shot
-    # request that has to outlive the request that made it — the API cannot spawn the run itself
-    # (research.md ), and without this the mode was silently downgraded on the way to the child.
+    # request that has to outlive the request that made it. The worker consumes and clears it when
+    # dispatching the run.
     Column("requested_mode", String(16)),
     # The API response points at this durable lineage; dispatch consumes it atomically with mode.
     Column("requested_lineage_id", UUID_PK),
-    # The sanity baseline (research.md ): the previous run's item count for the same window.
+    # Previous run's item count for the same window, used as the sanity baseline.
     # This is the guard that makes a broken scraper look like a broken scraper rather than like an
     # emptied history.
     Column("last_window_item_count", Integer),
@@ -484,14 +484,14 @@ provider_state = Table(
     Column("now_playing_next_poll_at", TIMESTAMP),
     Column("now_playing_failures", Integer, nullable=False, server_default=text("0")),
     Column("now_playing_config_fingerprint", String(64)),
-    # The provider's own opaque key/value store .
+    # Reserved for host-managed mappings. ProviderContext.state mutations are not written back.
     Column("kv", JSON_COL, nullable=False, server_default=text("'{}'")),
     # The only thing the scheduler selects on.
     Index("ix_provider_state_next_run_at", "next_run_at"),
 )
 
-# Uploads are host-owned jobs, deliberately separate from ``provider_state.kv`` (which belongs to
-# a provider).  Keeping the file path and lifecycle here lets the API accept an export without ever
+# Uploads are host-owned jobs, separate from the reserved host mapping in ``provider_state.kv``.
+# Keeping the file path and lifecycle here lets the API accept an export without ever
 # importing the sync machinery, while the worker remains the only process that executes plugins.
 import_jobs = Table(
     "import_jobs",
@@ -519,7 +519,7 @@ sync_runs = Table(
     metadata,
     Column("id", AUTO_PK, primary_key=True, autoincrement=True),
     Column("provider_id", String(64), nullable=False),
-    # Groups the retries of one logical piece of work , so the UI can show four attempts as
+    # Groups retries of one logical piece of work, so the UI can show attempts as
     # one failing sync rather than four unrelated failures.
     Column("lineage_id", UUID_PK, nullable=False),
     Column("attempt", Integer, nullable=False),
@@ -563,7 +563,7 @@ ingest_failures = Table(
     # Captured separately from the raw payload so replay never guesses identity from provider
     # fields such as ``id`` (which may be nested, renamed, or absent).
     Column("native_id", Text),
-    # Stored so a fixed plugin can replay it . Without the payload, "one bad record" is an
+    # Stored so a fixed plugin can replay it. Without the payload, "one bad record" is an
     # unreproducible bug report.
     Column("raw_payload", JSON_COL, nullable=False),
     Column("error", Text, nullable=False),
@@ -605,8 +605,8 @@ sessions = Table(
     Column("id", String(64), primary_key=True),
     Column("created_at", TIMESTAMP, nullable=False),
     Column("expires_at", TIMESTAMP, nullable=False),
-    # So rotating api.token invalidates every existing session (research.md ). Sessions live in
-    # the database precisely so rotation can actually reach them.
+    # The fingerprint ties each session to the token used to issue it, so token rotation invalidates
+    # existing sessions.
     Column("token_fingerprint", String(64), nullable=False),
     Index("ix_sessions_expires_at", "expires_at"),
 )

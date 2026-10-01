@@ -10,19 +10,16 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aggregato.db.schema import (
-    entries,
     metadata,
-    opinions,
     provider_items,
     sync_runs,
-    works,
 )
-from aggregato.db.search import SearchKind, matching_ref_ids, sync_create_search_index
-from aggregato.domain.enums import IngestStage, LoggedPrecision, MediaType, ReviewFormat
+from aggregato.db.search import sync_create_search_index
+from aggregato.domain.enums import IngestStage, MediaType
 from aggregato.domain.models import NormalizedBatch, NormalizedWork, RawRecord
 from aggregato.ingest import normalize_replay
 from aggregato.ingest.failures import (
@@ -169,6 +166,7 @@ async def test_replay_selection_returns_each_stale_row_not_the_provider_maximum(
     for item_id, native_id, version in (
         (1, "stale", 1),
         (2, "current", 2),
+        (3, "stale-again", 1),
     ):
         await conn.execute(
             provider_items.insert().values(
@@ -184,76 +182,72 @@ async def test_replay_selection_returns_each_stale_row_not_the_provider_maximum(
         )
 
     engine = _patch_transaction(monkeypatch, conn)
-    records = await normalize_replay.records_needing_replay(
+    records, last_item_id, oversized = await normalize_replay.records_needing_replay(
         engine,
         provider_id="test",
         schema_version=2,  # type: ignore[arg-type]
+        limit=1,
+        max_record_bytes=1_024,
     )
 
     assert records == [RawRecord(native_id="stale", payload={"raw": "stale"})]
+    assert last_item_id == 1
+    assert oversized == 0
+
+    records, last_item_id, oversized = await normalize_replay.records_needing_replay(
+        engine,
+        provider_id="test",
+        schema_version=2,  # type: ignore[arg-type]
+        after_item_id=last_item_id,
+        limit=1,
+        max_record_bytes=1_024,
+    )
+    assert records == [RawRecord(native_id="stale-again", payload={"raw": "stale-again"})]
+    assert last_item_id == 3
+    assert oversized == 0
 
 
-async def test_replay_derivative_cleanup_removes_old_review_documents(
+async def test_replay_selection_skips_oversized_payload_and_keeps_scanning(
     conn: SyncConnectionAdapter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    work_id = uuid.uuid4()
-    await conn.execute(
-        works.insert().values(
-            id=work_id,
-            media_type=str(MediaType.FILM),
-            title="Replay Work",
-            sort_title="replay work",
-            metadata={},
-            created_at=NOW,
-            updated_at=NOW,
+    for item_id, native_id, payload in (
+        (1, "first", {"raw": "ok"}),
+        (2, "large", {"raw": "x" * 500}),
+        (3, "last", {"raw": "ok"}),
+    ):
+        await conn.execute(
+            provider_items.insert().values(
+                id=item_id,
+                provider_id="test",
+                native_id=native_id,
+                title_as_given=native_id,
+                raw_payload=payload,
+                schema_version=1,
+                first_seen_at=NOW,
+                last_seen_at=NOW,
+            )
         )
-    )
-    await conn.execute(
-        provider_items.insert().values(
-            id=1,
-            provider_id="test",
-            native_id="stale",
-            work_id=work_id,
-            title_as_given="Replay Work",
-            raw_payload={},
-            schema_version=1,
-            first_seen_at=NOW,
-            last_seen_at=NOW,
-        )
-    )
-    await conn.execute(
-        entries.insert().values(
-            work_id=work_id,
-            provider_id="test",
-            provider_item_id=1,
-            kind="watch",
-            logged_at=NOW,
-            logged_precision=str(LoggedPrecision.EXACT),
-            ingested_at=NOW,
-        )
-    )
-    await conn.execute(
-        opinions.insert().values(
-            work_id=work_id,
-            provider_id="test",
-            provider_item_id=1,
-            review_text="old review text",
-            review_format=str(ReviewFormat.PLAIN),
-            updated_at=NOW,
-        )
-    )
-    await conn.execute(
-        text("INSERT INTO search_index (kind, ref_id, content) VALUES (:kind, :ref_id, :content)"),
-        {"kind": str(SearchKind.REVIEW_TEXT), "ref_id": "1:0", "content": "old review text"},
-    )
-    assert await matching_ref_ids(conn, SearchKind.REVIEW_TEXT, "old review") == ["1:0"]
 
     engine = _patch_transaction(monkeypatch, conn)
-    await normalize_replay.tombstone_replay_derivatives(
-        engine, provider_id="test", native_ids=["stale"], now=NOW + timedelta(minutes=1)
+    records, last_item_id, oversized = await normalize_replay.records_needing_replay(
+        engine,
+        provider_id="test",
+        schema_version=2,  # type: ignore[arg-type]
+        max_record_bytes=128,
     )
 
-    assert await matching_ref_ids(conn, SearchKind.REVIEW_TEXT, "old review") == []
-    assert (await conn.execute(select(entries.c.deleted_at))).scalar_one() is not None
-    assert (await conn.execute(select(opinions.c.deleted_at))).scalar_one() is not None
+    assert records == [RawRecord(native_id="first", payload={"raw": "ok"})]
+    assert last_item_id == 2
+    assert oversized == 1
+
+    records, last_item_id, oversized = await normalize_replay.records_needing_replay(
+        engine,
+        provider_id="test",
+        schema_version=2,  # type: ignore[arg-type]
+        after_item_id=last_item_id,
+        max_record_bytes=128,
+    )
+    assert records == [RawRecord(native_id="last", payload={"raw": "ok"})]
+    assert last_item_id == 3
+    assert oversized == 0

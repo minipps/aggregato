@@ -1,8 +1,8 @@
-"""Reversible identity merges .
+"""Merge work and creator identities with an undo log.
 
 The merge log keeps a JSON-safe copy of every row the operation changes.  This is deliberately a
 snapshot rather than a lossy "inverse" instruction: a merge can touch identifiers, provider items,
-and several kinds of child records, and restoring the actual prior rows is the only honest undo.
+and several kinds of child records. The merge log stores the prior rows needed for a guarded undo.
 """
 
 from __future__ import annotations
@@ -226,15 +226,18 @@ async def _remove_work_credit_collisions(
         select(work_credits).where(work_credits.c.work_id == loser_id)
     )
     for credit in loser_credits:
-        exists = await conn.execute(
-            select(work_credits.c.id).where(
-                work_credits.c.work_id == winner_id,
-                work_credits.c.creator_id == credit.creator_id,
-                work_credits.c.role == credit.role,
-                work_credits.c.source == credit.source,
+        collision = (
+            await conn.execute(
+                select(work_credits).where(
+                    work_credits.c.work_id == winner_id,
+                    work_credits.c.creator_id == credit.creator_id,
+                    work_credits.c.role == credit.role,
+                    work_credits.c.source == credit.source,
+                )
             )
-        )
-        if exists.first() is not None:
+        ).first()
+        if collision is not None:
+            _ensure_credit_override_compatible(credit, collision)
             await conn.execute(delete(work_credits).where(work_credits.c.id == credit.id))
 
 
@@ -246,13 +249,29 @@ async def _remove_creator_credit_collisions(
         select(work_credits).where(work_credits.c.creator_id == loser_id)
     )
     for credit in loser_credits:
-        exists = await conn.execute(
-            select(work_credits.c.id).where(
-                work_credits.c.work_id == credit.work_id,
-                work_credits.c.creator_id == winner_id,
-                work_credits.c.role == credit.role,
-                work_credits.c.source == credit.source,
+        collision = (
+            await conn.execute(
+                select(work_credits).where(
+                    work_credits.c.work_id == credit.work_id,
+                    work_credits.c.creator_id == winner_id,
+                    work_credits.c.role == credit.role,
+                    work_credits.c.source == credit.source,
+                )
             )
-        )
-        if exists.first() is not None:
+        ).first()
+        if collision is not None:
+            _ensure_credit_override_compatible(credit, collision)
             await conn.execute(delete(work_credits).where(work_credits.c.id == credit.id))
+
+
+def _ensure_credit_override_compatible(loser: Any, winner: Any) -> None:
+    """Do not collapse a manual split onto a different source-credit key."""
+    loser_origin = loser.manual_from_creator_id
+    winner_origin = winner.manual_from_creator_id
+    if (loser_origin is not None or winner_origin is not None) and (
+        loser_origin != winner_origin
+        or loser.position != winner.position
+        or loser.role_raw != winner.role_raw
+        or loser.credited_as != winner.credited_as
+    ):
+        raise ValueError("merge would discard a distinct manual creator split")

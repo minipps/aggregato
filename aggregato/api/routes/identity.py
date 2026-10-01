@@ -1,4 +1,4 @@
-"""Manual identity correction and reversible merge-log operations ."""
+"""Manual identity correction and reversible merge-log operations."""
 
 from __future__ import annotations
 
@@ -237,13 +237,21 @@ async def _assert_undo_safe(conn: Any, log: Any) -> None:
         )
         if {int(row.id) for row in rows} != set(moved):
             raise ValueError("credits changed after the split")
+        expected_credits = []
+        for original in snapshot["work_credits"]:
+            expected = dict(original)
+            expected["creator_id"] = str(log.winner_id)
+            expected["link_confidence"] = "manual"
+            expected["manual_from_creator_id"] = (
+                original.get("manual_from_creator_id") or original["creator_id"]
+            )
+            expected_credits.append(expected)
         await _assert_snapshot_rows(
             conn,
             work_credits,
-            snapshot["work_credits"],
+            expected_credits,
             performed_at,
             current_rows=rows,
-            ignored_columns={"creator_id"},
         )
         return
 
@@ -251,7 +259,7 @@ async def _assert_undo_safe(conn: Any, log: Any) -> None:
     specs: tuple[tuple[Any, str, list[uuid.UUID], str, set[Any], set[str]], ...]
     if log.subject == "creator":
         specs = (
-            (creators, "id", subject_ids, "creators", set(), set()),
+            (creators, "id", subject_ids, "creators", set(subject_ids[1:]), set()),
             (
                 creator_aliases,
                 "creator_id",
@@ -418,9 +426,14 @@ def _typed(row: dict[str, Any]) -> dict[str, Any]:
     for key, value in row.items():
         if value is None:
             result[key] = None
-        elif key in {"id", "work_id", "creator_id", "parent_work_id", "winner_id"} and len(
-            str(value)
-        ) in {32, 36}:
+        elif key in {
+            "id",
+            "work_id",
+            "creator_id",
+            "manual_from_creator_id",
+            "parent_work_id",
+            "winner_id",
+        } and len(str(value)) in {32, 36}:
             result[key] = _uuid(value)
         elif key.endswith("_at") and isinstance(value, str):
             result[key] = datetime.fromisoformat(value)

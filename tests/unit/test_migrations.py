@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sqlite3
+import uuid
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -129,6 +130,7 @@ def test_upgrade_is_idempotent(tmp_path: Path) -> None:
     before = _names(db, "table")
     upgrade_to_head(_url(db))
     assert _names(db, "table") == before
+    assert list(tmp_path.glob("*.bak")) == []
 
 
 def test_pragmas_still_behave_after_migrating(tmp_path: Path) -> None:
@@ -258,49 +260,61 @@ def test_0015_preserves_every_work_related_row_during_the_rebuild(tmp_path: Path
     db = tmp_path / "aggregato.db"
     config = _config(_url(db))
     command.upgrade(config, "0014")
+    work_id = "00000000000000000000000000000001"
+    child_id = "00000000000000000000000000000002"
+    untouched_id = "00000000000000000000000000000003"
+    creator_id = "00000000000000000000000000000004"
     with closing(sqlite3.connect(db)) as conn:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute(
             "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
-            " VALUES ('w', 'podcast_episode', 'Legacy audio', 'legacy audio',"
-            " '2026-01-01', '2026-01-01')"
+            " VALUES (?, 'podcast_episode', 'Legacy audio', 'legacy audio',"
+            " '2026-01-01', '2026-01-01')",
+            (work_id,),
         )
         conn.execute(
             "INSERT INTO works (id, media_type, title, sort_title, parent_work_id,"
-            " created_at, updated_at) VALUES ('child', 'tv', 'Child', 'child', 'w',"
-            " '2026-01-01', '2026-01-01')"
+            " created_at, updated_at) VALUES (?, 'tv', 'Child', 'child', ?,"
+            " '2026-01-01', '2026-01-01')",
+            (child_id, work_id),
         )
         conn.execute(
             "INSERT INTO works (id, media_type, title, sort_title, created_at, updated_at)"
-            " VALUES ('untouched', 'film', 'Untouched', 'untouched', '2026-01-01', '2026-01-01')"
+            " VALUES (?, 'film', 'Untouched', 'untouched', '2026-01-01', '2026-01-01')",
+            (untouched_id,),
         )
         conn.execute(
             "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
-            " VALUES ('creator', 'person', 'Creator', 'creator', '{}', '2026-01-01', '2026-01-01')"
+            " VALUES (?, 'person', 'Creator', 'creator', '{}', '2026-01-01', '2026-01-01')",
+            (creator_id,),
         )
         conn.execute(
             "INSERT INTO external_ids (id, work_id, namespace, value, source, confidence,"
             " created_at)"
-            " VALUES (1, 'w', 'fixture', 'legacy-work', 'legacy', 'asserted', '2026-01-01')"
+            " VALUES (1, ?, 'fixture', 'legacy-work', 'legacy', 'asserted', '2026-01-01')",
+            (work_id,),
         )
         conn.execute(
             "INSERT INTO provider_items (id, provider_id, native_id, work_id, title_as_given,"
             " raw_payload, schema_version, first_seen_at, last_seen_at)"
-            " VALUES (1, 'legacy', 'n', 'w', 'Legacy audio', '{}', 1, '2026-01-01', '2026-01-01')"
+            " VALUES (1, 'legacy', 'n', ?, 'Legacy audio', '{}', 1, '2026-01-01', '2026-01-01')",
+            (work_id,),
         )
         conn.execute(
             "INSERT INTO entries (id, work_id, provider_id, provider_item_id, native_id, kind,"
             " logged_at, logged_precision, ingested_at)"
-            " VALUES (1, 'w', 'legacy', 1, 'event', 'listen', '2026-01-01', 'exact', '2026-01-01')"
+            " VALUES (1, ?, 'legacy', 1, 'event', 'listen', '2026-01-01', 'exact', '2026-01-01')",
+            (work_id,),
         )
         conn.execute(
             "INSERT INTO opinions (id, work_id, provider_id, provider_item_id, updated_at)"
-            " VALUES (1, 'w', 'legacy', 1, '2026-01-01')"
+            " VALUES (1, ?, 'legacy', 1, '2026-01-01')",
+            (work_id,),
         )
         conn.execute(
             "INSERT INTO work_credits (id, work_id, creator_id, role, role_raw, position,"
-            " source, link_confidence) VALUES (1, 'w', 'creator', 'author', 'Host', 0,"
-            " 'legacy', 'asserted')"
+            " source, link_confidence) VALUES (1, ?, ?, 'author', 'Host', 0, 'legacy', 'asserted')",
+            (work_id, creator_id),
         )
         conn.execute(
             "INSERT INTO resolution_queue (id, subject, provider_id, payload_ref, candidates,"
@@ -308,12 +322,16 @@ def test_0015_preserves_every_work_related_row_during_the_rebuild(tmp_path: Path
         )
         conn.execute(
             "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, performed_at,"
-            " snapshot) VALUES (1, 'work', 'merge', 'w', '[]', '2026-01-01', ?)",
-            (json.dumps({"works": [{"id": "w", "media_type": "podcast_episode"}]}),),
+            " snapshot) VALUES (1, 'work', 'merge', ?, '[]', '2026-01-01', ?)",
+            (
+                work_id,
+                json.dumps({"works": [{"id": work_id, "media_type": "podcast_episode"}]}),
+            ),
         )
         conn.execute(
-            "INSERT INTO search_index (kind, ref_id, content) VALUES ('work_title', 'w',"
-            " 'Legacy audio')"
+            "INSERT INTO search_index (kind, ref_id, content) VALUES ('work_title', ?,"
+            " 'Legacy audio')",
+            (work_id,),
         )
         before = {
             "works": conn.execute("SELECT * FROM works ORDER BY id").fetchall(),
@@ -345,10 +363,19 @@ def test_0015_preserves_every_work_related_row_during_the_rebuild(tmp_path: Path
             ("SELECT * FROM provider_items ORDER BY id", "provider_items"),
             ("SELECT * FROM entries ORDER BY id", "entries"),
             ("SELECT * FROM opinions ORDER BY id", "opinions"),
-            ("SELECT * FROM work_credits ORDER BY id", "work_credits"),
             ("SELECT * FROM resolution_queue ORDER BY id", "resolution_queue"),
         ):
             assert conn.execute(statement).fetchall() == before[table]
+        assert (
+            conn.execute(
+                "SELECT id, work_id, creator_id, role, role_raw, credited_as, position, source, "
+                "link_confidence FROM work_credits ORDER BY id"
+            ).fetchall()
+            == before["work_credits"]
+        )
+        assert conn.execute(
+            "SELECT manual_from_creator_id FROM work_credits ORDER BY id"
+        ).fetchall() == [(None,)]
         assert (
             conn.execute(
                 "SELECT kind, ref_id, content FROM search_index ORDER BY kind, ref_id"
@@ -356,7 +383,7 @@ def test_0015_preserves_every_work_related_row_during_the_rebuild(tmp_path: Path
             == before["search_index"]
         )
         snapshot = json.loads(conn.execute("SELECT snapshot FROM merge_log").fetchone()[0])
-        assert snapshot == {"works": [{"id": "w", "media_type": "other"}]}
+        assert snapshot == {"works": [{"id": work_id, "media_type": "other"}]}
 
 
 def test_0016_preserves_existing_sync_history_and_backfills_progress_defaults(
@@ -671,3 +698,135 @@ def test_0009_preserves_existing_failures_when_adding_native_identity(
         ).fetchone()
     assert row[0] is None
     assert json.loads(row[1]) == {"id": "payload-only"}
+
+
+def test_0019_preserves_credits_and_backfills_active_manual_splits(tmp_path: Path) -> None:
+    db = tmp_path / "aggregato.db"
+    config = _config(_url(db))
+    command.upgrade(config, "0018")
+    source, target, work, survivor, corrected = (
+        "1" * 32,
+        "2" * 32,
+        "3" * 32,
+        "4" * 32,
+        "5" * 32,
+    )
+    source_json = str(uuid.UUID(hex=source))
+    target_json = str(uuid.UUID(hex=target))
+    snapshot = {
+        "work_credits": [
+            {
+                "id": 11,
+                "work_id": str(uuid.UUID(hex=work)),
+                "creator_id": source_json,
+                "role": "performer",
+                "role_raw": "artists",
+                "credited_as": None,
+                "position": 0,
+                "source": "fixture",
+                "link_confidence": "matched",
+            }
+        ]
+    }
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES (?, 'person', 'Source', 'source', '{}', '2026-01-01', '2026-01-01')",
+            (source,),
+        )
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES (?, 'person', 'Target', 'target', '{}', '2026-01-01', '2026-01-01')",
+            (target,),
+        )
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES (?, 'person', 'Survivor', 'survivor', '{}', '2026-01-01', '2026-01-01')",
+            (survivor,),
+        )
+        conn.execute(
+            "INSERT INTO creators (id, kind, name, sort_name, metadata, created_at, updated_at)"
+            " VALUES (?, 'person', 'Corrected', 'corrected', '{}', '2026-01-01', '2026-01-01')",
+            (corrected,),
+        )
+        conn.execute(
+            "INSERT INTO works (id, media_type, title, sort_title, metadata, created_at,"
+            " updated_at)"
+            " VALUES (?, 'track', 'Track', 'track', '{}', '2026-01-01', '2026-01-01')",
+            (work,),
+        )
+        conn.execute(
+            "INSERT INTO work_credits (id, work_id, creator_id, role, role_raw, position, source,"
+            " link_confidence) VALUES (11, ?, ?, 'performer', 'artists', 0, 'fixture', 'matched')",
+            (work, corrected),
+        )
+        conn.execute(
+            "INSERT INTO work_credits (id, work_id, creator_id, role, role_raw, position, source,"
+            " link_confidence) VALUES (12, ?, ?, 'author', 'writers', 1, 'fixture', 'matched')",
+            (work, survivor),
+        )
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, moved_credit_ids,"
+            " performed_at, snapshot) VALUES (1, 'creator', 'split', ?, ?, '[11]',"
+            " '2026-01-01', ?)",
+            (target, json.dumps([source_json]), json.dumps(snapshot)),
+        )
+        stale_snapshot = {
+            "work_credits": [
+                {
+                    **snapshot["work_credits"][0],
+                    "id": 12,
+                    "role": "author",
+                    "role_raw": "writers",
+                    "position": 1,
+                }
+            ]
+        }
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids,"
+            " moved_credit_ids, performed_at, snapshot) VALUES (3, 'creator', 'split', ?, ?,"
+            " '[12]', '2026-01-03', ?)",
+            (target, json.dumps([source_json]), json.dumps(stale_snapshot)),
+        )
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, performed_at,"
+            " snapshot) VALUES (2, 'creator', 'merge', ?, ?, '2026-01-02', '{}')",
+            (survivor, json.dumps([source_json])),
+        )
+        conn.execute(
+            "INSERT INTO merge_log (id, subject, operation, winner_id, loser_ids, performed_at,"
+            " snapshot) VALUES (4, 'creator', 'merge', ?, ?, '2026-01-04', '{}')",
+            (corrected, json.dumps([target_json])),
+        )
+        conn.execute("DELETE FROM creators WHERE id=?", (source,))
+        conn.execute("DELETE FROM creators WHERE id=?", (target,))
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        assert conn.execute(
+            "SELECT work_id, creator_id, source, link_confidence, manual_from_creator_id "
+            "FROM work_credits WHERE id=11"
+        ).fetchone() == (work, corrected, "fixture", "manual", source)
+        assert conn.execute(
+            "SELECT creator_id, link_confidence, manual_from_creator_id FROM work_credits "
+            "WHERE id=12"
+        ).fetchone() == (survivor, "matched", None)
+        assert conn.execute("SELECT id FROM creators ORDER BY id").fetchall() == [
+            (survivor,),
+            (corrected,),
+        ]
+        assert conn.execute("SELECT id FROM merge_log ORDER BY id").fetchall() == [
+            (1,),
+            (2,),
+            (3,),
+            (4,),
+        ]
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert not any(
+            row[3] == "manual_from_creator_id"
+            for row in conn.execute("PRAGMA foreign_key_list(work_credits)")
+        )
+        conn.execute("UPDATE work_credits SET manual_from_creator_id=? WHERE id=11", ("5" * 32,))
