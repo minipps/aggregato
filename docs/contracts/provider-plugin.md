@@ -1,14 +1,13 @@
 # Contract: Provider Plugin
 
-**Version**: provider API 1.0 | **Date**: 2026-07-29
+**Provider API version**: 1.0
 
-This is the extension contract plugin-system guidance governs. It is a **public API**: changes
-follow semantic versioning, a MAJOR bump needs a migration note, and the conformance suite is updated
-in the same change.
+This is the public contract for provider packages. Contract changes follow semantic versioning;
+breaking changes require a migration note and an updated conformance suite.
 
-Bundled providers ship with the core , so they are version-locked by construction. The
-version range check exists only for drop-in development providers and logs a warning rather than
-gating — deliberately low-priority in M1, because the case does not exist yet.
+Bundled providers are described by host-owned static manifests. Drop-in providers supply a
+`manifest.json`; discovery reads this metadata without importing provider code or making network
+requests and labels drop-ins unreviewed. The worker imports a provider only when it is selected.
 
 ---
 
@@ -16,14 +15,14 @@ gating — deliberately low-priority in M1, because the case does not exist yet.
 
 ```python
 class Provider(Protocol):
-    id: str                          # stable slug, e.g. "letterboxd" — never changes, ever
+    id: str                          # stable slug, e.g. "letterboxd"; keep it stable across updates
     name: str                        # display name
     media_types: set[MediaType]      # from the closed enum; a provider cannot invent one
     capabilities: set[Capability]
     acquisition: Acquisition         # api | feed | export | scrape
-    config_model: type[BaseModel]    # validation AND the generated settings form 
+    config_model: type[BaseModel]    # runtime configuration validation
     rating_scales: list[RatingScale]
-    schema_version: int              # bump to trigger normalization replay 
+    schema_version: int              # bump to trigger normalization replay
     default_poll_interval: timedelta # from the platform's own rate limits, not a global default
 
     async def fetch(
@@ -35,11 +34,24 @@ class Provider(Protocol):
     async def check(self, ctx: ProviderContext) -> CheckResult: ...
 ```
 
-`FetchMode` ∈ `{incremental, full, import}`. In `import` mode, `ctx.import_path` is set.
+`config_model` is the Pydantic runtime validator. The settings form renders `config_schema` from the
+host-owned bundled manifest or the drop-in's `manifest.json`; bundled manifest schemas are checked
+for parity with the provider's runtime model schema.
 
-`fetch` may yield a `Checkpoint` between records; the host persists the enclosed cursor so a failed
-run resumes from there . A provider whose pagination cannot support mid-fetch resumption
-declares only `full` and accepts full resyncs.
+`fetch` handles `incremental`, `full`, and `import` modes. In `import` mode, `ctx.import_path` is set
+and the provider must not make network requests. `check` calls `provider.check`; replay passes stored
+records directly to `normalize` without calling `fetch`.
+
+`fetch` may yield a `Checkpoint` between records. The host persists the enclosed cursor, and a
+partial run resumes from its last flushed checkpoint. A provider that cannot resume from a cursor
+may start each fetch from the beginning; host upserts keep already-ingested records idempotent.
+
+Bump `schema_version` whenever `normalize` changes how retained payloads map to rows. Before the
+next fetch, the host replays stale payloads in bounded batches and commits each accepted record
+atomically: a rejected normalization or write keeps the previous derived rows and item version. An
+incomplete replay is recorded as non-success, retries the remaining stale items on a later run, and
+does not proceed to fetch. Full-run deletion inference is also skipped when any record fails
+normalization or ingest.
 
 The optional `Capability.NOW_PLAYING` capability adds a runtime-checkable protocol:
 
@@ -61,13 +73,13 @@ or fixture change unless they opt in.
 
 | Rule | Why | How it is enforced |
 |---|---|---|
-| `normalize` is **pure** — no network, no clock, no randomness, no storage | Makes replay  and credential-free offline tests  possible | Conformance suite: called twice on one fixture must produce identical output; sockets blocked; clock frozen |
-| During a normal scheduled run, a provider receives no database handle and the host passes only the selected provider's context |  | The parent owns the engine and sends the selected configuration through the child protocol. Discovery reads static manifests without importing provider packages. The runner passes a minimal explicit runtime environment. This is a process boundary, not an OS sandbox: unreviewed drop-ins may still access the child's filesystem and network permissions. |
-| A provider never constructs its own HTTP client |  politeness floors must be un-overridable | `ctx.http` is the only client; an import-linter rule forbids importing `httpx` from `aggregato/providers/*` |
-| A provider may not invent a `media_type`, `role`, or `subject_ref` key |  | Parent-side validation at the ingest boundary; violations become `ingest_failures`, not writes |
-| Every identifier present in a payload is extracted, including ones Aggregato has no use for | ; the single largest lever on match quality under the no-enrichment rule | Conformance suite asserts identifiers visible in the fixture appear in the output |
-| No CAPTCHA or anti-bot circumvention, in any form |  — a hard line, not a default | Raise `BlockedError`; the run stops and the provider goes to `degraded` immediately |
-| An optional now-playing method returns only normalized presence | Keeps current playback source-specific and out of history | The child validates one `NowPlayingItem` or `None`; the parent persists it and never sends it through ingest |
+| `normalize` is **pure**: no network, clock, randomness, or storage | Replay must produce the same derived rows from retained payloads | Conformance calls it twice for each fixture record; sockets are blocked, the clock is frozen, and writes are checked |
+| A provider receives only its selected context and no database engine | Database writes and validation remain in the host process | The worker child passes explicit inputs without an engine; import-linter forbids provider modules from importing `aggregato.db` or `aggregato.ingest`. This process boundary is not an OS sandbox. |
+| A provider uses the host HTTP client | The host enforces request pacing, acquisition floors, and contact identity | Use `ctx.http`; import-linter forbids provider modules from importing `httpx` |
+| A provider uses the closed `media_type`, `role`, and `subject_ref` vocabularies | Queries and stored rows share one core vocabulary | Parent-side ingest validation rejects invalid records into `ingest_failures` |
+| Extract every identifier present in a payload | Aggregato does not enrich records from third-party metadata sources | Conformance checks that fixture identifiers appear in normalized output |
+| Never bypass a CAPTCHA or anti-bot challenge | Acquisition policy forbids circumvention | Raise `BlockedError`; the host stops and does not retry automatically |
+| `now_playing` returns only a normalized item or `None` | Current playback is transient, not history | The child validates one `NowPlayingItem` or `None`; the host stores the current result outside ingest |
 
 ---
 
@@ -78,15 +90,14 @@ or fixture change unless they opt in.
 | Field | Guarantee |
 |---|---|
 | `http` | `httpx.AsyncClient` wrapped with rate limiting at `max(declared, host_floor)`, one in-flight request per host within that run for `scrapes` providers, retry on 5xx/429/transport with jitter, `Retry-After` compliance, ETag pass-through, and the project User-Agent with a contact URL |
-| `config` | The validated `config_model` instance for this provider only |
-| `secrets` | The selected provider's credentials, resolved before the child starts and sent explicitly; unreviewed drop-ins are not an OS sandbox and may still access filesystem and network permissions |
+| `config` | This provider's resolved settings, validated by its `config_model` |
+| `secrets` | This provider's credentials, resolved before the child starts and sent explicitly |
 | `log` | Logger already bound to `provider_id`, `run_id`, `lineage_id` |
-| `state` | Small opaque key/value store, this provider's own, persisted in `provider_state.kv` |
+| `state` | Per-run scratch mapping. Changes are not returned by the child protocol or persisted; yield a `Checkpoint` for durable cursor progress. |
 | `import_path` | Set only in `import` mode |
 
-The host owns, and a provider must not reimplement: scheduling, jitter, the retry ladder, rate
-limiting, cursor persistence, idempotency, identity resolution, storage, migrations, image caching,
-and the 15-second now-playing poll schedule .
+The host owns scheduling, the retry ladder, rate limiting, cursor persistence, idempotency, identity
+resolution, storage, migrations, image caching, and the 15-second now-playing poll schedule.
 
 ---
 
@@ -106,15 +117,15 @@ class NormalizedBatch(BaseModel):
 
 Rules that catch real mistakes:
 
-- `logged_precision` is **required** on every entry. There is no default, because a default would
-  silently fabricate exactness .
+- `logged_precision` is **required** on every entry and has no default; do not infer a precision the
+  source did not provide.
 - `rating_raw` requires a `rating_scale_id` the provider declared in `rating_scales`.
 - `subject_ref` uses only `season`, `episode`, `track`, `disc`, `chapter`, `volume`, positive integers.
-- `position` on credits: payload order where the platform does not express billing .
+- `position` on credits is the platform's order, or payload order when billing order is absent.
 - `role_raw` carries the platform's own word verbatim, always, even when `role` maps cleanly.
 - A provider that finds nothing must return an empty iterator. It must **not** report success on a
   structural failure — raise `StructureChangedError` instead, because silence plus delete inference is
-  how an archive gets erased .
+  how an archive gets erased.
 
 ---
 
@@ -137,17 +148,19 @@ the API edge. Providers do not construct a second client, read playback history,
 
 ## 4. Error signalling
 
-Raise, don't return. The host classifies and decides retry policy:
+Raise provider errors from `fetch` or `now_playing`; the host classifies them and decides retry
+policy. In `normalize`, raise `ValueError` for an invalid record or `StructureChangedError` when the
+source structure has changed. `check` returns a `CheckResult` for both success and failure.
 
 | Exception | `error_class` | Host behaviour |
 |---|---|---|
-| `AuthError` | `auth` | **No retry.** Degraded immediately; retrying risks account lockout |
-| `BlockedError` | `blocked` | **No retry.** Degraded immediately; retrying deepens the block |
-| `StructureChangedError` | `structure_changed` | **No retry.** UI says "this provider needs updating" with an issue-tracker link |
-| `RateLimited(retry_after=…)` | `rate_limit` | Retries, honours `Retry-After`, lengthens the effective interval for the rest of the session |
-| `httpx` transport errors, 5xx | `transport` | Retried in-run, then the ladder across runs |
-| Validation failure on one record | `parse` | That record goes to `ingest_failures`; the run continues |
-| Anything else | `internal` | Ladder; full traceback in the run's `log_excerpt` |
+| `AuthError` | `auth` | No automatic retry; the provider becomes degraded until an operator acts. |
+| `BlockedError` | `blocked` | No automatic retry; the provider becomes degraded. Do not retry or circumvent a block. |
+| `StructureChangedError` | `structure_changed` | No automatic retry; the provider becomes degraded until its implementation is updated. |
+| `RateLimited(retry_after=…)` | `rate_limit` | Retries, honors `Retry-After`, and lengthens the effective interval for the rest of the session. |
+| `TransportError`, `httpx` transport errors, or a raised 5xx response | `transport` | The HTTP client retries in-run; remaining failures use the run retry policy. |
+| Validation failure on one record | `parse` | The record goes to `ingest_failures`; the run continues. |
+| Anything else | `internal` | Uses the run retry policy; the traceback is retained in the run log excerpt. |
 
 The same classifications apply to `now_playing`. A transient failure clears the stored item and
 uses the host retry ladder; `auth`, `blocked`, and `structure_changed` suspend the independent
@@ -157,36 +170,33 @@ presence schedule until configuration, provider schema, or enablement changes.
 
 ## 5. Conformance suite — a merge gate
 
-Every bundled provider is registered into `tests/conformance/` and must pass. This is the contract
-testing guidance requires, and the compliance proof requires.
+Every bundled provider must be registered in `tests/conformance/` and pass the suite. Its fixtures
+are recorded inputs; the tests run offline without provider credentials.
 
-Asserted for every provider:
+The suite checks stable IDs, valid schema versions and poll intervals; emitted media types are
+declared; and providers claiming `has_ratings`, `has_reviews`, or `has_credits` produce matching
+fixture output. It exercises file imports, requires `Capability.SCRAPES` to match
+`Acquisition.SCRAPE`, checks deterministic normalization and closed vocabularies, and checks that
+recognized fixture identifiers appear in normalized output. It checks cursor resume when a provider
+yields checkpoints; feeds or other non-resumable sources need not support mid-fetch resume. `check`
+must return a `CheckResult` for valid and invalid fixture credentials.
 
-1. `id` is a stable slug; `schema_version` ≥ 1; `default_poll_interval` is set.
-2. Declared `media_types`, `capabilities`, and `acquisition` are consistent with observed behaviour —
-   a provider claiming `has_ratings` must produce at least one opinion from its fixtures.
-3. `normalize` purity: identical output across two calls; sockets blocked; clock frozen; no writes.
-4. Every `media_type`, `role`, and `subject_ref` key produced is in the closed vocabulary.
-5. Every identifier visible in the fixture appears in the output.
-6. Cursors round-trip: `fetch` → checkpoint → resume produces no duplicate and no gap.
-7. `check` returns a `CheckResult` for both a valid and an invalid fixture credential set.
-8. `config_model` produces a JSON Schema the settings form can render: flat fields, secrets marked
-   `writeOnly`, every field documented.
-9. **Scraping providers additionally**: recorded HTML fixtures present; a fixture with a changed
-   structure raises `StructureChangedError` rather than returning empty; no solver dependency in the
-   import graph.
-10. Providers declaring `now_playing` implement the optional method, ship recorded active and idle
-    responses, return deterministic normalized output, and classify malformed or rate-limited
-    responses correctly. Providers without the capability are not required to ship those fixtures.
+At runtime, `config_model` validates provider settings. The form renders the static `config_schema`
+from the bundled manifest or a drop-in's `manifest.json`; a parity test checks bundled manifests
+against runtime model schemas. Settings schemas use documented scalar fields and mark secret fields
+`writeOnly`.
 
-Tests run offline with no credentials. A network call in a conformance test is a failure, not a slow
-test.
+Scraping providers need recorded HTML fixtures, including a changed structure that raises
+`StructureChangedError`, and may not add a solver dependency to the import graph. Providers declaring
+`now_playing` need recorded active and idle fixtures, deterministic output, and correctly classified
+structure, authentication, and rate-limit failures. Providers without that capability skip these
+checks.
 
 ---
 
 ## 6. Acquisition hierarchy — a review checklist item
 
-A provider must use the highest surface available , and its pull request must state which
+A provider must use the highest available surface, and its pull request must state which
 higher surfaces were evaluated and why each was insufficient:
 
 1. Official API with documented terms
@@ -198,15 +208,15 @@ higher surfaces were evaluated and why each was insufficient:
 Where a higher tier covers part of the data — a feed for recent activity, an export for history — the
 provider combines them rather than scraping what a feed already provides.
 
-A scraping provider may authenticate as the operator, with the operator's own credentials, to retrieve
-**that operator's own data** from a platform they hold an account with. It may not bundle or share
-credentials, read other users' data, circumvent paywalls or access controls, defeat anti-bot measures,
-or retrieve anything the authenticated operator could not see in their own browser .
+A scraping provider may authenticate as the operator, using the operator's own credentials, to
+retrieve **that operator's own data** from a platform where they hold an account. It must not bundle
+or share credentials, read other users' data, circumvent paywalls or access controls, defeat
+anti-bot measures, or retrieve anything the authenticated operator could not see in their own
+browser.
 
 ## 7. Migrating a provider to a better surface
 
-When a platform ships an API later, the provider migrates in place rather than being replaced
-. `id` and `native_id` values stay stable where possible so existing entries relink instead of
-duplicating. Where native ids differ between surfaces, bump `schema_version` and document the
-changeover as requiring a full resync; retained raw payloads keep the old data interpretable either
-way.
+If a platform adds a better acquisition surface, update the existing provider where practical.
+Keep `id` and `native_id` stable where possible so existing rows continue to match. If payload
+mapping changes, bump `schema_version` and ensure `normalize` can still handle retained raw payloads.
+If native IDs differ between surfaces, document the change and plan for a full resync.

@@ -1,27 +1,28 @@
 # Architecture: Aggregato — Self-Hosted Media Log Aggregator
 
-**Date**: 2026-07-29 | **Product requirements**: [requirements.md](requirements.md)
+See [requirements.md](requirements.md) for product behavior and acceptance criteria. Performance figures
+below are targets; the current benchmark suite does not establish every target at its stated scale.
 
 ## Summary
 
-Build a single-user, self-hosted service that syncs a person's media logs from multiple third-party
-platforms into one local database and serves them through one authenticated HTTP API plus a web UI.
-Per-platform support is an in-repo plugin implementing a three-method contract; the host owns
-scheduling, retrying, rate limiting, request pacing, ingest validation, identity resolution, and
-migrations.
+Aggregato is a single-user, self-hosted service that collects media logs from configured platforms
+into a local database and serves them through an HTTP API and web UI. Bundled and drop-in providers
+implement the same three-method contract. The host owns scheduling, retries, rate limits, ingest
+validation, identity resolution, and migrations.
 
-Technical approach: an async FastAPI application for the API, including an authenticated HTTP API
-and websocket sync-status and now-playing streams, plus a **separate scheduler process** that
-polls a database-backed due-queue and executes each sync run in a **short-lived child process** that
-streams normalized JSON batches back over a pipe. This provides crash/hang containment and ensures
-plugins never receive a database handle.
-Storage is SQLAlchemy Core over SQLite (WAL) or Postgres with Alembic migrations. The frontend is a
-Vue 3 SPA consuming only the public API, built into its own Nginx image so the backend and frontend
-are separate always-on Compose services.
+FastAPI serves the API. A separate worker polls the database-backed due queue, and a short-lived
+child process runs each provider operation. The parent validates child output and performs database
+writes. The child has no database engine and timeouts contain many crashes and hangs; this process
+boundary is not an OS sandbox, and provider code still has the service's filesystem and network
+permissions.
+
+Storage uses SQLAlchemy Core over SQLite (WAL) or PostgreSQL, with Alembic migrations. The Vue SPA
+uses the documented API; authentication and authorization are enforced by the server. Compose runs
+the API/worker image and the Nginx frontend image.
 
 ## Technical Context
 
-**Language/Version**: Python 3.13 (host, API, providers); TypeScript 5.x (frontend)
+**Language**: Python 3.13 (host, API, providers); TypeScript (frontend)
 
 **Primary Dependencies**: FastAPI + uvicorn; Pydantic v2 (provider config models, normalized
 payloads, settings); SQLAlchemy 2.0 Core (async) + Alembic; aiosqlite / asyncpg; httpx; PyYAML;
@@ -31,18 +32,19 @@ logging — see [research.md](research.md).
 **Storage**: SQLite (WAL) by default at `$AGGREGATO_DATA/aggregato.db`; Postgres optional via the
 same URL setting. No Postgres-only column types.
 
-**Testing**: pytest + pytest-asyncio; httpx `ASGITransport` for API contract tests; a shared
-**provider conformance suite** every bundled provider must pass (testing guidance); recorded
-fixtures only — no test touches the network or needs credentials. Vitest covers the
-one non-trivial frontend unit (the schema-driven settings form).
+**Testing**: pytest and pytest-asyncio; httpx `ASGITransport` for API tests; a shared provider
+conformance suite; recorded fixtures and socket-blocked tests. Vitest runs the frontend unit tests.
 
-**Target Platform**: Linux, two Docker images, one volume, `docker compose up`. Runs on
-single-board-class hardware.
+**Deployment target**: Linux, two Docker images, one volume, `docker compose up`. Single-board-class
+hardware is a target; the declared performance budgets have not been demonstrated there.
 
 **Project Type**: Web service (async API + scheduler worker) with an SPA frontend and an in-repo
 plugin tree.
 
 ## Performance budgets
+
+These are product targets, not current measurements. See `tests/bench/` for the checks that exist;
+they do not yet prove every latency and throughput target below at the stated archive size.
 
 | Metric | Budget |
 |---|---|
@@ -58,20 +60,26 @@ plugin tree.
 | Now-playing visibility | provider changes reach the WebSocket within 16 s in normal operation |
 | Now-playing freshness | items checked more than 45 s ago are omitted |
 
-**Constraints**: no outbound request to any non-platform host except images from platform-supplied
-URLs; authentication is required by default, with an explicit read-only public mode for GET/HEAD;
-one bad provider must never block startup or another provider; provider-supplied data is validated
-before any write.
+The [local publication measurements](publication-review/performance.md) use a synthetic million-entry
+SQLite archive. First/deep-page API p95 measured 185/186 ms after fixing the keyset range predicate.
+Three short writer bursts per archive size measured a 15.2% lower median rate at 1M rows than at
+10k, outside the ±10% target. The concentrated seed and overlapping trial ranges limit that
+comparison; the scaling target needs representative, sustained measurements before it can be
+claimed. The 4-core ARM budget remains unmeasured.
 
-**Scale/Scope**: 1 user, ~10 bundled providers at maturity, 1M+ entries, 100k+ works, 200k+
-creators, and enough headroom for continued provider growth.
+**Constraints**: no outbound request to a non-platform host except for images at platform-supplied
+URLs; authentication is required by default, with an explicit read-only public mode for GET/HEAD.
+Provider output is validated before writes. Child processes and timeouts limit the effect of provider
+failures, but unreviewed Python providers are not sandboxed.
+
+**Long-term scale target**: 1 user, about 10 bundled providers, 1M+ entries, 100k+ works, and
+200k+ creators. These figures describe intended scope, not a measured capacity limit.
 
 ## Engineering checks
 
 The architecture satisfies the engineering guidance in [AGENTS.md](../AGENTS.md): strict quality
 checks, deterministic tests and provider conformance, consistent UI behaviour, inward dependency
-direction, isolated plugins, and measured performance budgets. The frontend is deliberately a built
-SPA rather than server-rendered.
+direction, and performance targets. The frontend is a built SPA.
 
 ## Project Structure
 
@@ -117,23 +125,23 @@ aggregato/
 │   ├── normalize_replay.py     # rebuild derived rows from stored payloads
 │   └── failures.py             # poison-record capture and replay
 ├── sync/
-│   ├── scheduler.py            # due-queue poll loop, jitter, concurrency cap
+│   ├── scheduler.py            # due-queue poll loop, singleton ownership, concurrency cap
 │   ├── now_playing.py          # transient playback monitor and durable state transitions
 │   ├── runner.py               # spawns and supervises one child per run; wall-clock kill
 │   ├── child.py                # child entrypoint: fetch + normalize -> JSON lines on a pipe
 │   ├── jobs.py                 # typed import/replay leases and shared lifecycle transitions
-│   ├── dispatch.py              # RunPlan/RunFinalization orchestration and ingest boundary
+│   ├── dispatch.py              # bounded replay, ingest, outcome release
 │   ├── retry.py                # backoff ladder, lineage, degraded state
 │   └── errors.py               # ErrorClass mapping and the never-retry set
 ├── providers/
 │   ├── base.py                 # Provider Protocol, ProviderContext, RatingScale
 │   ├── registry.py             # static-manifest discovery; selected drop-ins are labelled unreviewed
 │   ├── http.py                 # rate limiting, politeness floors, UA, Retry-After, ETag
-│   ├── fixture/                # M1 trivial provider — no network
-│   ├── listenbrainz/           # M2
-│   ├── anilist/                # M3
-│   ├── goodreads/              # M4 (public RSS feed)
-│   └── letterboxd/             # M5 (public RSS feed)
+│   ├── fixture/                # offline provider used by tests
+│   ├── listenbrainz/
+│   ├── anilist/
+│   ├── goodreads/              # public RSS feed
+│   └── letterboxd/             # public RSS feed
 ├── api/
 │   ├── deps.py                 # bearer auth, session cookie, CSRF
 │   ├── errors.py               # RFC 9457 problem+json
@@ -142,10 +150,10 @@ aggregato/
 │                               #   resolution, failures, images, health, export, auth,
 │                               #   now-playing websocket
 ├── images/cache.py             # content-addressed lazy fetch and store
-└── export.py                   # portable backup artefact
+└── export.py                   # SQLite archive creation and restore helper
 
 frontend/                       # Vue 3 + Vite SPA; built in docker/frontend.Dockerfile
-├── src/api/                    # generated-from-openapi client, one fetch wrapper
+├── src/api/                    # fetch wrapper and handwritten OpenAPI contract types
 ├── src/views/                  # Dashboard, Log, Work, Creators, Creator, Providers,
 │                               #   SyncHistory, Resolution, Stats, Settings, Login
 └── src/components/SchemaForm.vue  # renders a provider's JSON Schema as a settings form
@@ -153,13 +161,12 @@ frontend/                       # Vue 3 + Vite SPA; built in docker/frontend.Doc
 tests/
 ├── conformance/                # the shared provider conformance suite (contract tests)
 ├── contract/                   # API responses vs contracts/openapi.yaml
-├── integration/                # one per user story, real providers + recorded fixtures
 ├── unit/
-├── bench/                      # performance budgets from the table above (lands M2)
+├── bench/                      # performance checks
 └── fixtures/<provider>/        # recorded payloads; the only data any test touches
 
 docker/                         # backend/frontend multi-stage images, Nginx config, Compose files
-CONTRIBUTING.md                 # acquisition + scraping policy (M1 deliverable, per the design)
+CONTRIBUTING.md                 # acquisition and scraping policy
 ```
 
 ### Live sync observability
@@ -182,19 +189,20 @@ the database every 500 ms and sends only semantic changes. It omits disabled or 
 items whose last completed check is older than 45 seconds. No playback event, progress, history, or
 HTTP fallback is created by this path.
 
-**Structure Decision**: Single Python package plus a separate frontend package. Not the template's
-"web application" split, because there is no separate backend service boundary — one deployable, two
-processes (API and scheduler) from the same package, which is what 's containment requires and
-'s single-command deployment allows. The `providers/` tree is a package directory rather than
-separate distributions because integrations ship with the core .
+## Tradeoffs
 
-## Complexity Tracking
+The database is also the worker's durable schedule, so a single-host installation does not need a
+message broker. A non-blocking `flock` on a SQLite sidecar or a PostgreSQL session advisory lock
+enforces one worker owner per database. The worker acquires this process-lifetime lock before
+migrations and interrupted-run recovery; it is not a durable multi-host lease. Shutdown stops new
+admission, drains active syncs for up to three seconds, then cancels and reaps remaining children.
+The now-playing monitor is stopped at the same time, and the database engine is disposed last. A
+lost PostgreSQL session releases its advisory lock. Each provider operation runs in a fresh child
+process; this bounds ordinary crashes and hangs while keeping all database writes in the parent, but
+it does not sandbox provider code. The frontend is a built Vue SPA: Docker users need no Node
+installation, while building it from source does.
 
-> Filled because Phase 1 design deviates from a spec Assumption.
-
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| Vue 3 SPA frontend, contradicting the spec Assumption "server-rendered, no SPA build step in v1" | Requested directly by the operator for this plan. It also strengthens : an SPA physically cannot read the database or use a private endpoint, so "the UI consumes only the public API" stops being a discipline and becomes a property. | Server-rendered templates were the spec's choice specifically so a self-hoster needs no Node toolchain. That concern is answered by the dedicated frontend image — operators run `docker compose up` and never install Node — but **building from source now requires Node**, which is a real cost, not an eliminated one. Spec Assumption should be amended to say so. |
-| Two processes (API + scheduler) rather than one |  requires that a hanging or crashing provider never affect browsing or startup, and §6.7 requires provider work to be killable. A single-process design cannot guarantee either. | An asyncio task inside the API process covers a hang (via timeout) but not a hard crash or a C-extension deadlock, and it puts ingest CPU in the request path, which threatens . |
-| A child process per sync run, on top of the scheduler process | Same containment requirement, plus it makes  ("no database handle, no other provider's secrets") physically true rather than reviewed. Cost is ~100 ms spawn per run, against run intervals measured in hours. | A persistent worker pool would keep provider state alive across runs and share one address space between providers — reintroducing exactly the leakage  forbids, for a saving that is invisible at this cadence. |
-| Two search implementations (SQLite FTS5, Postgres tsvector) |  requires free-text search over titles and review text;  caps the first page at 1 s p95 over 1M entries. `LIKE '%…%'` cannot meet that. | A single portable `LIKE` scan fails the declared budget at scale. A third-party search engine violates  (no additional services). |
+SQLite is the default. PostgreSQL is supported through the same storage interface, and full-text
+search uses SQLite FTS5 or PostgreSQL `tsvector`. Those dual implementations keep search indexed
+without adding another service. Declared performance budgets remain targets until measurements at
+their stated data sizes are recorded.

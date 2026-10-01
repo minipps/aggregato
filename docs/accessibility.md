@@ -1,5 +1,9 @@
 # Accessibility review
 
+The [1 October browser validation](publication-review/browser-validation.md) records current
+automated checks, keyboard interactions, responsive layouts, screenshots, and manual review limits.
+The implementation audit below is historical.
+
 Reviewed 2026-07-30 for Phase 10. The application has a semantic `header` / labelled primary
 `nav` / `main` landmark shell, a visible-on-focus skip link, and a persistent high-contrast focus
 ring. Route links receive their router-provided current-page state. The shell is intentionally

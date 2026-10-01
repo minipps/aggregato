@@ -83,11 +83,10 @@ core; a drop-in must supply `manifest.json` next to `__init__.py` with `name`, `
 is warned about and skipped; its provider code is not imported during discovery.
 
 The package is imported only after an operator selects its provider for an operation. A scheduled
-sync runs the selected provider in its short-lived child, while the parent keeps the database and
-performs validation and writes. That child boundary contains crashes and hangs; it is not an OS
-sandbox. The runner passes a minimal explicit runtime environment and the selected provider's
-configuration/secrets over the child protocol. An unreviewed drop-in still retains filesystem and
-network permissions, so review the source and deployment location.
+sync runs the selected provider in a short-lived child; the parent keeps the database and performs
+validation and writes. The child has a timeout, but it is not an OS sandbox. It receives a minimal
+runtime environment and that provider's configuration. An unreviewed drop-in still has the
+service's filesystem and network permissions, so review its source and deployment location.
 Import errors affect the selected operation and do not make an unrelated provider part of discovery.
 
 The inheritance above is only a compact illustration. A real provider implements the three methods in the contract: `fetch`, pure synchronous `normalize`, and asynchronous `check`.
@@ -137,4 +136,8 @@ The provider is intentionally marked **unreviewed** in the UI. Review its source
 
 ## 5. Ship normalizer fixes safely
 
-Increment `schema_version` whenever `normalize` changes how retained raw data maps to entries, opinions, credits, or identifiers. On the next sync Aggregato replays saved raw payloads through the child process before fetching new data. Do not change the stable `id` to represent an acquisition change; it is the durable join key.
+Increment `schema_version` whenever `normalize` changes how retained raw data maps to entries,
+opinions, credits, or identifiers. Before fetching, the next sync replays stale payloads in bounded
+count-and-byte batches through the child process. Each replacement batch commits atomically; if a
+replay fails, the stored schema version remains unchanged. Do not change the stable `id` to represent
+an acquisition change; it is the durable join key.

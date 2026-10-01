@@ -1,37 +1,19 @@
-# Product Requirements: Aggregato — Self-Hosted Media Log Aggregator
+# Product requirements
 
-**Feature Branch**: `001-media-log-aggregator`
+This document defines product behavior and acceptance criteria, including requirements that may
+still be in progress. See the [architecture](architecture.md), [data model](data-model.md), and
+[contracts](contracts/) for implementation details; use the [README](../README.md) and
+[operations guide](operations.md) for current user workflows.
 
-**Created**: 2026-07-29
+## Product journeys
 
-**Status**: Draft
-
-**Input**: User description: Aggregato Specification v1.0 — a self-hosted service that pulls a
-user's media logs from multiple third-party logging platforms, normalizes them into a single
-local database, and exposes them through one unified HTTP API and web UI, with per-platform
-support provided by opt-in provider plugins.
-
-**Source design documents**: the v1.0 design's technical decisions (architecture, data model,
-plugin contract, API surface, and acquisition policy) are maintained in
-[architecture.md](architecture.md), [data-model.md](data-model.md), and the
-[contract documents](contracts/). This file states the capability, the user-visible behaviour, and
-the constraints any implementation must honour.
-
-## User Scenarios & Testing *(mandatory)*
-
-### Product Journey 1: One platform's history, local and browsable (Priority: P1)
+### Product Journey 1: One platform's history, local and browsable
 
 A self-hoster deploys Aggregato with a single command, supplies their username or credentials for
-one logging platform, and enables it. The service fetches their history on a schedule and they
-browse it — dated entries, ratings, reviews — in a local web UI, with no third-party service
-involved beyond the platform they already use.
-
-**Why this priority**: This is the smallest thing that delivers the core promise: a media history
-that is local, queryable, and durable. Everything else compounds on it.
-
-**Independent Test**: Deploy from a clean state, enable exactly one platform, wait for a sync, and
-confirm the browsed entries match what the platform shows. Delivers a working personal archive with
-one platform configured.
+one logging platform, and enables it. The service fetches the history available through that
+platform's configured source on a schedule. They browse the results — dated entries, ratings, and
+reviews — in a local web UI, with no third-party service involved beyond the platform they already
+use.
 
 **Acceptance Scenarios**:
 
@@ -39,9 +21,9 @@ one platform configured.
    **Then** it starts successfully, contacts no external host, and reports zero configured
    platforms.
 2. **Given** one platform enabled with valid credentials, **When** the first sync completes,
-   **Then** every entry the platform exposes for that account is present locally with its logged
-   date, its date precision, and its rating in both the platform's original scale and a normalized
-   form.
+   **Then** every entry available through the configured source for that account is present locally
+   with its logged date, date precision, and rating in both the platform's original scale and a
+   normalized form.
 3. **Given** a completed sync, **When** the same sync runs again over unchanged data, **Then** no
    duplicate entries are created and no existing entry is modified.
 4. **Given** an entry the platform recorded with only a month or a year, **When** the operator views
@@ -49,17 +31,10 @@ one platform configured.
 
 ---
 
-### Product Journey 2: Two platforms, one log (Priority: P1)
+### Product Journey 2: Two platforms, one log
 
 The operator enables a second platform. A film they logged on both platforms appears as one item
 with both platforms' ratings and reviews side by side, not as two unrelated rows.
-
-**Why this priority**: Unification is the reason the product exists rather than an export folder. It
-is also where the hard problem lives, so it must be exercised early.
-
-**Independent Test**: Enable two platforms whose accounts share overlapping items, sync both, and
-confirm shared items unify while genuinely distinct items stay distinct. Delivers a cross-platform
-view even with only two platforms configured.
 
 **Acceptance Scenarios**:
 
@@ -75,18 +50,11 @@ view even with only two platforms configured.
 
 ---
 
-### Product Journey 3: Sync the operator can trust (Priority: P2)
+### Product Journey 3: Sync the operator can trust
 
 A platform goes down, changes, rate-limits, or rejects the operator's credentials. Aggregato
 recovers on its own where recovery is possible, says exactly what is wrong where it is not, keeps
 every other platform working, and never destroys history in the process.
-
-**Why this priority**: An archive that silently stops updating, or silently deletes, is worse than no
-archive. This is what makes the tool leavable-alone.
-
-**Independent Test**: Force each failure class against a test platform and confirm the recorded
-outcome, retry behaviour, and operator-facing message for each. Delivers dependable unattended
-operation independent of which platforms are configured.
 
 **Acceptance Scenarios**:
 
@@ -111,18 +79,11 @@ operation independent of which platforms are configured.
 
 ---
 
-### Product Journey 4: Fixing identity by hand (Priority: P2)
+### Product Journey 4: Fixing identity by hand
 
 The operator works through a queue of items and creators Aggregato refused to guess about, merges
 duplicates it created, and splits apart creators it wrongly joined — for example two different
 people who share a name.
-
-**Why this priority**: Because Aggregato deliberately looks up nothing externally (see Assumptions),
-manual curation is the compensating mechanism, not an admin afterthought. It must be fast enough
-that a real queue is clearable.
-
-**Independent Test**: Seed known-ambiguous and known-conflated data, then resolve it entirely through
-the UI. Delivers a correctable archive regardless of automatic match quality.
 
 **Acceptance Scenarios**:
 
@@ -140,17 +101,10 @@ the UI. Delivers a correctable archive regardless of automatic match quality.
 
 ---
 
-### Product Journey 5: Platforms with no API (Priority: P3)
+### Product Journey 5: Platforms without a usable automatic source
 
-For a platform offering no usable programmatic surface, the operator downloads their own export file
-from that platform and uploads it. Those entries land in the same archive, filterable alongside
-everything else.
-
-**Why this priority**: Several significant platforms have no other path. It also proves the
-platform-support contract is general rather than shaped around one convenient API.
-
-**Independent Test**: Upload a real export file from a supported platform and confirm its entries,
-ratings, and identifiers appear correctly in the unified log.
+For a platform with no usable API or feed, the operator uploads an export file obtained from that
+platform. Those entries land in the same archive, filterable alongside everything else.
 
 **Acceptance Scenarios**:
 
@@ -163,18 +117,11 @@ ratings, and identifiers appear correctly in the unified log.
 
 ---
 
-### Product Journey 6: Adding support for a new platform (Priority: P3)
+### Product Journey 6: Adding support for a new platform
 
 A contributor adds support for a platform Aggregato does not yet cover, by implementing a narrow
 contract — fetch, convert, verify credentials — without needing to understand or modify the core.
 Scheduling, retries, rate limiting, storage, and migrations are already handled.
-
-**Why this priority**: Platform coverage is the product's long-term growth path, and it must not
-require core changes. Not needed for the first release to be useful.
-
-**Independent Test**: Write a new platform integration against the documented contract, using only
-recorded sample data and no live credentials, and confirm it syncs and appears in the UI with no core
-modification.
 
 **Acceptance Scenarios**:
 
@@ -192,16 +139,10 @@ modification.
 
 ---
 
-### Product Journey 7: Owning the archive (Priority: P3)
+### Product Journey 7: Backing up the archive
 
-The operator takes a portable backup of everything, sees what disk is being consumed and by what,
-and turns off the space-hungry parts if they choose.
-
-**Why this priority**: A self-hosted archive that cannot be backed up or budgeted is not an archive.
-Lower priority only because it is worthless before there is data to back up.
-
-**Independent Test**: Produce a backup, restore it into a fresh instance, and confirm the archive is
-intact and browsable.
+The operator can back up a SQLite database from Settings, see what disk space is being used, and
+adjust optional retention.
 
 **Acceptance Scenarios**:
 
@@ -214,16 +155,11 @@ intact and browsable.
 
 ---
 
-### Product Journey 8: Seeing what is playing now (Priority: P2)
+### Product Journey 8: Seeing what is playing now
 
 An authenticated client can subscribe to the current playback reported by enabled providers that
 support it. Playback is transient, source-specific state: it is not added to the media log and is not
 merged across providers.
-
-**Independent Test**: Seed recorded active and idle responses for Koito and ListenBrainz, run the
-worker monitor with an injected clock, and connect to the authenticated WebSocket. Confirm that the
-durable snapshot contains only fresh active sources and changes are delivered without duplicate
-messages.
 
 **Acceptance Scenarios**:
 
@@ -250,18 +186,16 @@ messages.
 
 ### Edge Cases
 
-- A platform returns an empty result: distinguishing "nothing was logged this week" from "this
-  integration is broken" is mandatory, because inferring deletion from the second would erase
-  history. Deletion is only ever inferred for platforms that explicitly report deletions, and never
-  by default.
+- An empty result may mean no recent activity or a broken integration. Deletion inference must stay
+  opt-in and guarded so an unexpected empty result does not remove history.
 - A run returns far fewer items than the previous run for the same window: flagged and surfaced
   against a configurable threshold, not silently accepted.
 - A platform records activity below the level Aggregato treats as an item (an individual episode of a
   series): the activity is preserved, attached to the item it belongs to, and **excluded from that
   item's aggregate statistics by default**, with an explicit opt-in to include it. Reversing this
   default would silently corrupt every statistic shown.
-- Two different people share a name: they will be joined automatically, and splitting them apart at
-  the level of individual credits is a required operation, not a future nicety.
+- Two people may share a name. If name matching joins them, the operator can split them at the
+  individual-credit level.
 - The same person is credited under a native script and a romanization: they will not join
   automatically, and the queue must suggest the pair.
 - Ratings from platforms with different scales and different community distributions: raw value and
@@ -274,164 +208,169 @@ messages.
 - A very large history (hundreds of thousands of entries) browsed to its far end: paging must not
   degrade with depth.
 - The archive outgrows the default embedded database: the operator can move to a server database
-  without a change to the data model or a loss of features.
+  without changing the data model; database-native backup and restore are used for PostgreSQL.
 - A provider reports the same normalized item on consecutive polls: the host refreshes its checked
   time but preserves `changed_at`, so the WebSocket does not emit a duplicate snapshot.
 - A worker or API process is unavailable: playback state is durable, but the API omits an item after
   45 seconds rather than presenting known-stale presence.
 
-## Requirements *(mandatory)*
-
-### Functional Requirements
+## Functional requirements
 
 **Aggregation and storage**
 
-- ****: System MUST store log entries, ratings, reviews, and creator credits from any number of
+- System MUST store log entries, ratings, reviews, and creator credits from any number of
   configured platforms in one local database.
-- ****: System MUST retain, for every ingested record, the platform's original payload
+- System MUST retain, for every ingested record, the platform's original payload
   verbatim, and MUST be able to rebuild all derived data from those payloads without contacting the
   platform again. Retention is on by default; disabling it MUST warn the operator.
-- ****: System MUST retain each rating's original value and scale alongside its normalized
+- System MUST retain each rating's original value and scale alongside its normalized
   value, and MUST NOT present normalized values as cross-platform equivalents.
-- ****: System MUST record the precision of every logged date and MUST NOT present a fabricated
+- System MUST record the precision of every logged date and MUST NOT present a fabricated
   time as exact.
-- ****: System MUST treat re-ingesting already-seen data as a no-op.
-- ****: System MUST support a single user only, and MUST NOT carry any concept of user accounts
+- System MUST treat re-ingesting already-seen data as a no-op.
+- System MUST support a single user only, and MUST NOT carry any concept of user accounts
   in its data.
-- ****: System MUST preserve activity recorded below item level, attached to its parent item,
+- System MUST preserve activity recorded below item level, attached to its parent item,
   and MUST exclude such activity from that item's aggregate statistics unless explicitly requested.
-- ****: System MUST NOT allow a platform integration to introduce new media categories or write
+- System MUST NOT allow a platform integration to introduce new media categories or write
   arbitrary data; all ingest MUST be validated against the system's own defined shapes.
 
 **Identity**
 
-- ****: System MUST unify items across platforms using identifiers those platforms publish in
+- System MUST unify items across platforms using identifiers those platforms publish in
   their own responses, and MUST capture every such identifier a payload offers.
-- ****: System MUST NOT make outbound requests to any third-party metadata database. The only
+- System MUST NOT make outbound requests to any third-party metadata database. The only
   outbound request to a non-platform host permitted is fetching an image from a URL a platform itself
   supplied.
-- ****: System MUST unify items lacking a shared identifier only on an unambiguous title,
+- System MUST unify items lacking a shared identifier only on an unambiguous title,
   category, and year match; ambiguous cases MUST be queued for the operator, never guessed.
-- ****: System MUST prefer creating a duplicate item over performing an uncertain merge.
-- ****: System MUST provide operator-driven merge for items and both merge and **credit-level
+- System MUST prefer creating a duplicate item over performing an uncertain merge.
+- System MUST provide operator-driven merge for items and both merge and **credit-level
   split** for creators, and MUST record which links were made by name matching versus by a
   platform-supplied identifier so a split is informed.
-- ****: System MUST make every operator identity decision durable against all subsequent syncs.
-- ****: System MUST NOT automatically join creators by name across unrelated media domains, and
+- System MUST make every operator identity decision durable against all subsequent syncs.
+- System MUST NOT automatically join creators by name across unrelated media domains, and
   MUST instead surface such pairs as suggestions.
-- ****: System MUST record every credit's role, the platform's own term for that role verbatim,
+- System MUST record every credit's role, the platform's own term for that role verbatim,
   the name as that item credited them, and their billing order.
-- ****: Every merge, split, and queue decision MUST be reversible.
+- Every merge, split, and queue decision MUST be reversible.
 
 **Sync and failure handling**
 
-- ****: System MUST sync each platform on its own configurable schedule, defaulting to a value
+- System MUST sync each platform on its own configurable schedule, defaulting to a value
   the integration declares rather than one global value, and MUST support manual triggering.
-- ****: System MUST record every sync attempt with its outcome, item counts, and failure
+- System MUST record every sync attempt with its outcome, item counts, and failure
   detail, and MUST group retries of the same failure together for display.
-- ****: System MUST retry recoverable failures automatically at increasing delays without
+- System MUST retry recoverable failures automatically at increasing delays without
   operator action, and MUST resume a partially-completed sync from its last fully-processed point.
-- ****: System MUST NOT retry failures that retrying cannot fix — invalid credentials, an access
+- System MUST NOT retry failures that retrying cannot fix — invalid credentials, an access
   block, or a platform whose structure has changed — and MUST tell the operator which occurred and
   what it requires.
-- ****: System MUST honour platform-supplied rate-limit signals and MUST slow its own cadence in
+- System MUST honour platform-supplied rate-limit signals and MUST slow its own cadence in
   response rather than resuming the previous rate immediately.
-- ****: System MUST set aside individual records that fail conversion, with their original
+- System MUST set aside individual records that fail conversion, with their original
   payload, continue the run, report the count, and allow them to be re-processed after a fix.
-- ****: System MUST NOT infer deletions for platforms that do not report deletions; inferred
+- System MUST NOT infer deletions for platforms that do not report deletions; inferred
   deletion MUST be off by default.
-- ****: A failing, hanging, or crashing platform integration MUST NOT affect any other
+- A failing, hanging, or crashing platform integration MUST NOT affect any other
   platform, the browsing experience, or service startup.
-- ****: System MUST flag, rather than silently accept, a sync returning fewer items than a
+- System MUST flag, rather than silently accept, a sync returning fewer items than a
   configurable proportion of what the previous run returned for the same window.
-- ****: System MUST poll enabled providers declaring `now_playing` independently of history syncs,
+- System MUST poll enabled providers declaring `now_playing` independently of history syncs,
   using a 15-second host interval and no more than three concurrent isolated children.
-- ****: System MUST persist at most one parent-validated transient now-playing item per capable
+- System MUST persist at most one parent-validated transient now-playing item per capable
   provider, refresh its checked time on every completed attempt, and never write playback to history.
-- ****: System MUST clear an active now-playing item on an idle result or failed attempt; auth,
+- System MUST clear an active now-playing item on an idle result or failed attempt; auth,
   blocked, and structure-change failures MUST suspend polling until configuration, schema, or
   enablement changes.
 
 **Reading the archive**
 
-- ****: System MUST expose one documented read interface covering items, entries, opinions,
+- System MUST expose one documented read interface covering items, entries, opinions,
   creators, platforms, sync history, failures, and the resolution queue.
-- ****: System MUST support filtering the log by media category, media domain, platform, entry
+- System MUST support filtering the log by media category, media domain, platform, entry
   kind, creator, role, date range, score range, presence of a review, and free text over titles and
   review text, with sorting by logged date, ingest date, or score.
-- ****: System MUST support filtering by media domain as a first-class alternative to
+- System MUST support filtering by media domain as a first-class alternative to
   enumerating individual categories, while keeping every individual category separately addressable.
-- ****: System MUST page results in a way that does not degrade as the caller reads deeper into
+- System MUST page results in a way that does not degrade as the caller reads deeper into
   a large history.
-- ****: The web UI MUST consume only the same public read interface available to any other
+- The web UI MUST consume only the same public read interface available to any other
   client; if a screen needs data the interface cannot express, the interface is extended.
-- ****: System MUST require authentication for state-changing access and by default for reads;
-  an explicit public read-only setting MAY allow credential-free GET/HEAD requests. It MUST NOT
-  place the operator's token in browser URLs or page source.
-- ****: System MUST serve platform-supplied images through a local cache rather than linking to
+- System MUST require authentication for state-changing access and by default for reads. A public
+  read-only setting MAY allow credential-free GET/HEAD requests on public read routes. Exports and
+  raw diagnostics MUST require operator authentication. The operator's token MUST NOT appear in
+  browser URLs or page source.
+- System MUST serve platform-supplied images through a local cache rather than linking to
   the third-party host, MUST fetch them lazily so image availability never affects a sync, and MUST
   show a placeholder rather than falling back to third-party linking when caching is off.
-- ****: System MUST expose current playback through an authenticated `/api/v1/ws/now-playing`
+- System MUST expose current playback through an authenticated `/api/v1/ws/now-playing`
   WebSocket that sends a complete initial snapshot and change-only updates, omitting disabled,
   failed, or stale providers; it MUST accept API/read-only bearer and session-cookie authentication
   and reject an unauthenticated handshake with close code `1008`.
 
 **Platform integrations**
 
-- ****: Support for each platform MUST be an independent integration implementing a narrow
+- Support for each platform MUST be an independent integration implementing a narrow
   contract, addable without modifying the core.
-- ****: The system MUST own scheduling, retrying, rate limiting, request pacing, storage, and
+- The system MUST own scheduling, retrying, rate limiting, request pacing, storage, and
   migrations; an integration MUST NOT need to reimplement them.
-- ****: An integration's data-conversion step MUST be free of network, clock, and storage access
+- An integration's data-conversion step MUST be free of network, clock, and storage access
   so it is testable offline from recorded samples with no credentials.
-- ****: An integration MUST receive only its own credentials and configuration, and MUST NOT
+- An integration MUST receive only its own credentials and configuration, and MUST NOT
   receive direct storage access or any other integration's secrets.
-- ****: Integrations MUST be discovered automatically but MUST remain inert until explicitly
+- Integrations MUST be discovered automatically but MUST remain inert until explicitly
   enabled; a fresh install MUST contact nothing.
-- ****: An integration MUST declare its configuration such that a working settings form is
+- An integration MUST declare its configuration such that a working settings form is
   produced with no additional interface work.
-- ****: Each integration MUST declare how it obtains data, and that provenance MUST be visible
+- Each integration MUST declare how it obtains data, and that provenance MUST be visible
   to the operator.
-- ****: Integrations MUST ship with the core release and MUST NOT be installable from within the
+- Integrations MUST ship with the core release and MUST NOT be installable from within the
   application. Any move toward in-application installation or third-party distribution MUST be
   preceded by a re-evaluation of the isolation model, because integrations run with the service's own
   privileges.
-- ****: Integrations MUST use the highest-fidelity data surface a platform offers, resorting to
+- Integrations MUST use the highest-fidelity data surface a platform offers, resorting to
   scraping only when every better surface is insufficient, and MUST document that evaluation.
-- ****: For scraping integrations the system MUST enforce, independent of integration behaviour:
+- For scraping integrations the system MUST enforce, independent of integration behaviour:
   conservative pacing with a floor the integration cannot raise, one request at a time per host, an
   identifying user agent naming the project and a contact URL, and backoff on refusal responses.
-- ****: System MUST NOT circumvent access controls, paywalls, or anti-bot measures, MUST NOT
+- System MUST NOT circumvent access controls, paywalls, or anti-bot measures, MUST NOT
   ship or integrate any solver for them, and MUST stop and report when one is encountered.
-- ****: A scraping integration MUST retrieve only data the authenticating operator can see in
+- A scraping integration MUST retrieve only data the authenticating operator can see in
   their own browser on their own account, and MUST NOT bundle or share credentials.
-- ****: A scraping integration MUST ship recorded samples and offline tests as a condition of
+- A scraping integration MUST ship recorded samples and offline tests as a condition of
   acceptance.
-- ****: When a platform later offers a better data surface, the integration MUST be able to
+- When a platform later offers a better data surface, the integration MUST be able to
   migrate to it without duplicating already-ingested entries where identifiers permit.
-- ****: A platform MAY declare the optional `now_playing` capability and implement
+- A platform MAY declare the optional `now_playing` capability and implement
   `now_playing(ctx) -> NowPlayingItem | None`; providers that do not declare it remain valid and
   unchanged.
-- ****: A now-playing result MUST contain only normalized work, credits, and external identifiers;
+- A now-playing result MUST contain only normalized work, credits, and external identifiers;
   it MUST NOT contain playback progress, duration, a logged event, or a raw provider payload.
 
 **Operation**
 
-- ****: System MUST deploy as a single unit with one storage location and one command, with no
+- System MUST deploy as a single unit with one storage location and one command, with no
   additional services and no third-party API keys beyond the operator's own platform credentials.
-- ****: System MUST apply schema migrations automatically on startup, forward-only, taking a
-  backup of an embedded database first.
-- ****: System MUST produce a single portable backup artefact containing the archive and the
-  configuration, excluding secrets, restorable into a clean instance without re-syncing.
-- ****: System MUST report per-platform health including last successful sync, and MUST surface
+- System MUST apply forward-only schema migrations automatically on startup and take a consistent
+  backup before migrating an on-disk SQLite database.
+- Settings MUST provide a consistent archive download for on-disk SQLite, containing the database
+  snapshot, cached images, and public configuration. It MUST omit configured secrets, sessions,
+  ingest-failure payloads, run diagnostics, and pending jobs. The archive contains personal history
+  and retained provider data and MUST be treated as private.
+- The archive restore helper MUST validate and stage a restore into an empty data directory before
+  publishing it. Restored providers MUST be disabled until the operator supplies fresh credentials;
+  public configuration is returned for review and is not applied automatically.
+- PostgreSQL backup and restore use PostgreSQL tools; Settings archive download is SQLite-only.
+- System MUST report per-platform health including last successful sync, and MUST surface
   degraded platforms prominently.
-- ****: System MUST keep secrets out of on-disk configuration it writes, referencing them from
+- System MUST keep secrets out of on-disk configuration it writes, referencing them from
   the environment instead.
-- ****: System MUST show current storage usage broken out by each optional retention feature,
+- System MUST show current storage usage broken out by each optional retention feature,
   each of which MUST be independently switchable.
-- ****: Sync-history retention MUST be configurable, keeping failures longer than successes by
+- Sync-history retention MUST be configurable, keeping failures longer than successes by
   default.
-- ****: The service MUST keep now-playing state transient and bounded to one item per provider; it
+- The service MUST keep now-playing state transient and bounded to one item per provider; it
   MUST NOT retain playback history, add an event broker, or require a persistent provider worker.
 
 ### Key Entities
@@ -461,73 +400,69 @@ messages.
 - **Ingest failure**: One record that could not be converted, kept with its original payload for
   diagnosis and later re-processing.
 
-## Success Criteria *(mandatory)*
+## Success criteria
 
 ### Measurable Outcomes
 
-- ****: From a clean machine, an operator reaches a first browsable synced history with one
+These are acceptance targets, not claims that current measurements meet them.
+
+- From a clean machine, an operator reaches a first browsable synced history with one
   platform configured in under 15 minutes, having supplied no credentials except their own for that
   platform.
-- ****: For items logged on two platforms where at least one platform publishes a shared
+- For items logged on two platforms where at least one platform publishes a shared
   identifier, at least 95% unify into a single item with no operator involvement.
-- ****: No sequence of failed and retried syncs ever produces a lost or duplicated entry;
+- No sequence of failed and retried syncs ever produces a lost or duplicated entry;
   verified by repeatedly interrupting syncs over a fixed data set and comparing the result to an
   uninterrupted run.
-- ****: A single platform failing — for any of the classified failure reasons — leaves every
+- A single platform failing — for any of the classified failure reasons — leaves every
   other platform's sync unaffected 100% of the time, and never prevents the service from starting.
-- ****: For every failure the operator sees, the interface names what is wrong and what action
+- For every failure the operator sees, the interface names what is wrong and what action
   it needs; no failure surfaces only as a generic error.
-- ****: An operator clears a resolution decision in under 10 seconds per decision, working from
+- An operator clears a resolution decision in under 10 seconds per decision, working from
   the keyboard, with an undo available.
-- ****: Browsing and filtering an archive of 1,000,000 entries returns the first page of results
+- Browsing and filtering an archive of 1,000,000 entries returns the first page of results
   in under 1 second at the 95th percentile, and paging to the far end of that history is no slower
   than paging near the start.
-- ****: Sustained ingest of a high-volume platform processes at least 50,000 entries per hour on
+- Sustained ingest of a high-volume platform processes at least 50,000 entries per hour on
   modest single-board-class hardware, and ingest throughput does not degrade measurably as the archive
   grows to 1,000,000 entries.
-- ****: A contributor with no prior knowledge of the codebase adds support for a new platform by
+- A contributor with no prior knowledge of the codebase adds support for a new platform by
   implementing the documented contract only, with zero changes to core code and zero interface work
   for its settings screen.
-- ****: An integration's data conversion is fully testable with no network access and no
+- An integration's data conversion is fully testable with no network access and no
   credentials, from recorded samples alone.
-- ****: A correction to how a platform's data is interpreted can be applied to the entire
+- A correction to how a platform's data is interpreted can be applied to the entire
   existing archive without re-contacting that platform.
-- ****: A backup taken from a populated instance restores into a clean instance with a complete,
+- A backup taken from a populated instance restores into a clean instance with a complete,
   browsable archive and zero re-syncing.
-- ****: A fresh install with no platform enabled makes zero outbound network requests.
-- ****: No inferred deletion ever occurs for a platform that does not report deletions, verified
+- A fresh install with no platform enabled makes zero outbound network requests.
+- No inferred deletion ever occurs for a platform that does not report deletions, verified
   against a platform that exposes only recent activity.
-- ****: Under normal operation, a provider change is visible on the now-playing WebSocket within
+- Under normal operation, a provider change is visible on the now-playing WebSocket within
   16 seconds of the 15-second acquisition interval plus the 500-ms API polling interval, and an
   item older than 45 seconds is never served as current.
 
-## Out of Scope
-
-Stated so the boundary is not rediscovered mid-build:
+## Out of scope
 
 - **Multiple users on one instance.** No user concept exists in the data.
 - **Writing anything back to a platform.** The relationship is read-only upstream, permanently.
 - **Replacing a logging platform.** Aggregato aggregates a history; the operator keeps logging
   wherever they log today.
 - **Managing, scanning, or streaming media files.** Aggregato indexes logged activity, not files.
-- **Public or multi-tenant hosting.** The security model assumes one trusted operator.
+- **Multi-user or multi-tenant hosting.** Public read-only access is supported; public write access
+  is not.
 - **Enriching records from third-party metadata databases.** Aggregato holds what its platforms gave
   it and nothing else.
-- **Local editing and manual entry creation in this version**, beyond the identity curation in User
-  Story 4.
+- **Creating or editing log entries locally**, beyond identity curation.
 
 ## Assumptions
 
-Decisions taken from the supplied v1.0 design, recorded here because they bound the scope above and
-are not derivable from the requirements alone.
+These decisions define the product's scope and operating model.
 
 - **Single user, no multi-tenancy.** There is no user concept in the data at all. Sharing an instance
   is not supported; the answer is a second instance. Adding multi-user later is a breaking data
   change, accepted knowingly.
 - **Read-only toward platforms, now and later.** Aggregato never writes back to a platform.
-- **No local editing or manual entry creation in this version.** Deferred rather than rejected; the
-  data model reserves what is needed to add it additively, and the operator-facing merge and split
-  operations serve as the first, limited curation path.
 - **No metadata enrichment, ever, as a product position.** The accepted cost is measurably weaker
   automatic unification for platform pairs with no shared identifier — more queue volume, surviving
   duplicates where titles differ, and some genuinely unmatchable pairs. This is why manual curation
@@ -538,24 +473,14 @@ are not derivable from the requirements alone.
 - **Creator name matching is trusted only within a media domain**, while platform-supplied identifiers
   are trusted everywhere. The accepted cost is duplicate creators for people who work across domains,
   which the queue proactively suggests merging.
-- **Scraping integrations are accepted as project policy**, because some significant platforms have no
-  other path. The obligations that come with that — the surface hierarchy, host-enforced politeness,
-  disclosure to the operator, offline sample tests, and the hard line at access-control circumvention
-  — are requirements above, and must be published as contributor policy before the repository is
-  public.
-- **Integrations ship with the core and are reviewed by the project.** The accepted cost is that the
-  core's release cadence becomes coupled to other platforms' page structure, mitigated by cheap,
-  frequent patch releases rather than by code.
-- **Terms-of-service compliance is the operator's call**, stated plainly in the documentation. That is
-  a policy position, not legal advice.
+- **Scraping is a last resort.** Contributors follow the acquisition and scraping policy in
+  [CONTRIBUTING.md](../CONTRIBUTING.md); bypassing access controls or anti-bot measures is prohibited.
+- **Bundled integrations ship with the core.** Operator-supplied drop-ins are marked unreviewed and
+  run with the service's filesystem and network permissions.
+- The operator is responsible for complying with each platform's terms.
 - **Embedded storage by default, server database optional** via the same configuration, with the data
   model staying compatible with both.
-- **Web interface is a built single-page application** (amended 2026-07-29; the original assumption
-  was server-rendered specifically to avoid a front-end build toolchain). Operators are unaffected —
-  the assets are built during image creation, so `docker compose up` needs no Node — but **building
-  from source now requires Node**. Recorded in [architecture.md](architecture.md)'s complexity
-  tracking. Either way the UI is designed for typography and density rather than assuming
-  third-party artwork exists.
-- **Two features have reserved surface area and need no further design now**: platform-pushed updates
-  instead of polling and the local write path. Current playback uses host polling only; playback
-  progress/history, an HTTP fallback, and a dedicated frontend panel are outside this version.
+- **The web interface is a built single-page application.** Docker images include its built assets;
+  building the frontend from source requires Node.
+- Provider updates use polling. Playback progress and history, an HTTP fallback, and a dedicated
+  playback panel are out of scope.

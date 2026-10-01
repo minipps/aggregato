@@ -1,224 +1,99 @@
-# Quickstart & Validation Guide: Aggregato
+# Validation guide
 
-**Date**: 2026-07-29 | **Architecture**: [architecture.md](architecture.md) | **Contracts**: [openapi.yaml](contracts/openapi.yaml) · [provider-plugin.md](contracts/provider-plugin.md)
+Commands are run from the repository root unless noted. The [CI workflow](../.github/workflows/ci.yml)
+uses Python 3.13 and Node 22.23.2. The Python test suite uses temporary SQLite databases and blocks
+socket access; it needs no provider accounts or network. PostgreSQL smoke checks run separately.
 
-How to run the service and how to prove each user story works. Every check below is runnable; none
-requires a real platform account except where explicitly marked **manual**.
-
----
-
-## Prerequisites
-
-| Purpose | Requirement |
-|---|---|
-| Running the release | Docker + Docker Compose only |
-| Developing | Python 3.13, `uv`, Node 20+ (frontend build only — see the deviation note in [research.md](./research.md) ) |
-| Tests | Nothing else. No database server, no network, no credentials |
-
----
-
-## Run it
+## Run locally
 
 ```bash
-# Release path — what an operator does (backend + frontend containers)
-export AGGREGATO_TOKEN=$(openssl rand -hex 32)
-docker compose -f docker/compose.yml up
+uv sync --all-extras --dev
+```
 
-# Development path
-uv sync
+Start the API and scheduler in separate terminals, exporting the same settings in each:
+
+```bash
 export AGGREGATO_TOKEN=dev-token AGGREGATO_DATA=./data
-uv run alembic upgrade head          # also runs automatically at startup
-uv run uvicorn aggregato.main:app --reload    # API process
-uv run python -m aggregato.worker             # scheduler process, separate on purpose
-cd frontend && npm install && npm run dev     # dev server proxies /api to :8000
+uv run uvicorn aggregato.main:app --reload
 ```
 
-The Docker release exposes the frontend on port 8000; it proxies `/api` to the private backend
-container. For Docker-based frontend development, use the complete base stack plus its overlay:
-
 ```bash
-docker compose -f docker/compose.yml -f docker/compose.dev.yml up --build
+export AGGREGATO_TOKEN=dev-token AGGREGATO_DATA=./data
+uv run python -m aggregato.worker
 ```
 
-The overlay selects the frontend image's Node development target, bind-mounts `frontend/`, and
-enables Vite HMR. It also bind-mounts backend Python code and enables the API reloader.
+For frontend development, use Node 22.23.2 and run `npm ci && npm run dev` from `frontend/`; Vite
+proxies `/api` to the API on port 8000. The token is required even when public read-only access is
+enabled.
 
-`api.token` is the only fatal configuration error: startup fails without it, including when public
-read-only access is enabled. A missing or invalid *provider* configuration never blocks startup —
-that provider is marked `misconfigured` and everything else runs .
+## Python checks
 
----
-
-## Validate the checks that guard the whole design
-
-Run these first; they are the ones whose failure means something silently destructive:
+These are the CI quality gates. The regular suite includes provider conformance and excludes the
+separate benchmark marker.
 
 ```bash
-#  /  — no inferred deletion for a provider that does not report deletes
-uv run pytest tests/integration/test_no_inferred_deletes.py -v
-
-#  — sub-unit records excluded from aggregates BY DEFAULT
-uv run pytest tests/unit/test_subunit_aggregate_default.py -v
-
-#  /  — interrupted syncs produce neither loss nor duplication
-uv run pytest tests/integration/test_idempotent_interrupted_sync.py -v
-
-#  — a fresh install makes zero outbound requests
-uv run pytest tests/integration/test_fresh_install_is_silent.py -v
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
+uv run lint-imports
+uv run pytest -m "not bench"
 ```
 
----
-
-## Per-story validation
-
-###  — One platform's history, local and browsable
+Focused regression suites:
 
 ```bash
-uv run pytest tests/integration/test_single_provider.py -v
-```
+uv run pytest \
+  tests/integration/test_fresh_install_is_silent.py \
+  tests/integration/test_no_inferred_deletes.py \
+  tests/integration/test_idempotent_interrupted_sync.py \
+  tests/integration/test_replay_atomicity.py \
+  tests/integration/test_failure_matrix.py
 
-Drives the bundled `fixture` provider end to end: enable → scheduler picks it up → child process
-fetches → parent ingests → `GET /api/v1/entries` returns the rows.
-
-Expected: entry count matches the fixture exactly; every entry carries `logged_precision`; every
-opinion returns `raw`, `scale_id`, and `normalized`; a second run writes nothing new.
-
-**Manual check** (real platform, one time): enable a real provider, wait for the first sync, and spot
-check ten entries against the platform's own UI, including one logged with a month-only date.
-
-###  — Two platforms, one log
-
-```bash
-uv run pytest tests/integration/test_cross_provider_identity.py -v
-```
-
-Two fixture providers with deliberately overlapping data: one pair sharing an identifier (must unify
-silently), one pair matching only on title and year (must unify only when unambiguous), one
-ambiguous pair (must land in `resolution-queue`, never be guessed), and one pair of same-titled
-different works (must stay separate).
-
-Expected: `GET /works/{id}` shows both providers' opinions on the unified item; the ambiguous pair
-appears in `GET /resolution-queue` with a reason per candidate; an operator decision survives a
-subsequent resync of both providers.
-
-###  — Sync the operator can trust
-
-```bash
-uv run pytest tests/integration/test_failure_matrix.py -v
-```
-
-One parametrized case per `error_class`. Assert per case: the resulting `sync_runs` row, whether a
-retry was scheduled and at what interval, the resulting provider status, and that the message names
-an action .
-
-| Injected failure | Expected |
-|---|---|
-| transport / 5xx | retried in-run, then ladder 1m → 5m → 15m → 1h, one row per attempt, shared `lineage_id` |
-| `rate_limit` with `Retry-After` | honoured; effective interval lengthened for the session |
-| `auth` | **no retry**, `degraded` immediately, message names credentials |
-| `blocked` | **no retry**, `degraded` immediately, message names the block |
-| `structure_changed` | **no retry**, message says the provider needs updating |
-| mid-run failure after 2 pages | status `partial`, cursor at last checkpoint, retry resumes there |
-| one permanently-failing record | that record in `ingest_failures` with its payload, run completes, `items_failed = 1` |
-| provider child killed (SIGKILL) | run `failed`, API still serving, other provider's sync unaffected |
-| provider child hangs | killed at the wall-clock timeout, classified, ladder applies |
-| provider config invalid | `misconfigured`, service starts, other providers sync |
-
-###  — Seeing what is playing now
-
-```bash
-uv run pytest tests/unit/test_now_playing.py tests/contract/test_now_playing_websocket.py -v
 uv run pytest tests/conformance -v
+uv run pytest tests/unit/test_now_playing.py \
+  tests/integration/test_now_playing_end_to_end.py \
+  tests/contract/test_now_playing_websocket.py
+uv run pytest tests/integration/test_cross_provider_identity.py \
+  tests/integration/test_merge_split.py \
+  tests/integration/test_us5_file_import.py \
+  tests/integration/test_export_restore.py
 ```
 
-The monitor tests use recorded provider outcomes and an injected clock. Assert that an active result
-is stored without touching history, an equal result preserves `changed_at`, idle and failed results
-clear the item, transient failures follow the 1m/5m/15m/1h ladder, and auth/blocked/structure-change
-failures suspend polling until reactivation. The WebSocket contract tests assert API/read-only bearer
-and cookie authentication, close `1008` for an unauthenticated handshake, sorted source-specific initial
-snapshots, local image paths, stale/disabled omission, and change-only updates. No test opens a
-network socket or sleeps.
+The [provider contract](contracts/provider-plugin.md) describes what conformance covers: declared
+capabilities, deterministic normalization, vocabularies and identifiers, cursor behavior where
+supported, credential checks, configuration schemas, optional now-playing, and scraping fixtures.
+The now-playing tests cover monitor behavior, restart persistence, and authenticated WebSocket
+snapshots, including ordering, freshness, and local image paths. Export/restore tests check
+credential removal, access control, restore and storage behavior; a restored archive is checked for
+browsable entries without a sync, not byte-for-byte identity with its source.
 
-###  — Fixing identity by hand
+## Frontend checks
+
+Run from `frontend/` with Node 22.23.2:
 
 ```bash
-uv run pytest tests/integration/test_merge_split.py -v
+npm ci
+npm run type-check
+npm run test:unit
+npm run build
 ```
 
-Expected: merging two works combines entries, opinions, and identifiers with nothing lost; splitting a
-creator moves exactly the selected credits; each credit exposes `link_confidence` so name-joined
-credits are distinguishable from identifier-joined ones; a cross-family duplicate appears as a
-`suggestion_kind` item rather than an auto-merge; every operation returns an `undo_url` that works.
+## PostgreSQL and benchmarks
 
-**Manual check**: clear ten queue items using only the keyboard and time it —  budget is under
-10 seconds per decision.
-
-###  — Platforms with no API
+CI runs the PostgreSQL smoke check against a disposable PostgreSQL 16 service. To run it locally,
+use a disposable PostgreSQL 16 database and the CI connection setting:
 
 ```bash
-uv run pytest tests/integration/test_us5_file_import.py -v
+AGGREGATO_POSTGRES_URL=postgresql+asyncpg://aggregato:aggregato@127.0.0.1:5432/aggregato \
+  uv run python scripts/postgres_smoke.py
 ```
 
-Expected: `POST /providers/fixture/import` with the recorded fixture log (uploaded using the host's
-accepted `.xml` extension) reaches the worker-owned import path; re-uploading the same file adds
-nothing; per-provider and total import quotas admit only the configured bytes; an unrelated file is
-rejected with a problem document; and completed import files are cleaned up.
-
-###  — Adding support for a new platform
+The benchmark harness is separate from the ordinary suite:
 
 ```bash
-uv run pytest tests/conformance/ -v          # every bundled provider, all 9 conformance groups
-uv run lint-imports                          # provider tree cannot reach db or httpx
+uv run pytest -m bench tests/bench -q
 ```
 
-Expected: a new provider passes conformance without core changes; `GET /providers/{id}/config-schema`
-renders in `SchemaForm.vue` with no per-provider frontend code; bumping `schema_version` replays the
-archive from stored payloads with no network ; a scraping provider is labelled, rate-floored,
-and refuses to run without fixtures.
-
-###  — Owning the archive
-
-```bash
-uv run pytest tests/integration/test_export_restore.py -v
-```
-
-Expected: `GET /export` produces one archive with no secrets in it; restoring into an empty instance
-yields an identical, browsable archive with zero syncs; the storage view reports usage separately for
-raw payload retention and image cache, each independently switchable.
-
----
-
-## Performance budgets (performance guidance)
-
-```bash
-uv run pytest -m bench tests/bench/ -q              # portable benchmark-budget assertions
-uv run python -m tests.bench.seed --entries 1000000   # generates the fixture database
-```
-
-| Check | Budget | Fails if |
-|---|---|---|
-| `test_first_and_deep_keyset_pages_fit_baseline` | first page < 200 ms and deep page < 300 ms on the seeded 20k sample | pagination indexes or keyset predicates regress |
-| `test_creator_resolution_meets_budget_and_stays_flat` | ≥ 20,000 lookups/min at 200 and 2,000 creators; large stays at least half the small rate | a per-credit query or table-size regression appears |
-| `test_live_entry_keyset_sorts_use_composite_indexes` | both timestamp sorts use their composite active-entry index | a query plan falls back to a table scan |
-| `test_live_score_facts_use_provider_item_composite_index` | score aggregation uses the provider-item/rating index | score filtering loses its indexed path |
-| now-playing acquisition and visibility | 15 s provider interval + 500 ms WebSocket polling; ≤16 s normal visibility; 45 s stale cutoff | a provider change is delayed beyond the declared budget or stale playback is served |
-
-The operator harness can seed a 1M-entry database for larger measurements. Record any resulting
-baseline in `tests/bench/baseline.json`; a change worsening a recorded metric by more than 10% needs
-a justification in the architecture documentation, per the engineering guidance.
-
----
-
-## Quality gates before merge
-
-```bash
-uv run ruff format --check . && uv run ruff check . && uv run mypy                  # zero warnings
-uv run lint-imports                                                               # decoupling contract
-uv run pytest -m "not bench"                                                      # bounded CI suite
-uv run pytest -m bench tests/bench                                                # separate budgets
-cd frontend && npm run type-check && npm run test:unit
-```
-
-The PostgreSQL portability smoke is a separate CI job because the ordinary pytest fixture blocks
-sockets. All jobs must be clean. Warnings are errors (code-quality guidance), and the import contract
-is a merge gate rather than a convention (decoupling guidance).
+These checks exercise query plans, a far-end keyset sample, and creator resolution. The declared
+performance targets in [architecture.md](architecture.md) remain targets; the current benchmark
+suite does not establish every target at its stated scale.

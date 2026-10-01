@@ -1,5 +1,42 @@
 # Operations
 
+## Portable archive and restore
+
+**Settings → Download archive** requires operator authentication and is available for an on-disk
+SQLite database. It creates a ZIP with a consistent database snapshot, cached images, and public
+configuration. The database copy omits configured secrets, sessions, import and replay jobs,
+ingest-failure payloads, run logs, raw response diagnostics, and cursor state. The archive still
+contains the personal history and retained provider-item payloads; keep it private.
+
+To restore, run `uv sync --all-extras --dev` in a checkout with the project code, and use an empty
+data directory:
+
+```bash
+uv run python -c 'from pathlib import Path; from aggregato.export import restore_archive; print(restore_archive(Path("backup.zip"), Path("./restored-data")))'
+```
+
+The helper validates the ZIP, stages its files, checks the SQLite database, and then publishes them
+to the empty directory. It returns public configuration for review; it does not apply that
+configuration. The restored database retains safe provider settings but disables every provider and
+omits configured credentials and sessions. Retained platform payloads still contain private user
+data. Set `AGGREGATO_DATA=./restored-data` and a fresh `AGGREGATO_TOKEN` when
+starting the API and worker, then check providers and enter their credentials again. For Compose,
+mount the restored directory at `/data` instead of using an empty volume.
+
+The Settings archive is SQLite-only. For PostgreSQL, use PostgreSQL's backup and restore tools, and
+preserve the configured image-cache directory separately. The portable ZIP omits operational
+evidence; if failure payloads or diagnostics are needed, keep a separate private full database
+backup. A native database backup preserves that evidence but also contains provider credentials,
+sessions, and personal history, so keep it private.
+For an on-disk SQLite database, Python's standard-library backup API includes committed WAL data:
+
+```bash
+uv run python -c 'import sqlite3; src=sqlite3.connect("data/aggregato.db"); dst=sqlite3.connect("private-database-copy.db"); src.backup(dst); dst.close(); src.close()'
+```
+
+Replace `data/aggregato.db` with the configured database path. Keep that copy private and preserve
+the image-cache directory if you need a complete local instance backup.
+
 ## A provider reports `structure_changed`
 
 `structure_changed` means the provider's page or export format changed. Aggregato does not retry
@@ -14,20 +51,24 @@ response is:
 
 ## A migration went wrong
 
-Migrations run at startup, and `aggregato.db.migrate` copies the SQLite database first — that
-timestamped copy beside the database (`aggregato.db.20260730T152917.bak`) is the way back, because
-migrations are forward-only (data-model.md §6). Backups are written with sqlite3's backup API rather
-than `cp`, so each one is complete even though the live database runs in WAL mode.
+The worker holds its single-owner database lock before it applies migrations and recovers interrupted
+runs. SQLite migrations use a separate lock as well, so they serialize with migrations from API
+startup. `aggregato.db.migrate` creates a timestamped copy beside the SQLite database only when a
+migration is pending and the database already exists; names look like
+`aggregato.db.YYYYMMDDTHHMMSSffffff.bak`. Backups use sqlite3's backup API rather than `cp`, so each
+copy includes committed WAL data. No migration backup is made for PostgreSQL, an in-memory database,
+a new SQLite database, or a SQLite database already at head. The copies are not pruned automatically;
+manage their storage yourself. Migrations are forward-only (data-model.md §6).
 
 Two failure modes look different and are both recoverable.
 
 **Startup loops on `Can't locate revision identified by 'NNNN'`.** The database is stamped at a
 revision whose file is not in the running image — usually a revision that was applied and then
 deleted or renumbered in the checkout. Nothing is wrong with the data. Restore the missing revision
-file, matching that id, and restart. Do not "fix" it by stamping the database backwards. Note that
-every failed boot takes another pre-migration backup, so a container left crash-looping fills `/data`
-with copies at a few per minute; delete the surplus once it is healthy, keeping the last backup taken
-at each revision.
+file, matching that id, and restart. Do not "fix" it by stamping the database backwards. A failed
+migration can leave another timestamped pre-migration backup on each restart while work is still
+pending. A container left crash-looping can therefore fill `/data`; once it is healthy, review and
+remove surplus copies yourself, keeping a backup from before the migration.
 
 **A migration applied cleanly but rows are missing.** The likeliest cause on SQLite is a table
 rebuild that cascaded into child tables (data-model.md §6). Roll back to the backup and replay the
@@ -67,30 +108,37 @@ not currently removed by the cleanup worker, even when the similarly named reten
 lowered. Failures are intentionally retained because they are the evidence needed to repair a
 provider or replay a poison record. The cleanup worker runs at startup and then daily.
 
-Storage usage in Settings separates database bytes, retained raw payload bytes, and image-cache
-bytes. The raw-payload number includes provider-item and ingest-failure JSON sizes, not filesystem
-overhead. Turning off image caching returns a local placeholder immediately; the cleanup worker then
-removes the cached image rows and files. Export an archive before changing retention or deleting the
-data volume if the old failure evidence matters.
+Storage usage in Settings separates `database_bytes`, `raw_payload_bytes`, and image-cache bytes.
+`raw_payload_bytes` estimates the UTF-8 byte length of the database-rendered JSON for retained
+provider-item and ingest-failure payloads; it is not physical database usage and excludes indexes
+and other overhead. `database_bytes` sums the active on-disk SQLite database and its `-wal` and
+`-shm` files. It reports zero for PostgreSQL and in-memory SQLite. Image-cache bytes come from the
+cached image sizes recorded by the service. Turning off image caching returns a local placeholder
+immediately; the cleanup worker then removes cached image rows and files. Portable archives omit
+ingest-failure payloads and diagnostics; keep a private full database backup if that evidence must
+be retained.
 
 ## API limits and asynchronous work
 
 Collection endpoints use keyset pagination. `limit` defaults to 50 and is clamped to 1–200; a
-non-null `next_cursor` means another page is available. There is no offset mode. Full-text search
-returns every matching id before the collection page is applied. A work-detail response embeds only the 200 newest
-live entries and 200 newest opinions for that work and does not paginate those embedded lists.
+non-null `next_cursor` means another page is available. There is no offset mode. Title and review
+search conditions run in the database query before the page limit is applied. A work-detail response
+embeds only the 200 newest live entries and 200 newest opinions for that work; those embedded lists
+do not have separate pagination.
 
 `POST /providers/{id}/sync` and `POST /providers/{id}/import` return `202` after queueing work.
 The returned `lineage_id` groups the attempts; consult provider run history for `running`, `partial`,
 `failed`, or eventual `success` rather than treating the queue response as completion. The check
-endpoint reports the most recent recorded run and does not contact a platform immediately. A manual
-sync is the operation that requests new provider work.
+endpoint queues an isolated credential check and returns immediately; its result appears in
+`Provider.last_check`. It can contact the platform while the provider is disabled. The last-run
+endpoint reads history without making a platform request.
 
 Imports accept `.csv`, `.rss`, and `.xml` filenames up to 50 MiB. The upload is written under the
 private `/data/imports/<provider>` directory before the worker validates it. Completed and failed
 orphan files are removed by the daily cleanup job; queued or leased jobs keep their referenced file.
-Provider-specific parse failures
-remain in the ingest-failure queue with their retained payload for diagnosis or replay.
+Provider-specific parse failures remain in the ingest-failure queue with their retained payload for
+operator diagnosis or replay. The failure endpoint and raw diagnostic routes require operator
+authentication; read-only access does not include those payloads.
 
 Recoverable transport and server failures use the retry ladder. Authentication, blocking, and
 structure-change failures do not retry automatically and move the provider to `degraded`; fix the
@@ -111,3 +159,12 @@ settings survive `docker compose stop`, `docker compose up`, image upgrades, and
 down`. Do not run `docker compose down --volumes` (or remove `aggregato-data`) unless the whole
 archive, including provider settings, is intentionally being discarded. YAML-mounted provider
 settings remain file-pinned and cannot be changed from the web.
+
+Disabling a provider during an operation prevents future scheduled work but does not cancel the
+active operation. Its status remains `syncing` until that operation finishes. Provider configuration
+changes return `409` during that time; retry after completion.
+
+Only one scheduler worker may own a database at a time. SQLite uses a sidecar file lock, and
+PostgreSQL uses a session advisory lock. On shutdown, the worker stops admitting syncs, allows active
+syncs up to three seconds to finish, then cancels and reaps remaining children while stopping the
+now-playing monitor. It disposes the database engine after that shutdown work completes.

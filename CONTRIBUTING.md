@@ -1,18 +1,17 @@
 # Contributing to Aggregato
 
-Aggregato aggregates one person's own media logs from platforms they hold accounts with. That
-framing is what makes the project defensible, and the two policies below are what keep it true.
-Read them before writing a provider.
+Aggregato collects the operator's own media logs from services where they have an account. Read the
+acquisition and scraping rules before writing a provider.
 
 The normative documents are [the engineering guidance](AGENTS.md) and
 [the provider contract](docs/contracts/provider-plugin.md). This file is
-the review checklist derived from them.
+the provider review checklist.
 
 ---
 
 ## The acquisition hierarchy
 
-A provider MUST use the highest surface available to it :
+A provider MUST use the highest available acquisition surface:
 
 1. **Official API** with documented terms
 2. **Authenticated feed or export endpoint** the platform provides
@@ -46,20 +45,19 @@ It MUST NOT:
 - read any user's data other than the operator's own;
 - circumvent a paywall or any access control;
 - **defeat, solve, or work around a CAPTCHA or anti-bot measure, in any form.** This is a hard
-  line, not a default . Encountering one means raising `BlockedError`; the run stops and
+  line. Encountering one means raising `BlockedError`; the run stops and
   the provider goes `degraded` immediately. A dependency whose purpose is solving challenges must
   not appear anywhere in the import graph — the conformance suite checks for this.
 - retrieve anything the authenticated operator could not see in their own browser.
 
-Politeness is enforced by the host, not by you: the rate limiter runs at
-`max(your declared rate, the floor for your acquisition mode)`, scraping providers get one
-in-flight request per host, and `Retry-After` is honoured for you. You cannot raise the floor, and
-a unit test asserts you cannot. Do not build your own client — `ctx.http` is the only one, and an
-import-linter contract fails the build if `aggregato/providers/*` imports `httpx`.
+Bundled providers must use `ctx.http`. That host client applies the rate
+`max(your declared rate, the floor for your acquisition mode)`, allows one in-flight request per host
+for scrapers, and honors `Retry-After`. The import-linter contract rejects direct `httpx` imports.
+Python providers are not sandboxed, so review drop-in source before enabling it.
 
 A scraping provider must ship recorded HTML fixtures, including one with a changed structure that
-raises `StructureChangedError`. Returning empty on a structural failure is forbidden: silence plus
-delete inference is how an archive gets erased .
+raises `StructureChangedError`. A structural failure must raise that error rather than return an
+empty result, which could be mistaken for an empty history.
 
 ---
 
@@ -67,13 +65,13 @@ delete inference is how an archive gets erased .
 
 | Rule | Why |
 |---|---|
-| `normalize` is pure — no network, no clock, no randomness, no storage | Makes replay  and offline credential-free tests  possible. Enforced: called twice on one fixture must produce identical output |
-| A provider never receives a database handle or another provider's secrets | . Enforced physically: provider code runs in a child process with no engine and no other provider imported |
-| A provider never constructs its own HTTP client |  politeness floors must be un-overridable |
-| A provider may not invent a `media_type`, `role`, or `subject_ref` key | . Violations become `ingest_failures`, not writes |
-| Every identifier in a payload is extracted, including ones Aggregato has no use for |  — the single largest lever on match quality, because Aggregato never enriches from third-party metadata sources |
-| `logged_precision` is required on every entry, with no default | A default would silently fabricate exactness  |
-| `role_raw` carries the platform's own word verbatim, always |  — the vocabulary widens later and the raw term is what replay re-derives from |
+| `normalize` is pure — no network, clock, randomness, or storage | Enables offline testing and replay; conformance checks compare repeated output for the same fixture |
+| A provider has no database engine and imports only the selected provider | The child process limits provider access, but is not an OS sandbox; drop-ins retain service filesystem and network permissions |
+| A provider never constructs its own HTTP client | The host client enforces request pacing and rate limits |
+| A provider uses the closed `media_type`, `role`, and `subject_ref` vocabularies | Invalid records are stored as ingest failures rather than written |
+| Extract every identifier found in the payload | Aggregato does not enrich records from third-party metadata sources |
+| `logged_precision` is required on every entry | This preserves the precision the platform supplied |
+| `role_raw` preserves the platform's role term verbatim | The term can be used when the normalized role vocabulary changes |
 | `now_playing` is an explicit optional capability | A provider returns one normalized current item or `None`; playback is transient and never becomes history |
 
 ---
@@ -96,9 +94,8 @@ delete inference is how an archive gets erased .
 
 ## Cutting a release
 
-`scripts/release.sh 0.1.1` — bumps `pyproject.toml` and `frontend/package.json` (plus the lockfile
-and the README/Docker Compose release examples), commits, and pushes the tag. Pushing the tag *is*
-the release
+`scripts/release.sh <version>` — updates the package versions, lockfiles, and documented image
+examples, then creates the release commit and tag. Pushing the tag *is* the release
 ([release.yml](.github/workflows/release.yml)): it runs the same CI gates as a push to main, then
 publishes a source archive, a GitHub release, and multi-arch images tagged `x.y.z`, `x.y`, `latest`.
 

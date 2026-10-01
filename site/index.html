@@ -480,11 +480,11 @@
           </li>
           <li>
             <h3>Archive-first</h3>
-            <p>Raw payloads are retained, so a fix can be replayed offline, and a platform that changes shape or goes away does not take your history with it. Deletes are tombstones; nothing is silently erased.</p>
+            <p>Retained raw payloads let normalization fixes be replayed without contacting a platform. Entries are stored locally; a provider change or outage does not remove data already collected.</p>
           </li>
           <li>
-            <h3>Yours to take</h3>
-            <p>Download a full archive from Settings at any time. The database is a plain SQLite file in a directory you chose — or Postgres, if your library passes a million entries.</p>
+            <h3>Local storage</h3>
+            <p>SQLite is the default database and lives in the data directory or Compose volume you configure. Settings can download an archive for an on-disk SQLite database; PostgreSQL deployments use PostgreSQL backup tools.</p>
           </li>
         </ol>
       </div>
@@ -565,14 +565,14 @@
             <p class="eyebrow">Bundled platforms</p>
             <h2 id="platforms-title">Where it reads from.</h2>
           </div>
-          <p>Each platform is a plugin that runs in its own short-lived process with no database access and a rate-limited HTTP client it cannot bypass. A crash or a hang in one never touches the others.</p>
+          <p>Provider operations run in short-lived child processes without a database engine, with a timeout. This limits the effect of ordinary crashes and hangs; provider code is not sandboxed, so review drop-ins before enabling them.</p>
         </div>
         <ul class="plist">
           <li><strong>Koito</strong><span class="what">Listens</span><span class="need">Server URL and API key</span><span class="when">every 5 min</span></li>
           <li><strong>ListenBrainz</strong><span class="what">Listens — or any compatible server, such as Maloja</span><span class="need">Username and user token</span><span class="when">every 15 min</span></li>
           <li><strong>AniList</strong><span class="what">Anime and manga, with ratings</span><span class="need">Username, plus an OAuth token for private lists</span><span class="when">hourly</span></li>
           <li><strong>Letterboxd</strong><span class="what">Films and series, with ratings and reviews</span><span class="need">Username or public RSS URL</span><span class="when">every 6 h</span></li>
-          <li><strong>Goodreads</strong><span class="what">Books, with ratings and reviews</span><span class="need">Public profile or RSS URL</span><span class="when">daily</span></li>
+          <li><strong>Goodreads</strong><span class="what">Books, with ratings and reviews from its rolling feed</span><span class="need">Public profile or RSS URL</span><span class="when">daily</span></li>
           <li><strong>Spotify</strong><span class="what">Recently played tracks</span><span class="need">App client ID and secret, plus a refresh token</span><span class="when">every 15 min</span></li>
         </ul>
         <p class="more">Anything else is a plugin away — see <a href="https://github.com/minipps/aggregato/blob/main/docs/writing-a-provider.md">writing a provider</a>. No CAPTCHA or anti-bot circumvention, ever: a blocked platform is marked degraded and left alone.</p>
@@ -584,10 +584,9 @@
         <div class="aside">
           <p class="eyebrow">Set it up</p>
           <h2 id="setup-title">Running in three commands.</h2>
-          <p>One named volume. No database server, no message broker, nothing else to run. Images are published for amd64 and arm64.</p>
+          <p>One named volume. No database server or message broker is needed for the default SQLite setup. Images are published for amd64 and arm64.</p>
           <ul class="needs" aria-label="Requirements">
             <li>Docker</li>
-            <li>Docker Compose</li>
             <li>≈ 5 minutes</li>
           </ul>
         </div>
@@ -616,14 +615,15 @@ docker compose -f docker/compose.yml up -d">Copy</button>
             <p>On the <b>Providers</b> screen:</p>
             <ol>
               <li>Pick a platform, press <b>Configure provider</b>, fill in the form and <b>Save configuration</b>.</li>
+              <li>Press <b>Check provider</b> to test the saved credentials.</li>
               <li>Press <b>Enable</b>, then <b>Sync now</b> for the first pass.</li>
-              <li>That's it. The scheduler polls at the platform's own interval from here on.</li>
+              <li>The scheduler polls at the platform's own interval from here on.</li>
             </ol>
-            <p>Your log fills in as syncs land: <b>Log</b> is the timeline, <b>Statistics</b> the summaries, <b>Sync history</b> what ran, and <b>Settings</b> holds retention, storage and the archive download.</p>
+            <p>Your log fills in as syncs land: <b>Log</b> is the timeline, <b>Statistics</b> the summaries, <b>Sync history</b> what ran, and <b>Settings</b> holds retention and storage details.</p>
           </li>
           <li>
             <h3>Or keep it all in a file</h3>
-            <p>Anything the UI can set, YAML can too. Point <code>AGGREGATO_CONFIG</code> at it; <code>${VAR}</code> references resolve at read time and are never written back or returned by the API.</p>
+            <p>Provider settings can also live in YAML. Point <code>AGGREGATO_CONFIG</code> at it; <code>${VAR}</code> references resolve at read time and are never written back or returned by the API.</p>
             <div class="term">
               <div class="bar"><i></i><i></i><i></i><span>aggregato.yml</span></div>
               <button class="copy" type="button" data-copy="providers:
@@ -648,7 +648,7 @@ docker compose -f docker/compose.yml up -d">Copy</button>
         </ol>
       </div>
       <div class="wrap">
-        <p class="note"><b>Your data lives in <code>/data</code></b> on the <code>aggregato-data</code> volume and survives restarts and upgrades. <code>docker compose down --volumes</code> deletes it — that is the one command to be careful with. For everything else, see the <a href="https://github.com/minipps/aggregato/blob/main/docs/operations.md">operations guide</a>.</p>
+        <p class="note"><b>With SQLite, the database and local files live in <code>/data</code></b> on the <code>aggregato-data</code> volume and survive restarts and upgrades. <code>docker compose down --volumes</code> deletes the volume. PostgreSQL stores the database separately; use PostgreSQL backup tools and preserve the image cache. See the <a href="https://github.com/minipps/aggregato/blob/main/docs/operations.md">operations guide</a>.</p>
       </div>
     </section>
   </main>
