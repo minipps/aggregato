@@ -1,18 +1,7 @@
 <script setup lang="ts">
-/**
- * Providers: what is installed, how it acquires data, whether it is healthy, and what the operator
- * must do about it.
- *
- * Three things here are requirements rather than presentation choices:
- *   * `reviewed: false` is labelled **unreviewed**  — a drop-in development provider must
- *     never look like a shipped one.
- *   * `last_error.action_required` is the loudest thing on a failing card : the point of the
- *     screen is the next action, not the stack of error text.
- *   * settings listed in `file_pinned_settings` are shown as uneditable, with the reason  —
- *     otherwise the UI silently discards edits the config file overrides.
- */
+/** Show installed providers, their status, settings, and operator actions. */
 
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 
 import {
   checkProvider,
@@ -39,20 +28,20 @@ import SyncProgress from '@/components/SyncProgress.vue'
 
 const list = useRequest(providers)
 const syncStream = useSyncStream()
+const CHECK_POLL_ATTEMPTS = 60
+const CHECK_POLL_INTERVAL_MS = 5000
+const checkTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const checkGenerations = new Map<string, number>()
+let stopped = false
 
-/** Enabled providers first — those are the ones actually feeding the archive. Array.prototype.sort
- *  is stable, so within each group the server's order is preserved. */
+/** Sort enabled providers first while preserving server order within each group. */
 const sorted = computed(() =>
   [...(list.data.value ?? [])].sort(
     (a, b) => Number(b.enabled) - Number(a.enabled),
   ),
 )
 
-/**
- * Action feedback, attached to the provider it belongs to: one provider's failed action reports on
- * that card only and never blanks the list (UI consistency guidance). Buttons are disabled while an action
- * runs, so at most one is ever in flight.
- */
+/** Keep action feedback associated with the provider card that triggered it. */
 const busy = ref('')
 const notice = ref<{ id: string; text: string } | undefined>(undefined)
 const failure = ref<{ id: string; problem: Problem } | undefined>(undefined)
@@ -70,6 +59,49 @@ function liveProvider(id: string) {
   return syncStream.snapshot.value?.providers.find((provider) => provider.id === id)
 }
 
+function cancelCheckPoll(id: string): number {
+  const timer = checkTimers.get(id)
+  if (timer !== undefined) window.clearTimeout(timer)
+  checkTimers.delete(id)
+  const generation = (checkGenerations.get(id) ?? 0) + 1
+  checkGenerations.set(id, generation)
+  return generation
+}
+
+function pollCheck(id: string, lineageId: string, attempt = 0, generation = checkGenerations.get(id)): void {
+  if (stopped || generation === undefined || generation !== checkGenerations.get(id)) return
+  if (attempt >= CHECK_POLL_ATTEMPTS) {
+    if (notice.value?.id === id && notice.value.text === 'Provider check queued.') {
+      notice.value = { id, text: 'Provider check is still pending; refresh the page to see its result.' }
+    }
+    return
+  }
+
+  const timer = window.setTimeout(async () => {
+    if (checkTimers.get(id) === timer) checkTimers.delete(id)
+    if (stopped || generation !== checkGenerations.get(id)) return
+    try {
+      const updated = await providers()
+      if (stopped || generation !== checkGenerations.get(id)) return
+      list.data.value = updated
+      list.error.value = undefined
+      const latest = updated.find((provider) => provider.id === id)?.last_check
+      if (latest?.lineage_id === lineageId && latest.status !== 'pending') {
+        if (notice.value?.id === id && notice.value.text === 'Provider check queued.') {
+          notice.value = { id, text: `Provider check ${latest.status}.` }
+        }
+        return
+      }
+    } catch {
+      // Retry transient list errors within the same five-minute polling window.
+    }
+    if (!stopped && generation === checkGenerations.get(id)) {
+      pollCheck(id, lineageId, attempt + 1, generation)
+    }
+  }, CHECK_POLL_INTERVAL_MS)
+  checkTimers.set(id, timer)
+}
+
 function formatSetting(value: unknown): string {
   if (value === null) return 'None'
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
@@ -81,6 +113,7 @@ function formatSetting(value: unknown): string {
 }
 
 async function act(id: string, label: string, action: () => Promise<string>): Promise<void> {
+  if (busy.value) return
   busy.value = id
   notice.value = { id, text: `${label}…` }
   failure.value = undefined
@@ -112,26 +145,30 @@ function sync(id: string): Promise<void> {
 
 function check(id: string): Promise<void> {
   return act(id, 'Queueing a provider check', async () => {
-    await checkProvider(id)
+    const generation = cancelCheckPoll(id)
+    const { lineage_id } = await checkProvider(id)
     await list.reload()
+    const latest = list.data.value?.find((provider) => provider.id === id)?.last_check
+    if (latest?.lineage_id === lineage_id && latest.status !== 'pending') {
+      return `Provider check ${latest.status}.`
+    }
+    pollCheck(id, lineage_id, 0, generation)
     return 'Provider check queued.'
   })
 }
 
 /**
- * Re-read a platform from the beginning, rather than from where the last run stopped.
- *
- * The distinction matters more than the wording suggests: an incremental sync asks only for what
- * is new, so a provider whose normalization changed leaves every older record exactly as it was
- * first stored. This is the only way to make the archive reflect a corrected mapping — and the
- * reason it is a separate button is that it re-walks an entire history, which is a great many
- * requests to someone else's server.
+ * Fetch all history the provider currently exposes, ignoring the saved cursor. Stored payload replay
+ * runs separately when a normalization schema version changes.
  */
 function fullResync(id: string): Promise<void> {
   return act(id, 'Queueing a full resync', async () => {
     await syncProvider(id, 'full')
     await list.reload()
-    return 'Full resync queued. It re-reads the whole history, so it may take a while.'
+    return [
+      'Full sync queued. It fetches all history the provider currently exposes, ignoring the saved cursor.',
+      'Stored payload replay is handled automatically when the normalization schema changes.',
+    ].join(' ')
   })
 }
 
@@ -139,7 +176,9 @@ function showLatestRun(id: string): Promise<void> {
   return act(id, 'Loading latest run', async () => {
     const result = await latestProviderRun(id)
     if (result.status === 'success') return 'Latest run completed successfully.'
-    return `Latest run ${result.status ?? 'not yet known'} (${result.error_class ?? 'no error class'}): ${result.detail ?? 'no detail given'}`
+    const status = result.status ?? 'not yet known'
+    const errorClass = result.error_class ?? 'no error class'
+    return `Latest run ${status} (${errorClass}): ${result.detail ?? 'no detail given'}`
   })
 }
 
@@ -157,6 +196,7 @@ function importExport(id: string): Promise<void> {
 }
 
 async function showConfigSchema(id: string): Promise<void> {
+  if (busy.value) return
   configSchemaFailure.value = undefined
   if (configSchemas.value[id]) {
     configSchemas.value = { ...configSchemas.value, [id]: undefined }
@@ -177,9 +217,16 @@ function saveConfiguration(id: string): Promise<void> {
   return act(id, 'Saving configuration', async () => {
     await updateProviderConfig(id, configValues.value[id] ?? {})
     await list.reload()
-    return 'Configuration saved. Enable the provider when you are ready to sync.'
+    return 'Configuration saved. An enabled provider with a suspended schedule may resume automatically.'
   })
 }
+
+onUnmounted(() => {
+  stopped = true
+  for (const timer of checkTimers.values()) window.clearTimeout(timer)
+  checkTimers.clear()
+  checkGenerations.clear()
+})
 </script>
 
 <template>
@@ -222,8 +269,7 @@ function saveConfiguration(id: string): Promise<void> {
     />
 
     <ul v-else class="bento">
-      <!-- The lead provider takes the full row; every other tile is half a row, so the rest always
-           pair up. A row-spanning tile here would leave the next two tiles stacked beside it. -->
+      <!-- The first provider spans the row; remaining cards use half-width columns. -->
       <li
         v-for="(provider, index) in sorted"
         :key="provider.id"
@@ -231,7 +277,7 @@ function saveConfiguration(id: string): Promise<void> {
       >
         <div class="card__head">
           <h2>{{ provider.name }}</h2>
-          <!-- : an unreviewed drop-in provider is labelled as such, always. -->
+          <!-- Drop-in providers are marked as unreviewed. -->
           <span v-if="!provider.reviewed" class="badge badge--warn">unreviewed</span>
           <ProviderStatus :status="liveProvider(provider.id)?.status ?? provider.status" />
         </div>
@@ -250,7 +296,7 @@ function saveConfiguration(id: string): Promise<void> {
           Scraping can trigger rate limits or blocks. Use only an account you control; Aggregato does not bypass CAPTCHA.
         </div>
 
-        <!-- : the required action leads, before any error text. -->
+        <!-- Keep the primary action before its error text. -->
         <div v-if="provider.last_error?.action_required" class="note note--danger" role="alert">
           <p class="note__title">Action required</p>
           <p>{{ provider.last_error.action_required }}</p>
@@ -342,7 +388,7 @@ function saveConfiguration(id: string): Promise<void> {
           <p class="muted">Passwords, API keys, and other sensitive settings are not shown.</p>
         </section>
 
-        <!-- : pinned settings are shown, disabled, with why the edit would not stick. -->
+        <!-- File-pinned settings are disabled and explained below. -->
         <fieldset v-if="provider.file_pinned_settings?.length" disabled class="pinned">
           <legend>Fixed by the configuration file</legend>
           <p class="muted">
@@ -356,35 +402,35 @@ function saveConfiguration(id: string): Promise<void> {
           </ul>
         </fieldset>
 
-        <p v-if="!readonlyAccess" class="actions">
-          <button type="button" :disabled="busy === provider.id" @click="toggle(provider.id, !provider.enabled)">
+        <p v-if="readonlyAccess === false" class="actions">
+          <button type="button" :disabled="busy !== ''" @click="toggle(provider.id, !provider.enabled)">
             {{ provider.enabled ? 'Disable' : 'Enable' }}
           </button>
           <button
             type="button"
-            :disabled="busy === provider.id || provider.last_check?.status === 'pending'"
+            :disabled="busy !== '' || provider.last_check?.status === 'pending'"
             @click="check(provider.id)"
           >
             Check provider
           </button>
-          <button type="button" :disabled="busy === provider.id || !provider.enabled" @click="sync(provider.id)">
+          <button type="button" :disabled="busy !== '' || !provider.enabled" @click="sync(provider.id)">
             Sync now
           </button>
           <button
             type="button"
-            :disabled="busy === provider.id || !provider.enabled"
-            :title="`Re-read ${provider.name} from the beginning, ignoring the saved cursor`"
+            :disabled="busy !== '' || !provider.enabled"
+            :title="`Fetch all history currently exposed by ${provider.name}, ignoring the saved cursor`"
             @click="fullResync(provider.id)"
           >
             Full resync
           </button>
-          <button type="button" :disabled="busy === provider.id" @click="showConfigSchema(provider.id)">
+          <button type="button" :disabled="busy !== ''" @click="showConfigSchema(provider.id)">
             {{ configSchemas[provider.id] ? 'Hide configuration' : 'Configure provider' }}
           </button>
         </p>
 
         <p class="actions">
-          <button type="button" :disabled="busy === provider.id" @click="showLatestRun(provider.id)">
+          <button type="button" :disabled="busy !== ''" @click="showLatestRun(provider.id)">
             Show latest sync run
           </button>
         </p>
@@ -394,17 +440,23 @@ function saveConfiguration(id: string): Promise<void> {
           <SchemaForm
             v-model="configValues[provider.id]"
             :schema="configSchemas[provider.id]!"
-            :disabled="busy === provider.id || Boolean(provider.file_pinned_settings?.length)"
+            :disabled="busy !== '' || readonlyAccess !== false || Boolean(provider.file_pinned_settings?.length)"
             @submit="saveConfiguration(provider.id)"
-          />
+          >
+            <button
+              v-if="readonlyAccess === false && !provider.file_pinned_settings?.length"
+              :disabled="busy !== ''"
+              type="submit"
+            >Save configuration</button>
+          </SchemaForm>
           <p v-if="provider.file_pinned_settings?.length" class="muted">
             This provider is configured by the mounted file, so web edits are unavailable.
           </p>
           <template v-else>
-            <p class="muted">Existing values, including credentials, are never shown. Complete required fields to replace the saved configuration.</p>
-            <button type="button" :disabled="busy === provider.id" @click="saveConfiguration(provider.id)">
-              Save configuration
-            </button>
+            <p class="muted">
+              Existing values, including credentials, are never shown. Complete required fields to
+              replace the saved configuration.
+            </p>
           </template>
         </section>
         <ErrorState
@@ -412,18 +464,18 @@ function saveConfiguration(id: string): Promise<void> {
           :problem="configSchemaFailure.problem"
         />
 
-        <div v-if="provider.capabilities.includes('file_import') && !readonlyAccess" class="import-export subsection">
+        <div v-if="provider.capabilities.includes('file_import') && readonlyAccess === false" class="import-export subsection">
           <label :for="`import-${provider.id}`">Import personal export</label>
           <input
             :id="`import-${provider.id}`"
             type="file"
             accept=".csv,.rss,.xml,text/csv,application/rss+xml,application/xml,text/xml"
-            :disabled="busy === provider.id || !provider.enabled"
+            :disabled="busy !== '' || !provider.enabled"
             @change="chooseImport"
           >
           <button
             type="button"
-            :disabled="busy === provider.id || !provider.enabled || !importFile"
+            :disabled="busy !== '' || !provider.enabled || !importFile"
             @click="importExport(provider.id)"
           >
             Upload and import

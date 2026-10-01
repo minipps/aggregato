@@ -1,10 +1,9 @@
 <script setup lang="ts">
 /**
- * Landing screen: the newest entries, and whether every provider is actually working.
+ * Landing screen with recent entries and provider health.
  *
- * A degraded provider is named here by id rather than reduced to an overall badge — "degraded" with
- * no subject tells the operator nothing they can act on ( scenario 2). The two panels load
- * independently, so a failing `/health` still leaves the log readable (UI consistency guidance).
+ * Degraded providers are listed by id. Health and recent entries load independently, so a health
+ * request failure does not prevent the log from loading.
  */
 
 import { computed } from 'vue'
@@ -141,7 +140,7 @@ function liveProvider(id: string | undefined) {
         v-if="recent.error.value"
         :problem="recent.error.value"
         retryable
-        @retry="recent.restart()"
+        @retry="recent.loadMore()"
       />
       <LoadingState v-else-if="recent.loading.value" label="Loading recent entries…" />
       <EntryList v-else-if="recent.items.value.length > 0" :entries="recent.items.value" />
@@ -207,8 +206,7 @@ function liveProvider(id: string | undefined) {
   color: var(--warn);
 }
 
-/* Capped so the per-provider tile below stays on screen: the feed scrolls inside its own tile
-   rather than pushing the rest of the dashboard past the fold. */
+/* Long recent-entry lists scroll within the card. */
 .card--scroll {
   max-height: 24rem;
 }

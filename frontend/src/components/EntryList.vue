@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
  * One log entry per row: what, when, from where. Used by the log feed, the dashboard, and the work
- * detail view, so ordering and wording stay identical across all three (UI consistency guidance).
+ * detail view, so each surface uses the same row layout.
  *
- * Dates always go through LoggedAt — never formatted here.
+ * Logged dates use `LoggedAt` for consistent precision handling.
  */
 import type { Entry, SubjectRef } from '@/api/types'
 import LoggedAt from '@/components/LoggedAt.vue'
@@ -29,12 +29,8 @@ function subject(ref: SubjectRef | null | undefined): string {
 <template>
   <ul class="entries">
     <li v-for="entry in props.entries" :key="entry.id" class="entry">
-      <!--
-        Artwork comes from the local cache only ; the API hands us its own path, never the
-        platform URL. alt is empty on purpose: the title sits right beside it, and a screen reader
-        announcing it twice is worse than not announcing the poster at all. Only when the work is
-        named here — Work.vue shows its own poster above and would otherwise repeat it per row.
-      -->
+      <!-- The API supplies a local cache path. The adjacent title makes the artwork decorative;
+           Work.vue already shows its poster above the entry list. -->
       <img
         v-if="props.showWork && entry.work?.image"
         class="entry__art"

@@ -1,16 +1,31 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 import { ingestFailures, replayFailure } from '@/api/client'
 import { readonlyAccess } from '@/api/session'
+import type { IngestFailure } from '@/api/types'
 import { usePaged } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingState from '@/components/LoadingState.vue'
 
-const failures = usePaged(ingestFailures)
+const failures = usePaged<IngestFailure>(() => readonlyAccess.value === false
+  ? ingestFailures()
+  : { next: async () => ({ items: [], done: true }) })
 const busy = ref<number | null>(null)
-async function replay(id: number): Promise<void> { busy.value = id; try { await replayFailure(id); await failures.restart() } finally { busy.value = null } }
+watch(readonlyAccess, (canReadPayloads) => {
+  if (canReadPayloads === false) void failures.restart()
+})
+async function replay(id: number): Promise<void> {
+  if (readonlyAccess.value !== false || busy.value !== null) return
+  busy.value = id
+  try {
+    await replayFailure(id)
+    await failures.restart()
+  } finally {
+    busy.value = null
+  }
+}
 </script>
 
 <template>
@@ -30,12 +45,17 @@ async function replay(id: number): Promise<void> { busy.value = id; try { await 
 
       <section class="card" aria-labelledby="failures-count">
         <p id="failures-count" class="metric-label">Retained</p>
-        <p class="metric">{{ failures.items.value.length }}</p>
+        <p class="metric">{{ readonlyAccess === false ? failures.items.value.length : '—' }}</p>
       </section>
     </div>
 
-    <LoadingState v-if="failures.loading.value" label="Loading retained records…" />
-    <ErrorState v-else-if="failures.error.value" :problem="failures.error.value" retryable @retry="failures.restart()" />
+    <EmptyState
+      v-if="readonlyAccess !== false"
+      title="Operator access required"
+      detail="Ingest failure payloads are available only to an operator."
+    />
+    <LoadingState v-else-if="failures.loading.value" label="Loading retained records…" />
+    <ErrorState v-else-if="failures.error.value" :problem="failures.error.value" retryable @retry="failures.loadMore()" />
     <EmptyState v-else-if="failures.items.value.length === 0" title="Nothing to replay" detail="No unresolved ingest failures." />
     <template v-else>
       <ul class="bento">
@@ -51,7 +71,7 @@ async function replay(id: number): Promise<void> { busy.value = id; try { await 
             <summary>Stored payload</summary>
             <pre>{{ JSON.stringify(failure.raw_payload, null, 2) }}</pre>
           </details>
-          <p v-if="!readonlyAccess" class="actions">
+          <p v-if="readonlyAccess === false" class="actions">
             <button type="button" :disabled="busy === failure.id" @click="replay(failure.id)">Replay after provider fix</button>
           </p>
         </li>

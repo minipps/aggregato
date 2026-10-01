@@ -30,7 +30,7 @@ const page = usePaged(creators)
 
     <section class="card span-4" aria-labelledby="creator-list-heading">
       <h2 id="creator-list-heading" class="visually-hidden">Creator list</h2>
-      <ErrorState v-if="page.error.value" :problem="page.error.value" retryable @retry="page.restart()" />
+      <ErrorState v-if="page.error.value" :problem="page.error.value" retryable @retry="page.loadMore()" />
       <LoadingState v-else-if="page.loading.value" label="Loading creators…" />
       <ul v-else-if="page.items.value.length" class="plain">
         <li v-for="creator in page.items.value" :key="creator.id">

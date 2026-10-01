@@ -2,18 +2,16 @@
 /**
  * Work detail: identifiers, credits, entries, opinions, parent and sibling seasons.
  *
- * Ratings show raw value, scale, and normalized side by side, and each normalized value carries the
- * caveat in the reader's line of sight : normalization makes values comparable *within* a
- * scale, and states nothing about how one platform's 4/5 relates to another's 80/100. Documenting
- * that in the contract is not enough — the person reading the number is who needs to know.
+ * Ratings show the raw value, scale, and normalized value together. A normalized value is
+ * comparable within its scale only.
  */
 
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { mergeWork, undoMerge, work } from '@/api/client'
+import { mergeWork, toProblem, undoMerge, work } from '@/api/client'
 import { readonlyAccess } from '@/api/session'
-import type { Rating } from '@/api/types'
+import type { Problem, Rating } from '@/api/types'
 import { useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
 import EntryList from '@/components/EntryList.vue'
@@ -29,16 +27,42 @@ const detail = useRequest(() => work(workId.value))
 watch(workId, () => void detail.reload())
 const merging = ref(false)
 const notice = ref('')
+const undoId = ref<number | undefined>()
+const busy = ref(false)
+const mutationError = ref<Problem | undefined>()
 
 async function merge(loserIds: string[]): Promise<void> {
-  const log = await mergeWork(workId.value, loserIds)
-  notice.value = 'Works merged.'
-  merging.value = false
-  await detail.reload()
-  window.setTimeout(() => { notice.value = `Merged. Undo: ${log.id}` }, 0)
+  if (busy.value || readonlyAccess.value !== false) return
+  busy.value = true
+  mutationError.value = undefined
+  try {
+    const log = await mergeWork(workId.value, loserIds)
+    notice.value = 'Works merged.'
+    undoId.value = log.id
+    merging.value = false
+    await detail.reload()
+  } catch (caught) {
+    mutationError.value = toProblem(caught)
+  } finally {
+    busy.value = false
+  }
 }
 
-async function undo(id: number): Promise<void> { await undoMerge(id); notice.value = 'Merge undone.'; await detail.reload() }
+async function undo(): Promise<void> {
+  if (busy.value || undoId.value === undefined || readonlyAccess.value !== false) return
+  busy.value = true
+  mutationError.value = undefined
+  try {
+    await undoMerge(undoId.value)
+    undoId.value = undefined
+    notice.value = 'Merge undone.'
+    await detail.reload()
+  } catch (caught) {
+    mutationError.value = toProblem(caught)
+  } finally {
+    busy.value = false
+  }
+}
 
 function ratingText(rating: Rating | null | undefined): string {
   if (!rating || rating.raw === null || rating.raw === undefined) return 'No rating'
@@ -61,9 +85,8 @@ function ratingText(rating: Rating | null | undefined): string {
     <div v-else-if="detail.data.value" class="bento">
       <section class="card card--feature span-2 tall">
         <!--
-          Local cache path only  — the API never hands the browser a platform URL. alt is
-          empty because the h1 beside it already names the work; a poster carries nothing a reader
-          needs that the title does not already say.
+          The API supplies a local cache path. The adjacent title makes the artwork decorative, and
+          this view already shows its poster above the entry list.
         -->
         <img
           v-if="detail.data.value.image"
@@ -90,13 +113,15 @@ function ratingText(rating: Rating | null | undefined): string {
           </RouterLink>
         </p>
 
-        <p v-if="!readonlyAccess" class="actions">
-          <button type="button" @click="merging = true">Merge duplicate</button>
+        <p v-if="readonlyAccess === false" class="actions">
+          <button type="button" :disabled="busy" @click="merging = true">Merge duplicate</button>
         </p>
-        <MergeDialog v-if="merging" subject="work" :winner-id="workId" @merge="merge" @cancel="merging = false" />
+        <MergeDialog v-if="merging && readonlyAccess === false" subject="work" :winner-id="workId" :pending="busy" @merge="merge" @cancel="merging = false" />
+        <p v-if="busy" role="status">Saving change…</p>
+        <ErrorState v-if="mutationError" :problem="mutationError" />
         <p v-if="notice" class="note" role="status">
           {{ notice }}
-          <button v-if="notice.includes('Undo:')" type="button" @click="undo(Number(notice.split(': ')[1]))">Undo</button>
+          <button v-if="undoId !== undefined && readonlyAccess === false" type="button" :disabled="busy" @click="undo">Undo</button>
         </p>
       </section>
 
@@ -121,7 +146,7 @@ function ratingText(rating: Rating | null | undefined): string {
       <!-- Opinions stay in one tile, split by hairlines: a card per provider would nest cards. -->
       <section class="card card--scroll span-2" aria-labelledby="opinions-heading">
         <h2 id="opinions-heading">Opinions</h2>
-        <!-- Stated once, next to the numbers it qualifies . -->
+        <!-- Stated once, next to the numbers it qualifies. -->
         <p class="note note--warn">
           Normalized scores are comparable <strong>within one platform's scale</strong>. They are not
           equivalent across platforms: two providers' normalized 80s do not mean the same thing.

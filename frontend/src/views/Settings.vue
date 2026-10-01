@@ -17,7 +17,7 @@ function bytes(value: number): string {
 }
 
 async function save(): Promise<void> {
-  if (!state.data.value) return
+  if (!state.data.value || readonlyAccess.value !== false) return
   busy.value = true
   error.value = undefined
   try {
@@ -25,15 +25,28 @@ async function save(): Promise<void> {
       raw_payload_retention_days: state.data.value.raw_payload_retention_days,
       success_run_retention_days: state.data.value.success_run_retention_days,
       failure_run_retention_days: state.data.value.failure_run_retention_days,
-      image_cache_enabled: state.data.value.image_cache_enabled,
+      ...(state.data.value.image_cache_configured_enabled && {
+        image_cache_enabled: state.data.value.image_cache_enabled,
+      }),
     })
-  } catch (caught) { error.value = toProblem(caught) } finally { busy.value = false }
+  } catch (caught) {
+    error.value = toProblem(caught)
+  } finally {
+    busy.value = false
+  }
 }
 
 async function exportNow(): Promise<void> {
+  if (readonlyAccess.value !== false || state.data.value?.backup_supported !== true) return
   busy.value = true
   error.value = undefined
-  try { await downloadArchive() } catch (caught) { error.value = toProblem(caught) } finally { busy.value = false }
+  try {
+    await downloadArchive()
+  } catch (caught) {
+    error.value = toProblem(caught)
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -58,25 +71,29 @@ async function exportNow(): Promise<void> {
       <section class="card span-2" aria-labelledby="storage-heading">
         <h2 id="storage-heading">Storage usage</h2>
         <dl class="pairs">
-          <dt>Retained raw payloads</dt><dd>{{ bytes(state.data.value.storage.raw_payload_bytes) }}</dd>
+          <dt>Retained payload content (estimate)</dt><dd>{{ bytes(state.data.value.storage.raw_payload_bytes) }}</dd>
           <dt>Image cache</dt><dd>{{ bytes(state.data.value.storage.image_cache_bytes) }}</dd>
           <dt>Database</dt><dd>{{ bytes(state.data.value.storage.database_bytes) }}</dd>
         </dl>
+        <p class="muted">Payload size is estimated from stored JSON text and excludes database and index overhead.</p>
       </section>
 
       <form class="card card--feature span-2" @submit.prevent="save">
         <h2>Retention</h2>
         <!-- A native disabled fieldset covers every control inside it, now and when one is added. -->
-        <fieldset :disabled="readonlyAccess">
+        <fieldset :disabled="readonlyAccess !== false">
           <legend class="visually-hidden">Retention windows</legend>
-          <p class="muted">Failures are kept longer than successful runs by default so diagnosis remains possible.</p>
-          <label>Raw payload retention (days)<input v-model.number="state.data.value.raw_payload_retention_days" min="0" type="number"></label>
+          <p class="muted">
+            Only resolved ingest failure payloads are aged out. Provider-item payloads used for normalization replay remain retained.
+          </p>
+          <label>Resolved failure payload retention (days)<input v-model.number="state.data.value.raw_payload_retention_days" min="0" type="number"></label>
           <label>Successful run retention (days)<input v-model.number="state.data.value.success_run_retention_days" min="0" type="number"></label>
           <label>Failed and partial run retention (days)<input v-model.number="state.data.value.failure_run_retention_days" min="0" type="number"></label>
-          <label><input v-model="state.data.value.image_cache_enabled" type="checkbox"> Cache platform images locally</label>
-          <p v-if="!state.data.value.image_cache_enabled" class="note note--warn" role="alert">Images will use a local placeholder. Turning this off clears cached image data during cleanup.</p>
+          <label><input v-model="state.data.value.image_cache_enabled" :disabled="!state.data.value.image_cache_configured_enabled" type="checkbox"> Cache platform images locally</label>
+          <p v-if="!state.data.value.image_cache_configured_enabled" class="note note--warn">Image caching is disabled by server configuration. Set image_cache_enabled: true in the configuration to enable it.</p>
+          <p v-else-if="!state.data.value.image_cache_enabled" class="note note--warn" role="alert">Images will use a local placeholder. Turning this off clears cached image data during cleanup.</p>
         </fieldset>
-        <p v-if="!readonlyAccess" class="actions">
+        <p v-if="readonlyAccess === false" class="actions">
           <button :disabled="busy" type="submit">Save settings</button>
         </p>
       </form>
@@ -90,9 +107,17 @@ async function exportNow(): Promise<void> {
           </span>
           <h2 id="archive-heading">Portable archive</h2>
         </div>
-        <p>Download your data, image cache, and safe configuration. Secrets and active sessions are excluded.</p>
-        <p class="actions">
+        <p v-if="state.data.value.backup_supported">
+          Download the SQLite database, image cache, and public configuration. Configured credentials and sessions are excluded. This backup retains personal history and provider payloads; keep it private.
+        </p>
+        <p v-else>
+          Portable archive downloads require SQLite. This instance uses PostgreSQL; back up the database with PostgreSQL tools and copy the configured image cache separately.
+        </p>
+        <p v-if="readonlyAccess === false && state.data.value.backup_supported" class="actions">
           <button :disabled="busy" type="button" @click="exportNow">Download archive</button>
+        </p>
+        <p v-else-if="readonlyAccess !== false && state.data.value.backup_supported" class="muted">
+          Only an operator can download the portable archive.
         </p>
       </section>
 

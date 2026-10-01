@@ -1,11 +1,4 @@
-/**
- * The one fetch wrapper, plus the typed calls  needs.
- *
- * Every request in the UI goes through {@link request}, so authentication, CSRF, and error shape are
- * decided once. UI consistency guidance requires uniform error presentation; that is only achievable if
- * there is a single failure path, so `request` rejects with a {@link Problem} for *every* failure —
- * HTTP problem detail, unexpected non-JSON body, or a dead network alike.
- */
+/** Shared API request handling and typed endpoint calls. */
 
 import { router } from '@/router'
 
@@ -52,14 +45,13 @@ type QueryValue = string | number | boolean | undefined | null
 export interface RequestOptions {
   query?: Record<string, QueryValue>
   body?: unknown
+  responseType?: 'json' | 'blob'
   /** Extra headers. Used only by the login call, which presents the API token as a bearer. */
   headers?: Record<string, string>
 }
 
 /**
- * Error carrying an RFC 9457 problem detail.
- *
- * Inputs: the parsed or synthesised problem. Views render `problem` and never a raw status code.
+ * Error carrying an RFC 9457 problem detail for API failures.
  */
 export class ProblemError extends Error {
   readonly problem: Problem
@@ -71,12 +63,7 @@ export class ProblemError extends Error {
   }
 }
 
-/**
- * The problem detail behind any thrown value, so a `catch` block has one shape to render.
- *
- * Inputs: whatever was caught. Never throws: an unrecognised value becomes a generic 0-status
- * problem rather than a blank view (UI consistency guidance).
- */
+/** Convert a caught value to the problem shape used by error views. */
 export function toProblem(error: unknown): Problem {
   if (error instanceof ProblemError) return error.problem
   return {
@@ -88,7 +75,7 @@ export function toProblem(error: unknown): Problem {
 }
 
 function readCookie(name: string): string | null {
-  // document.cookie is the only place the CSRF value exists: the session cookie is HttpOnly.
+  // The CSRF cookie is readable by JavaScript; the session cookie is HttpOnly.
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
   const value = match?.[1]
   return value === undefined ? null : decodeURIComponent(value)
@@ -134,11 +121,9 @@ async function problemFrom(response: Response): Promise<Problem> {
  * Perform one API request.
  *
  * Inputs: method, contract path (without `/api/v1`), and optional query, body, and headers.
- * Returns the decoded JSON body, or `undefined` typed as `T` for a 204.
+ * Returns JSON, a blob when requested, or `undefined` for a 204.
  *
- * Failure modes: always {@link ProblemError}. A 401 additionally routes to the login view — a
- * session expires by sitting still, and the alternative is a page of empty panels. The login call
- * itself is exempt, because a wrong token must show its own message .
+ * HTTP failures throw {@link ProblemError}. A 401 from any other route navigates to the login view.
  */
 export async function request<T>(
   method: string,
@@ -146,7 +131,8 @@ export async function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...options.headers }
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  const formData = options.body instanceof FormData
+  if (options.body !== undefined && !formData) headers['Content-Type'] = 'application/json'
   if (UNSAFE_METHODS.has(method)) {
     const csrf = readCookie(CSRF_COOKIE)
     if (csrf !== null) headers[CSRF_HEADER] = csrf
@@ -154,12 +140,17 @@ export async function request<T>(
 
   let response: Response
   try {
+    const body = options.body === undefined
+      ? undefined
+      : formData
+        ? options.body as FormData
+        : JSON.stringify(options.body)
     response = await fetch(buildUrl(path, options.query), {
       method,
       headers,
       // The session cookie is the normal credential; same-origin keeps it attached without CORS.
       credentials: 'same-origin',
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      ...(body === undefined ? {} : { body }),
     })
   } catch (error) {
     throw new ProblemError({
@@ -179,6 +170,7 @@ export async function request<T>(
   }
 
   if (response.status === 204) return undefined as T
+  if (options.responseType === 'blob') return await response.blob() as T
   return (await response.json()) as T
 }
 
@@ -186,8 +178,7 @@ export async function request<T>(
  * A cursor walk over one keyset-paginated collection.
  *
  * Call {@link Pager.next} repeatedly; each call feeds the previous page's `next_cursor` back to the
- * API. `done` is true once the API stops handing one out. There is no page number, because there is
- * no offset parameter to build one from .
+ * API. `done` is true once the API stops handing one out.
  */
 export interface Pager<T> {
   next(): Promise<{ items: T[]; done: boolean }>
@@ -209,15 +200,7 @@ export function pager<T>(path: string, query: Record<string, QueryValue> = {}): 
   }
 }
 
-/**
- * Exchange the API token for a session cookie.
- *
- * Inputs: the raw token, sent once as a bearer header. It is never placed in a URL, in a query
- * string, or in rendered markup  — the browser keeps only the HttpOnly cookie the server
- * sets in response.
- *
- * Failure modes: {@link ProblemError} 401 when the token does not match.
- */
+/** Exchange an API token for a session cookie. */
 export function login(token: string): Promise<void> {
   return request<void>('POST', LOGIN_PATH, { headers: { Authorization: `Bearer ${token}` } })
 }
@@ -252,7 +235,7 @@ export function providerConfigSchema(id: string): Promise<JsonSchema> {
   return request<JsonSchema>('GET', `/providers/${encodeURIComponent(id)}/config-schema`)
 }
 
-/** Persist settings validated by the provider's declared schema; responses never expose them. */
+/** Save provider settings validated by its declared schema. */
 export function updateProviderConfig(
   id: string,
   settings: Record<string, string | number | boolean | null>,
@@ -260,13 +243,7 @@ export function updateProviderConfig(
   return request<Provider>('PUT', `/providers/${encodeURIComponent(id)}/config`, { body: settings })
 }
 
-/**
- * Enable or disable a provider.
- *
- * The contract names the capability (, `GET /providers` returns `enabled`) but does not spell
- * out the write. `PATCH /providers/{id}` with the changed field is the only shape consistent with
- * the rest of the document, so that is what this sends.
- */
+/** Enable or disable a provider through its action endpoint. */
 export function setProviderEnabled(id: string, enabled: boolean): Promise<Provider> {
   return request<Provider>('POST', `/providers/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`)
 }
@@ -292,17 +269,7 @@ export async function importProviderFile(
 ): Promise<QueuedOperation> {
   const data = new FormData()
   data.append('file', file)
-  const response = await fetch(buildUrl(`/providers/${encodeURIComponent(id)}/import`, undefined), {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      ...(readCookie(CSRF_COOKIE) === null ? {} : { [CSRF_HEADER]: readCookie(CSRF_COOKIE)! }),
-    },
-    credentials: 'same-origin',
-    body: data,
-  })
-  if (!response.ok) throw new ProblemError(await problemFrom(response))
-  return (await response.json()) as QueuedOperation
+  return request<QueuedOperation>('POST', `/providers/${encodeURIComponent(id)}/import`, { body: data })
 }
 
 export function latestProviderRun(id: string): Promise<LastRun> {
@@ -405,9 +372,8 @@ export function updateArchiveSettings(
 
 /** Download the streaming archive without exposing the API token to page source or URLs. */
 export async function downloadArchive(): Promise<void> {
-  const response = await fetch(buildUrl('/export', undefined), { credentials: 'same-origin' })
-  if (!response.ok) throw new ProblemError(await problemFrom(response))
-  const href = URL.createObjectURL(await response.blob())
+  const archive = await request<Blob>('GET', '/export', { responseType: 'blob' })
+  const href = URL.createObjectURL(archive)
   const link = document.createElement('a')
   link.href = href
   link.download = 'aggregato-export.zip'

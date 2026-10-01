@@ -1,10 +1,4 @@
-/**
- * Hand-written mirror of `docs/contracts/openapi.yaml`.
- *
- * Hand-written rather than generated:  makes the contract the only interface the UI may use,
- * and a codegen step would be a build dependency for types that change once per contract revision.
- * Only the schemas  actually renders are declared here.
- */
+/** Types mirrored from `docs/contracts/openapi.yaml`; only fields used by the UI are declared. */
 
 export type MediaType =
   | 'film'
@@ -73,13 +67,14 @@ export type ProviderCapability =
   | 'has_ratings'
   | 'has_reviews'
   | 'has_credits'
+  | 'now_playing'
   | 'scrapes'
   | 'push'
 
-/** Precision of a logged date. Nothing may render more precision than this states . */
+/** Precision of a logged date; views use it to choose the displayed date detail. */
 export type LoggedPrecision = 'exact' | 'day' | 'month' | 'year' | 'unknown'
 
-/** RFC 9457 problem detail — the one error shape the whole UI renders (UI consistency guidance). */
+/** RFC 9457 problem detail used by API error responses and error views. */
 export interface Problem {
   type: string
   title: string
@@ -88,7 +83,7 @@ export interface Problem {
   instance?: string
 }
 
-/** Keyset page. `next_cursor` is the only way forward; the API has no offset . */
+/** Keyset page returned by list endpoints. */
 export interface Page<T> {
   items: T[]
   next_cursor: string | null
@@ -103,7 +98,7 @@ export interface SubjectRef {
   volume?: number
 }
 
-/** Raw and normalized together; normalized is not a cross-platform claim . */
+/** The platform value and scale are retained alongside its normalized value. */
 export interface Rating {
   raw: number | null
   scale_id: string | null
@@ -268,7 +263,7 @@ export interface JsonSchema {
   type?: string
   properties?: Record<string, JsonSchema>
   required?: string[]
-  enum?: Array<string | number>
+  enum?: Array<string | number | boolean>
   default?: string | number | boolean | null
   format?: string
   writeOnly?: boolean
@@ -287,6 +282,8 @@ export interface ArchiveSettings {
   success_run_retention_days: number
   failure_run_retention_days: number
   image_cache_enabled: boolean
+  image_cache_configured_enabled: boolean
+  backup_supported: boolean
   storage: { raw_payload_bytes: number; image_cache_bytes: number; database_bytes: number }
 }
 
@@ -328,7 +325,7 @@ export interface SyncRun {
   provider_id: string
   lineage_id: string
   attempt: number
-  mode: 'incremental' | 'full' | 'import' | 'check'
+  mode: 'incremental' | 'full' | 'import' | 'replay' | 'check'
   status: RunStatus
   phase: RunPhase
   started_at: string
@@ -352,7 +349,7 @@ export interface SyncRun {
 export interface SyncRunDiagnostics {
   run_id: number
   log?: string | null
-  raw_responses: { method: string; url: string; status: number; headers: Record<string, string>; body: string }[]
+  raw_responses: { method: string; url: string; status: number }[]
 }
 
 export interface SyncProviderState {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Archive-level activity statistics, deliberately text and data-table led rather than cover led. */
+/** Archive activity totals, yearly heatmap, and top works and creators. */
 import { computed, ref, watch } from 'vue'
 
 import { statsSummary, topStats } from '@/api/client'

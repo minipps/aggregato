@@ -1,6 +1,4 @@
-/* Design tokens and a minimal reset.
-   Palette: Catppuccin Mocha, only. Layout: Bento grid — one gap scale, one radius scale, one card.
-   Typography-first still holds: most logged items have no cover art, so cards lead with text. */
+/* Shared design tokens, reset, dark palette, and Bento layout. */
 
 :root {
   color-scheme: dark;
@@ -15,7 +13,7 @@
   --space-6: 1.5rem;
   --space-8: 2rem;
 
-  /* One gap for every grid on every screen: Bento reads as a set only if the gutters match. */
+  /* Shared grid gap keeps page gutters aligned. */
   --gap: 1.5rem;
   --radius: 1rem;
   --radius-lg: 1.25rem;
@@ -188,8 +186,7 @@ a {
   color: var(--accent);
 }
 
-/* Keyboard reachability is a requirement, not polish, so the focus ring is never removed — only
-   made consistent, and smoothed to match the rest of the interactions. */
+/* Visible focus ring for keyboard navigation. */
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -292,8 +289,7 @@ a {
   margin: 0;
 }
 
-/* Featured cards: the only surfaces allowed a gradient, and their text stays full-strength (never
-   muted on a tinted background) so contrast holds. */
+/* Featured cards use a gradient; keep their text full-strength for contrast. */
 .card--feature {
   background: linear-gradient(150deg, var(--ctp-surface0), var(--ctp-base) 65%);
   border-color: var(--border-strong);
@@ -424,8 +420,7 @@ label {
   gap: var(--space-2);
 }
 
-/* Fieldsets group controls and carry `disabled`; they never draw a box, because they always sit
-   inside a card and a box there would read as a card within a card. */
+/* Fieldsets group controls and provide native disabled behavior without an extra border. */
 fieldset {
   display: grid;
   gap: var(--space-2);
@@ -556,8 +551,7 @@ tbody tr:last-child td {
   color: var(--danger);
 }
 
-/* Flat inset block for a note or alert *inside* a card — tinted, never bordered or elevated, so a
-   card never contains something that reads as a second card. */
+/* Inset notes use a tint without a border or elevation. */
 .note {
   padding: var(--space-3);
   border-radius: var(--radius);

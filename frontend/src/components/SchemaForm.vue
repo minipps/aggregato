@@ -1,11 +1,5 @@
 <script setup lang="ts">
-/**
- * A deliberately small JSON Schema renderer for provider settings.
- *
- * Provider config models are flat Pydantic models today. Rendering that portable subset rather
- * than provider-specific forms keeps a new provider from requiring a UI change. Unknown schemas
- * still show their property names as text inputs instead of silently hiding configuration.
- */
+/** Render the flat scalar and nullable JSON Schema subset used by provider settings. */
 import { computed, ref, watch } from 'vue'
 
 import type { JsonSchema } from '@/api/types'
@@ -28,27 +22,71 @@ const values = ref<Record<string, string | number | boolean | null>>({})
 const properties = computed(() => Object.entries(props.schema.properties ?? {}))
 
 function resetValues(): void {
-  values.value = Object.fromEntries(properties.value.map(([name, field]) => [
-    name,
-    props.modelValue[name] ?? field.default ?? (field.type === 'boolean' ? false : ''),
-  ]))
+  values.value = Object.fromEntries(properties.value.map(([name, field]) => {
+    if (Object.prototype.hasOwnProperty.call(props.modelValue, name)) {
+      return [name, props.modelValue[name] as string | number | boolean | null]
+    }
+    if (Object.prototype.hasOwnProperty.call(field, 'default')) {
+      return [name, field.default as string | number | boolean | null]
+    }
+    const options = enumValues(field)
+    const firstOption = options?.[0]
+    if (firstOption !== undefined) {
+      return [name, schemaRequired(name) && !acceptsNull(field) ? '' : firstOption]
+    }
+    return [name, acceptsNull(field) ? null : scalarType(field) === 'boolean' ? false : '']
+  }))
+  emit('update:modelValue', values.value)
 }
 
-watch(() => [props.schema, props.modelValue] as const, resetValues, { immediate: true, deep: true })
+watch(() => props.schema, resetValues, { immediate: true })
+watch(() => props.modelValue, (value) => { values.value = { ...value } }, { deep: true })
 
 function acceptsNull(field: JsonSchema): boolean {
   return field.type === 'null' || field.anyOf?.some((option) => option.type === 'null') === true
 }
 
+function schemaRequired(name: string): boolean {
+  return props.schema.required?.includes(name) === true
+}
+
+function scalarType(field: JsonSchema): string | undefined {
+  return field.type ?? field.anyOf?.find((option) => option.type !== 'null')?.type
+}
+
+function inputType(field: JsonSchema): string {
+  return field.writeOnly
+    ? 'password'
+    : scalarType(field) === 'number' || scalarType(field) === 'integer'
+      ? 'number'
+      : 'text'
+}
+
+function enumValues(field: JsonSchema): Array<string | number | boolean> | undefined {
+  return field.enum ?? field.anyOf?.find((option) => option.type !== 'null')?.enum
+}
+
+function enumIndex(field: JsonSchema, value: string | number | boolean | null | undefined): string {
+  if (value === null && acceptsNull(field)) return ''
+  const index = enumValues(field)?.findIndex((option) => Object.is(option, value)) ?? -1
+  return index < 0 ? '' : String(index)
+}
+
 function update(name: string, field: JsonSchema, event: Event): void {
   const input = event.target as HTMLInputElement | HTMLSelectElement
-  const value: string | number | boolean | null = field.type === 'boolean'
-    ? (input as HTMLInputElement).checked
-    : field.type === 'number' || field.type === 'integer'
-      ? Number(input.value)
-      : acceptsNull(field) && input.value.trim() === ''
-        ? null
-        : input.value
+  const type = scalarType(field)
+  const options = enumValues(field)
+  const value: string | number | boolean | null = options
+    ? (acceptsNull(field) && input.value === '' ? null : options[Number(input.value)] ?? '')
+    : acceptsNull(field) && input.value.trim() === ''
+      ? null
+      : type === 'boolean'
+        ? input instanceof HTMLInputElement && input.type === 'checkbox'
+          ? input.checked
+          : input.value === 'true'
+        : type === 'number' || type === 'integer'
+          ? input.value === '' ? '' : Number(input.value)
+          : input.value
   values.value = { ...values.value, [name]: value }
   emit('update:modelValue', values.value)
 }
@@ -63,16 +101,30 @@ function update(name: string, field: JsonSchema, event: Event): void {
         <span v-if="schema.required?.includes(name)" aria-label="required">*</span>
       </label>
       <select
-        v-if="field.enum"
+        v-if="enumValues(field)"
         :id="`config-${name}`"
-        :value="values[name]"
+        :value="enumIndex(field, values[name])"
+        :disabled="disabled"
+        :required="schemaRequired(name) && !acceptsNull(field)"
+        @change="update(name, field, $event)"
+      >
+        <option v-if="schemaRequired(name) && !acceptsNull(field)" value="" disabled>Select…</option>
+        <option v-else-if="acceptsNull(field)" value=""></option>
+        <option v-for="(option, index) in enumValues(field)" :key="index" :value="index">{{ option }}</option>
+      </select>
+      <select
+        v-else-if="scalarType(field) === 'boolean' && acceptsNull(field)"
+        :id="`config-${name}`"
+        :value="values[name] === null ? '' : String(values[name])"
         :disabled="disabled"
         @change="update(name, field, $event)"
       >
-        <option v-for="option in field.enum" :key="String(option)" :value="option">{{ option }}</option>
+        <option value=""></option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
       </select>
       <input
-        v-else-if="field.type === 'boolean'"
+        v-else-if="scalarType(field) === 'boolean'"
         :id="`config-${name}`"
         type="checkbox"
         :checked="Boolean(values[name])"
@@ -82,15 +134,16 @@ function update(name: string, field: JsonSchema, event: Event): void {
       <input
         v-else
         :id="`config-${name}`"
-        :type="field.writeOnly ? 'password' : field.type === 'number' || field.type === 'integer' ? 'number' : 'text'"
+        :type="inputType(field)"
         :value="values[name] ?? ''"
         :disabled="disabled"
-        :required="schema.required?.includes(name)"
+        :required="schemaRequired(name) && !acceptsNull(field)"
         @input="update(name, field, $event)"
       >
       <p v-if="field.description" class="muted">{{ field.description }}</p>
     </div>
     <p v-if="properties.length === 0" class="muted">This provider does not declare configuration fields.</p>
+    <slot />
   </form>
 </template>
 

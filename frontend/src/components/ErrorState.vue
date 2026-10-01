@@ -1,9 +1,8 @@
 <script setup lang="ts">
 /**
- * Shared error state: the only way a failure is shown to the operator.
+ * Shared error state for API failures.
  *
- * Takes an RFC 9457 problem detail and renders its title and detail — never a bare status code, and
- * never a blanked view (UI consistency guidance). The status is shown as supporting context only.
+ * Renders an RFC 9457 problem's title and detail, with its status as supporting context.
  */
 import type { Problem } from '@/api/types'
 

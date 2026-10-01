@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const provider = {
@@ -19,18 +19,20 @@ const mocks = vi.hoisted(() => {
     file_pinned_settings: [],
     current_settings: {},
     last_check: {
-      status: 'failure' as const,
+      status: 'failure' as 'pending' | 'failure' | 'success',
       lineage_id: 'check-lineage',
       requested_at: '2026-08-08T10:00:00Z',
       completed_at: '2026-08-08T10:00:01Z',
       detail: 'token rejected',
-      error_class: 'auth' as const,
+      error_class: 'auth' as 'auth' | null,
     },
   }
+  const secondProvider = { ...provider, id: 'fixture-two', name: 'Second provider', last_check: null }
 
   return {
     provider,
-    providers: vi.fn().mockResolvedValue([provider]),
+    secondProvider,
+    providers: vi.fn().mockResolvedValue([provider, secondProvider]),
     checkProvider: vi.fn().mockResolvedValue({ lineage_id: 'new-check-lineage' }),
     importProviderFile: vi.fn(),
     latestProviderRun: vi.fn(),
@@ -75,12 +77,39 @@ async function settle(): Promise<void> {
 }
 
 describe('Providers provider checks', () => {
+  beforeEach(() => {
+    readonlyAccess.value = false
+    mocks.secondProvider.last_check = null
+    mocks.provider.last_check = {
+      status: 'failure',
+      lineage_id: 'check-lineage',
+      requested_at: '2026-08-08T10:00:00Z',
+      completed_at: '2026-08-08T10:00:01Z',
+      detail: 'token rejected',
+      error_class: 'auth',
+    }
+    mocks.providers.mockResolvedValue([mocks.provider, mocks.secondProvider])
+    mocks.checkProvider.mockImplementation(async () => {
+      mocks.provider.last_check = {
+        status: 'success',
+        lineage_id: 'new-check-lineage',
+        requested_at: '2026-08-08T10:01:00Z',
+        completed_at: '2026-08-08T10:01:01Z',
+        detail: 'credentials accepted',
+        error_class: null,
+      }
+      return { lineage_id: 'new-check-lineage' }
+    })
+  })
+
   afterEach(() => {
     readonlyAccess.value = false
+    vi.useRealTimers()
     vi.clearAllMocks()
   })
 
   it('renders a latest diagnostic and allows checking a disabled provider', async () => {
+    vi.useFakeTimers()
     const wrapper = mount(Providers)
     await settle()
 
@@ -98,11 +127,43 @@ describe('Providers provider checks', () => {
     expect(button).toBeDefined()
     expect(button?.attributes('disabled')).toBeUndefined()
 
+    const pendingProvider = {
+      ...mocks.provider,
+      last_check: {
+        status: 'pending' as const,
+        lineage_id: 'new-check-lineage',
+        requested_at: '2026-08-08T10:01:00Z',
+        completed_at: null,
+        detail: null,
+        error_class: null,
+      },
+    }
+    const completedProvider = {
+      ...mocks.provider,
+      last_check: {
+        ...pendingProvider.last_check,
+        status: 'success' as const,
+        completed_at: '2026-08-08T10:01:01Z',
+        detail: 'credentials accepted',
+      },
+    }
+    mocks.providers.mockReset()
+    mocks.providers
+      .mockResolvedValueOnce([pendingProvider, mocks.secondProvider])
+      .mockResolvedValueOnce([completedProvider, mocks.secondProvider])
+    mocks.checkProvider.mockResolvedValueOnce({ lineage_id: 'new-check-lineage' })
+
     await button!.trigger('click')
     await settle()
 
     expect(mocks.checkProvider).toHaveBeenCalledWith('fixture')
     expect(wrapper.text()).toContain('Provider check queued.')
+    await vi.advanceTimersByTimeAsync(5000)
+    await settle()
+
+    expect(wrapper.text()).toContain('Provider check success.')
+    expect(wrapper.text()).toContain('credentials accepted')
+    wrapper.unmount()
   })
 
   it('does not offer the write action to a read-only credential', async () => {
@@ -111,5 +172,55 @@ describe('Providers provider checks', () => {
     await settle()
 
     expect(wrapper.findAll('button').map((button) => button.text())).not.toContain('Check provider')
+  })
+
+  it('stops checking after the provider view unmounts', async () => {
+    vi.useFakeTimers()
+    const pendingProvider = {
+      ...mocks.provider,
+      last_check: {
+        status: 'pending' as const,
+        lineage_id: 'new-check-lineage',
+        requested_at: '2026-08-08T10:01:00Z',
+        completed_at: null,
+        detail: null,
+        error_class: null,
+      },
+    }
+    mocks.providers.mockReset()
+    mocks.providers
+      .mockResolvedValueOnce([mocks.provider, mocks.secondProvider])
+      .mockResolvedValueOnce([pendingProvider, mocks.secondProvider])
+    mocks.checkProvider.mockResolvedValueOnce({ lineage_id: 'new-check-lineage' })
+
+    const wrapper = mount(Providers)
+    await vi.advanceTimersByTimeAsync(0)
+    const check = wrapper.findAll('button').find((button) => button.text() === 'Check provider')
+    await check!.trigger('click')
+    await settle()
+    const requests = mocks.providers.mock.calls.length
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(mocks.providers).toHaveBeenCalledTimes(requests)
+  })
+
+  it('disables actions on every card while a provider action is pending', async () => {
+    let finish!: () => void
+    mocks.setProviderEnabled.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve }))
+    const wrapper = mount(Providers)
+    await settle()
+
+    const enable = wrapper.findAll('button').filter((button) => button.text() === 'Enable')
+    expect(enable).toHaveLength(2)
+    await enable[0]!.trigger('click')
+    await nextTick()
+
+    expect(wrapper.findAll('button').filter((button) => button.text() === 'Enable')
+      .every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+
+    finish()
+    await settle()
   })
 })

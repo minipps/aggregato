@@ -6,9 +6,10 @@
  * useful state while the live connection is being established.
  */
 
-import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 
 import { syncStatus, toProblem } from './client'
+import { sessionInfo } from './session'
 import type { Problem, SyncSnapshot } from './types'
 
 const RECONNECT_DELAY_MS = 3000
@@ -42,30 +43,54 @@ export function useSyncStream(): {
   const error = ref<Problem | undefined>(undefined)
   let socket: WebSocket | undefined
   let stopped = false
+  let mounted = false
+  let sessionGeneration = 0
+  let fallbackLoading = false
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let fallbackTimer: ReturnType<typeof setTimeout> | undefined
 
+  function canConnect(): boolean {
+    return sessionInfo.value !== undefined && sessionInfo.value.via !== 'public'
+  }
+
+  function scheduleFallback(): void {
+    if (stopped || connected.value || fallbackTimer !== undefined) return
+    fallbackTimer = setTimeout(() => {
+      fallbackTimer = undefined
+      void loadFallback()
+    }, FALLBACK_DELAY_MS)
+  }
+
   async function loadFallback(): Promise<void> {
-    if (stopped || connected.value || typeof syncStatus !== 'function') return
+    if (stopped || connected.value || fallbackLoading || typeof syncStatus !== 'function') return
+    fallbackLoading = true
+    const requestGeneration = sessionGeneration
     try {
       const next = await syncStatus()
-      // A websocket may have opened while the HTTP request was in flight. Never let that stale
-      // fallback response overwrite a newer live snapshot.
-      if (stopped || connected.value) return
+      if (stopped || connected.value || requestGeneration !== sessionGeneration) return
       snapshot.value = next
       error.value = undefined
     } catch (caught) {
-      if (!stopped && !connected.value) error.value = toProblem(caught)
-    }
-    if (!stopped && !connected.value) {
-      fallbackTimer = setTimeout(() => void loadFallback(), FALLBACK_DELAY_MS)
+      if (!stopped && !connected.value && requestGeneration === sessionGeneration) {
+        error.value = toProblem(caught)
+      }
+    } finally {
+      fallbackLoading = false
+      scheduleFallback()
     }
   }
 
   function connect(): void {
-    if (stopped || typeof WebSocket === 'undefined') return
-    socket = new WebSocket(websocketUrl())
-    socket.onopen = () => {
+    if (stopped || !mounted || !canConnect() || socket || typeof WebSocket === 'undefined') return
+    const currentSession = sessionInfo.value
+    const generation = sessionGeneration
+    const active = new WebSocket(websocketUrl())
+    socket = active
+    active.onopen = () => {
+      if (
+        stopped || socket !== active || !canConnect()
+        || sessionGeneration !== generation || sessionInfo.value !== currentSession
+      ) return
       connected.value = true
       error.value = undefined
       if (fallbackTimer !== undefined) {
@@ -73,7 +98,11 @@ export function useSyncStream(): {
         fallbackTimer = undefined
       }
     }
-    socket.onmessage = (event: MessageEvent<string>) => {
+    active.onmessage = (event: MessageEvent<string>) => {
+      if (
+        stopped || socket !== active || !canConnect() || !connected.value
+        || sessionGeneration !== generation || sessionInfo.value !== currentSession
+      ) return
       try {
         const parsed: unknown = JSON.parse(event.data)
         if (isSnapshot(parsed)) snapshot.value = parsed
@@ -81,36 +110,68 @@ export function useSyncStream(): {
         error.value = toProblem(caught)
       }
     }
-    socket.onerror = () => {
+    active.onerror = () => {
+      if (
+        stopped || socket !== active || !canConnect()
+        || sessionGeneration !== generation || sessionInfo.value !== currentSession
+      ) return
       error.value = {
         type: 'about:blank',
         title: 'Live sync updates unavailable',
         status: 0,
         detail: 'The page will continue checking the sync status in the background.',
       }
-      socket?.close()
+      active.close()
     }
-    socket.onclose = () => {
-      connected.value = false
+    active.onclose = () => {
+      if (
+        stopped || socket !== active || !canConnect()
+        || sessionGeneration !== generation || sessionInfo.value !== currentSession
+      ) return
       socket = undefined
-      if (!stopped) {
-        reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS)
-        void loadFallback()
+      connected.value = false
+      if (canConnect() && reconnectTimer === undefined) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = undefined
+          connect()
+        }, RECONNECT_DELAY_MS)
       }
+      void loadFallback()
     }
   }
 
+  watch(sessionInfo, (current) => {
+    if (!mounted) return
+    sessionGeneration += 1
+    if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
+    reconnectTimer = undefined
+    if (fallbackTimer !== undefined) clearTimeout(fallbackTimer)
+    fallbackTimer = undefined
+    const active = socket
+    socket = undefined
+    connected.value = false
+    snapshot.value = undefined
+    error.value = undefined
+    active?.close()
+    void loadFallback()
+    if (current && current.via !== 'public') connect()
+  })
+
   onMounted(() => {
+    mounted = true
     void loadFallback()
     connect()
   })
 
   onUnmounted(() => {
     stopped = true
+    sessionGeneration += 1
     if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
     if (fallbackTimer !== undefined) clearTimeout(fallbackTimer)
-    socket?.close()
+    const active = socket
     socket = undefined
+    connected.value = false
+    active?.close()
   })
 
   return { snapshot, connected, error }

@@ -2,8 +2,7 @@
 /**
  * The log feed: `GET /entries` with filters and cursor paging.
  *
- * Paging is "load more", not page numbers: the contract's cursor is opaque and there is no offset
- * parameter to number pages with . A filter change starts a new walk, because a cursor from
+ * Paging uses an opaque cursor. A filter change starts a new walk, because a cursor from
  * the previous query means nothing under the new one.
  */
 
@@ -55,7 +54,7 @@ const filters = reactive<Filters>({
 /** The filter set the current cursor walk belongs to. */
 const applied = ref<EntryQuery>({})
 
-/** `<input type="date">` yields a plain date; the contract wants a date-time, so span the whole day. */
+/** `<input type="date">` yields a UTC calendar date; API bounds are inclusive date-times. */
 function query(): EntryQuery {
   return {
     ...(filters.media_family === '' ? {} : { media_family: filters.media_family }),
@@ -63,7 +62,7 @@ function query(): EntryQuery {
     ...(filters.provider === '' ? {} : { provider: filters.provider }),
     ...(filters.kind === '' ? {} : { kind: filters.kind }),
     ...(filters.from === '' ? {} : { from: `${filters.from}T00:00:00Z` }),
-    ...(filters.to === '' ? {} : { to: `${filters.to}T23:59:59Z` }),
+    ...(filters.to === '' ? {} : { to: `${filters.to}T23:59:59.999999Z` }),
     ...(filters.q === '' ? {} : { q: filters.q }),
   }
 }
@@ -150,6 +149,7 @@ async function apply(): Promise<void> {
           <label for="filter-to">Logged to</label>
           <input id="filter-to" v-model="filters.to" type="date" />
         </div>
+        <p class="muted">Date filters use UTC days.</p>
 
         <button type="submit">Apply filters</button>
       </div>
@@ -168,7 +168,7 @@ async function apply(): Promise<void> {
         v-if="feed.error.value"
         :problem="feed.error.value"
         retryable
-        @retry="feed.restart()"
+        @retry="feed.loadMore()"
       />
 
       <EntryList v-if="feed.items.value.length > 0" :entries="feed.items.value" />

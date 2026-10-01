@@ -2,10 +2,8 @@
 /**
  * Sign in: the API token is exchanged for a session cookie, once, and then forgotten.
  *
- *  forbids the token from appearing in a URL or in page source. It therefore travels in an
- * Authorization header (never a query string), is bound to a password field so it is not rendered,
- * and is cleared from memory as soon as the exchange succeeds. Nothing persists it client-side —
- * the HttpOnly cookie the server sets is the credential from then on.
+ * The token is sent in an Authorization header. After the exchange, the server's HttpOnly session
+ * cookie is used for API requests.
  */
 
 import { ref } from 'vue'
@@ -84,7 +82,7 @@ async function submit(): Promise<void> {
       </p>
 
       <div id="login-error">
-        <!-- The problem's own message, not a status code: a wrong token says so in words . -->
+        <!-- The problem detail gives a readable explanation when sign-in fails. -->
         <ErrorState v-if="problem" :problem="problem" />
       </div>
     </form>

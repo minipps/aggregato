@@ -21,12 +21,14 @@ onMounted(() => void loadSession())
         <li><RouterLink :to="{ name: 'creators' }">Creators</RouterLink></li>
         <li><RouterLink :to="{ name: 'providers' }">Providers</RouterLink></li>
         <li><RouterLink :to="{ name: 'sync-history' }">Sync history</RouterLink></li>
-        <li><RouterLink :to="{ name: 'ingest-failures' }">Ingest failures</RouterLink></li>
-        <li><RouterLink :to="{ name: 'resolution' }">Resolution</RouterLink></li>
+        <li v-if="readonlyAccess === false"><RouterLink :to="{ name: 'ingest-failures' }">Ingest failures</RouterLink></li>
+        <li v-if="readonlyAccess === false"><RouterLink :to="{ name: 'resolution' }">Resolution</RouterLink></li>
         <li><RouterLink :to="{ name: 'settings' }">Settings</RouterLink></li>
       </ul>
       <!-- Said once, in the header, rather than as an explanation next to every missing button. -->
-      <p v-if="readonlyAccess" class="readonly-badge badge badge--warn">Read-only access</p>
+      <p v-if="readonlyAccess !== false" class="readonly-badge badge badge--warn">
+        {{ readonlyAccess === true ? 'Read-only access' : 'Checking access…' }}
+      </p>
     </nav>
   </header>
   <main id="main-content" tabindex="-1"><RouterView /></main>

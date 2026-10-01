@@ -1,10 +1,8 @@
 <script setup lang="ts">
 /**
- * The one date renderer. Every surface that shows a logged date uses this component; ad-hoc
- * formatting elsewhere is forbidden by UI consistency guidance (one date/time rendering rule).
+ * Shared date renderer for logged activity.
  *
- * : the UI must never present more precision than the platform recorded. So precision decides
- * both the text and the `datetime` attribute:
+ * Precision decides both the text and the `datetime` attribute:
  *
  *   exact   → date and time            datetime = the timestamp as received
  *   day     → date only, no time       datetime = YYYY-MM-DD
@@ -79,7 +77,7 @@ const rendered = computed<{ text: string; datetime?: string }>(() => {
 </script>
 
 <template>
-  <!-- No <time> when the date is unknown: a machine-readable date would be an invention . -->
+  <!-- No <time> element is rendered when the date is unknown. -->
   <span v-if="rendered.datetime === undefined" class="logged-at logged-at--unknown">
     {{ rendered.text }}
   </span>

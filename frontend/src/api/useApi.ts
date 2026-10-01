@@ -1,10 +1,4 @@
-/**
- * Loading / error / data plumbing, shared by every view.
- *
- * Four views need the same three states, and UI consistency guidance requires them to look the same in all
- * four. That is the second occurrence rule met twice over — but nothing more general is here: no
- * store, no cache, no request deduplication.
- */
+/** Shared loading, error, and cursor state for API-backed views. */
 
 import { shallowRef, ref, type Ref, type ShallowRef } from 'vue'
 
@@ -18,26 +12,24 @@ export interface Request<T> {
   reload: () => Promise<void>
 }
 
-/**
- * Run `fetcher` immediately and expose its state.
- *
- * Inputs: a function performing one API call. Failure modes: none — a rejection lands in `error` as
- * a problem detail rather than propagating, so a failing panel degrades itself only.
- */
+/** Run `fetcher` immediately; store rejected calls as problem state. */
 export function useRequest<T>(fetcher: () => Promise<T>): Request<T> {
   const data = shallowRef<T | undefined>(undefined)
   const loading = ref(false)
   const error = ref<Problem | undefined>(undefined)
+  let generation = 0
 
   async function reload(): Promise<void> {
+    const request = ++generation
     loading.value = true
     error.value = undefined
     try {
-      data.value = await fetcher()
+      const result = await fetcher()
+      if (request === generation) data.value = result
     } catch (caught) {
-      error.value = toProblem(caught)
+      if (request === generation) error.value = toProblem(caught)
     } finally {
-      loading.value = false
+      if (request === generation) loading.value = false
     }
   }
 
@@ -56,41 +48,40 @@ export interface PagedRequest<T> {
   restart: () => Promise<void>
 }
 
-/**
- * Accumulate a cursor-paginated collection.
- *
- * Inputs: a factory returning a fresh {@link Pager}; `restart` calls it again, since a cursor walk
- * cannot be rewound. Failure modes: none — rejections land in `error`.
- */
+/** Accumulate cursor pages; `restart` creates a new pager for changed filters. */
 export function usePaged<T>(makePager: () => Pager<T>): PagedRequest<T> {
   const items = shallowRef<T[]>([])
   const loading = ref(false)
   const error = ref<Problem | undefined>(undefined)
   const done = ref(false)
   let current = makePager()
+  let generation = 0
 
   async function loadMore(): Promise<void> {
     if (loading.value || done.value) return
+    const request = generation
     loading.value = true
     error.value = undefined
     try {
       const page = await current.next()
+      if (request !== generation) return
       items.value = [...items.value, ...page.items]
       done.value = page.done
     } catch (caught) {
+      if (request !== generation) return
       error.value = toProblem(caught)
-      // Stop walking: the cursor is unusable after a failed page, and retrying it in a loop would
-      // hammer a provider that is already unhappy. `restart` is the way back.
-      done.value = true
+      // A failed local page leaves the cursor unchanged, so callers can retry it.
     } finally {
-      loading.value = false
+      if (request === generation) loading.value = false
     }
   }
 
   async function restart(): Promise<void> {
+    generation += 1
     current = makePager()
     items.value = []
     done.value = false
+    error.value = undefined
     loading.value = false
     await loadMore()
   }

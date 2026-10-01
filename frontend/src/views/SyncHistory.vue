@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 
 import { providerRuns, providers, syncRunDiagnostics } from '@/api/client'
+import { readonlyAccess } from '@/api/session'
 import { useSyncStream } from '@/api/syncStream'
 import { usePaged, useRequest } from '@/api/useApi'
 import EmptyState from '@/components/EmptyState.vue'
@@ -38,6 +39,7 @@ const expanded = ref<number | null>(null)
 const diagnostics = ref<Record<number, Awaited<ReturnType<typeof syncRunDiagnostics>>> >({})
 const diagnosticError = ref<Record<number, string>>({})
 async function showDiagnostics(run: (typeof visibleRuns.value)[number]): Promise<void> {
+  if (readonlyAccess.value !== false) return
   if (expanded.value === run.id) { expanded.value = null; return }
   expanded.value = run.id
   if (diagnostics.value[run.id]) return
@@ -86,9 +88,12 @@ async function select(): Promise<void> { await history.restart() }
         {{ queued }} sync queued; waiting for the scheduler to start.
       </p>
       <LoadingState v-if="history.loading.value" label="Loading sync history…" />
-      <ErrorState v-else-if="history.error.value" :problem="history.error.value" retryable @retry="history.restart()" />
+      <ErrorState v-else-if="history.error.value" :problem="history.error.value" retryable @retry="history.loadMore()" />
       <EmptyState v-else-if="grouped.length === 0" title="No sync attempts" detail="Attempts appear here once this provider runs." />
-      <ol v-else class="bento">
+      <p v-if="grouped.length > 0 && readonlyAccess !== false" class="muted">
+        Run diagnostics are available to operators only.
+      </p>
+      <ol v-if="grouped.length > 0" class="bento">
         <!-- The newest lineage is usually the one being diagnosed, so it takes the full row; the
              rest pair up two to a row rather than stacking beside a row-spanning tile. -->
         <li
@@ -99,9 +104,16 @@ async function select(): Promise<void> { await history.restart() }
           <h2>Sync lineage · {{ attempts.length }} attempt{{ attempts.length === 1 ? '' : 's' }}</h2>
           <ul class="plain">
             <li v-for="run in attempts" :key="run.id">
-              <button type="button" class="link-button" :aria-expanded="expanded === run.id" @click="showDiagnostics(run)">
+              <button
+                v-if="readonlyAccess === false"
+                type="button"
+                class="link-button"
+                :aria-expanded="expanded === run.id"
+                @click="showDiagnostics(run)"
+              >
                 <strong>{{ run.status }}</strong> · attempt {{ run.attempt }}
-              </button> ·
+              </button>
+              <strong v-else>{{ run.status }}</strong> · attempt {{ run.attempt }} ·
               <LoggedAt :at="run.started_at" precision="exact" /> ·
               {{ run.items_seen }} seen · {{ run.items_written }} written, {{ run.items_failed }} failed ·
               {{ run.checkpoint_count }} checkpoints
@@ -113,12 +125,14 @@ async function select(): Promise<void> { await history.restart() }
                 <template v-if="diagnostics[run.id]">
                   <h3>Full log</h3>
                   <pre>{{ diagnostics[run.id]!.log || 'No log output.' }}</pre>
-                  <h3>Raw responses</h3>
+                  <h3>Captured response metadata</h3>
                   <p v-if="diagnostics[run.id]!.raw_responses.length === 0" class="muted">No HTTP responses captured.</p>
-                  <details v-for="(response, responseIndex) in diagnostics[run.id]!.raw_responses" :key="responseIndex">
-                    <summary>{{ response.status }} {{ response.method }} {{ response.url }}</summary>
-                    <pre>{{ response.body }}</pre>
-                  </details>
+                  <ul v-else class="plain">
+                    <li v-for="(response, responseIndex) in diagnostics[run.id]!.raw_responses" :key="responseIndex">
+                      {{ response.status }} {{ response.method }} {{ response.url }}
+                    </li>
+                  </ul>
+                  <p class="muted">Response headers and bodies are withheld.</p>
                 </template>
               </div>
             </li>

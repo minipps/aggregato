@@ -12,16 +12,23 @@ import { usePaged } from '@/api/useApi'
 const queue = usePaged(() => resolutionQueue())
 const active = ref(0)
 const notice = ref('')
+const undoId = ref<number | undefined>()
 
 function current(): ResolutionItem | undefined { return queue.items.value[active.value] }
 async function decide(decision: 'linked' | 'created' | 'ignored', targetId?: string): Promise<void> {
-  const item = current(); if (!item || readonlyAccess.value) return
+  const item = current(); if (!item || readonlyAccess.value !== false) return
   const log = await decideResolution(item.id, decision, targetId)
   queue.items.value.splice(active.value, 1)
   active.value = Math.min(active.value, Math.max(0, queue.items.value.length - 1))
-  notice.value = `Decision saved. Undo: ${log.id}`
+  undoId.value = log.id
+  notice.value = 'Decision saved.'
 }
-async function undo(): Promise<void> { const id = Number(notice.value.split(': ')[1]); await undoMerge(id); notice.value = 'Decision undone. Reload the queue to review it again.' }
+async function undo(): Promise<void> {
+  if (readonlyAccess.value !== false || undoId.value === undefined) return
+  await undoMerge(undoId.value)
+  undoId.value = undefined
+  notice.value = 'Decision undone. Reload the queue to review it again.'
+}
 function keys(event: KeyboardEvent): void {
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
   const item = current(); if (!item) return
@@ -47,7 +54,7 @@ onUnmounted(() => window.removeEventListener('keydown', keys))
           </span>
           <h1>Resolution queue</h1>
         </div>
-        <p>↑/↓ or j/k selects an item<template v-if="!readonlyAccess"> · 1–9 links a candidate · c creates · i ignores</template></p>
+        <p>↑/↓ or j/k selects an item<template v-if="readonlyAccess === false"> · 1–9 links a candidate · c creates · i ignores</template></p>
       </section>
 
       <section class="card" aria-labelledby="queue-count">
@@ -58,14 +65,14 @@ onUnmounted(() => window.removeEventListener('keydown', keys))
       <section class="card" aria-labelledby="last-decision">
         <p id="last-decision" class="metric-label">Last decision</p>
         <p role="status">{{ notice || 'None yet.' }}</p>
-        <p v-if="notice.includes('Undo:')" class="actions">
+        <p v-if="readonlyAccess === false && undoId !== undefined" class="actions">
           <button type="button" @click="undo">Undo</button>
         </p>
       </section>
     </div>
 
     <LoadingState v-if="queue.loading.value" label="Loading resolution queue…" />
-    <ErrorState v-else-if="queue.error.value" :problem="queue.error.value" retryable @retry="queue.restart()" />
+    <ErrorState v-else-if="queue.error.value" :problem="queue.error.value" retryable @retry="queue.loadMore()" />
     <EmptyState v-else-if="!queue.items.value.length" title="Queue clear" detail="There are no identity decisions waiting for you." />
     <template v-else>
       <ol class="bento queue">
@@ -80,12 +87,12 @@ onUnmounted(() => window.removeEventListener('keydown', keys))
           <p class="muted">Proposed: {{ item.proposed }}</p>
           <ol class="candidates">
             <li v-for="(candidate, candidateIndex) in item.candidates" :key="candidate.id">
-              <button v-if="!readonlyAccess" type="button" @click="decide('linked', candidate.id)">Link {{ candidateIndex + 1 }}</button>
+              <button v-if="readonlyAccess === false" type="button" @click="decide('linked', candidate.id)">Link {{ candidateIndex + 1 }}</button>
               {{ candidate.label ?? candidate.name ?? candidate.id }}
               <span class="muted">— {{ candidate.reason }}</span>
             </li>
           </ol>
-          <p v-if="!readonlyAccess" class="actions">
+          <p v-if="readonlyAccess === false" class="actions">
             <button type="button" @click="decide('created')">Create separate {{ item.subject }}</button>
             <button type="button" @click="decide('ignored')">Ignore</button>
           </p>

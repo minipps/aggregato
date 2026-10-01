@@ -6,22 +6,27 @@
  * offered buttons that can only fail. Fetched once per page load and after signing in.
  */
 
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 
 import { session } from './client'
+import type { Session } from './types'
 
-export const readonlyAccess = ref(false)
+/** Unknown until the server confirms this browser's credential. */
+export const readonlyAccess = ref<boolean | undefined>(undefined)
+export const sessionInfo = shallowRef<Session | undefined>(undefined)
 
 /**
  * Refresh {@link readonlyAccess} from `GET /auth/session`.
  *
- * Never throws: an unauthenticated caller is already being routed to the login view by `request`,
- * and assuming full access on a failed probe costs nothing — the server still says no.
+ * Never throws. A failed probe leaves access unknown, so write controls stay hidden.
  */
 export async function loadSession(): Promise<void> {
   try {
-    readonlyAccess.value = (await session()).readonly
+    const current = await session()
+    sessionInfo.value = current
+    readonlyAccess.value = current.readonly
   } catch {
-    readonlyAccess.value = false
+    sessionInfo.value = undefined
+    readonlyAccess.value = undefined
   }
 }
