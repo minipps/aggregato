@@ -34,7 +34,9 @@ cd frontend && npm run test:unit -- src/components/__tests__/SchemaForm.spec.ts
 ```
 
 Migrations auto-apply at API startup (`aggregato/db/migrate.py`); `uv run alembic upgrade head` to run
-them alone. Release: `scripts/release.sh 0.1.2` — pushing the tag *is* the release.
+them alone. Release: `scripts/release.sh <version>` opens a version-bump PR; after merging and
+updating `main`, `scripts/release.sh --tag <version>` starts release CI. Publishing requires approval
+by `@minipps` in the `release` environment.
 
 ## Architecture
 

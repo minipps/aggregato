@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cut a release: bump the version files, verify release examples, commit, tag, push.
+# Prepare a version-bump PR; after merging it, use --tag to publish the reviewed commit.
 #
 # The tag is the release procedure (.github/workflows/release.yml) — pushing it runs the CI gates,
 # publishes a source archive and a GitHub release, and pushes multi-arch images to ghcr tagged
@@ -8,15 +8,20 @@
 # uv.lock, or the documented image markers, and that refusal happens *after* the tag is public, so it
 # has to be caught here instead.
 #
-# Everything before the push is local and reversible. The guards are the point: a release cut from a
-# stale main, or with an unrelated edit swept into the bump commit, ships something nobody reviewed.
+# Version bumps go through the same PR and CI requirements as every other change. Tagging only
+# accepts a clean main matching origin/main; the workflow also checks ancestry before running CI.
 set -eu
 
 usage() {
-    echo "usage: scripts/release.sh <version>    e.g. scripts/release.sh 0.1.1" >&2
+    echo "usage: scripts/release.sh [--tag] <version>    e.g. scripts/release.sh 1.0.1" >&2
     exit 2
 }
 
+mode=prepare
+if [ "${1:-}" = --tag ]; then
+    mode=tag
+    shift
+fi
 [ $# -eq 1 ] || usage
 version=$1
 # The image tags are derived by docker/metadata-action's semver patterns, which need three parts.
@@ -57,14 +62,68 @@ if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null ||
     exit 1
 fi
 
+# The release workflow's version gate, run here so a disagreement fails before the tag is public.
+verify_version() {
+python3 - "$version" <<'PY'
+import json
+import pathlib
+import sys
+import tomllib
+
+tag = sys.argv[1]
+project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
+packages = tomllib.loads(pathlib.Path("uv.lock").read_text())["package"]
+locked = next(p["version"] for p in packages if p["name"] == "aggregato")
+if {project, frontend, locked} != {tag}:
+    sys.exit(
+        f"release: v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}"
+    )
+expected_examples = {
+    pathlib.Path("README.md"): f"AGGREGATO_VERSION={tag}",
+    pathlib.Path("docker/compose.yml"): f"AGGREGATO_VERSION={tag}",
+}
+missing = [
+    str(path) for path, marker in expected_examples.items() if marker not in path.read_text()
+]
+if missing:
+    sys.exit(f"release: examples do not name v{tag}: {', '.join(missing)}")
+PY
+}
+
+if [ "$mode" = tag ]; then
+    verify_version
+    echo "Publishing $tag from reviewed main; GitHub will require your release approval."
+    printf 'Continue? [y/N] '
+    read -r reply
+    case "$reply" in
+        y | Y) ;;
+        *) exit 1 ;;
+    esac
+    git tag "$tag"
+    if ! git push --quiet origin "$tag"; then
+        git tag --delete "$tag" >/dev/null
+        exit 1
+    fi
+    echo "release: pushed $tag — https://github.com/minipps/aggregato/actions"
+    exit 0
+fi
+
+release_branch="release/$tag"
+if git show-ref --verify --quiet "refs/heads/$release_branch" ||
+    [ -n "$(git ls-remote --heads origin "refs/heads/$release_branch")" ]; then
+    echo "release: branch $release_branch already exists" >&2
+    exit 1
+fi
+
 # The preflight above is deliberately outside this transaction: it has not changed anything. From
 # here on, every failure must leave the worktree as it was before the bump, including failures after
-# the commit or local tag have been created.
+# the version-bump commit has been created.
 base_commit=$(git rev-parse HEAD)
 bump_started=1
 release_commit_created=0
-main_pushed=0
-tag_created=0
+branch_pushed=0
+branch_created=0
 release_complete=0
 abort_requested=0
 
@@ -85,13 +144,12 @@ rollback() {
             echo "release: could not restore the version files" >&2
         fi
 
-        if [ "$tag_created" -eq 1 ]; then
-            git tag --delete "$tag" >/dev/null 2>&1 ||
-                echo "release: could not remove local tag $tag" >&2
+        if [ "$branch_created" -eq 1 ]; then
+            git switch --quiet main
+            git branch --delete "$release_branch" >/dev/null
         fi
-
-        if [ "$main_pushed" -eq 1 ]; then
-            echo "release: main was pushed before the failure; the remote commit was not rolled back" >&2
+        if [ "$branch_pushed" -eq 1 ]; then
+            echo "release: $release_branch was pushed; the remote branch was not rolled back" >&2
         fi
         if [ "$abort_requested" -eq 1 ]; then
             echo "release: aborted, version files restored" >&2
@@ -103,6 +161,8 @@ rollback() {
     exit "$status"
 }
 trap rollback 0
+git switch --quiet -c "$release_branch"
+branch_created=1
 
 # --- Bump ---------------------------------------------------------------------------------------
 
@@ -188,43 +248,18 @@ for path, text in changed.items():
     path.write_text(text, encoding="utf-8")
 PY
 
-# The release workflow's version gate, run here so a disagreement fails before the tag is public.
-python3 - "$version" <<'PY'
-import json
-import pathlib
-import sys
-import tomllib
-
-tag = sys.argv[1]
-project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
-frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
-packages = tomllib.loads(pathlib.Path("uv.lock").read_text())["package"]
-locked = next(p["version"] for p in packages if p["name"] == "aggregato")
-if {project, frontend, locked} != {tag}:
-    sys.exit(
-        f"release: v{tag} disagrees: pyproject {project}, frontend {frontend}, uv.lock {locked}"
-    )
-expected_examples = {
-    pathlib.Path("README.md"): f"AGGREGATO_VERSION={tag}",
-    pathlib.Path("docker/compose.yml"): f"AGGREGATO_VERSION={tag}",
-}
-missing = [
-    str(path) for path, marker in expected_examples.items() if marker not in path.read_text()
-]
-if missing:
-    sys.exit(f"release: examples do not name v{tag}: {', '.join(missing)}")
-PY
+verify_version
 
 # --- Confirm, then publish ----------------------------------------------------------------------
 
 previous=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-echo "Releasing $tag${previous:+, $(git rev-list --count "$previous"..HEAD) commits since $previous}:"
+echo "Preparing $tag${previous:+, $(git rev-list --count "$previous"..HEAD) commits since $previous}:"
 echo
 git --no-pager diff --stat
 echo
 [ -n "$previous" ] && git --no-pager log --oneline --no-merges "$previous"..HEAD | sed 's/^/  /'
 echo
-echo "Pushing the tag publishes a GitHub release and ghcr images tagged $version, ${version%.*} and latest."
+echo "Opening a version-bump PR. Merge it after CI, then run scripts/release.sh --tag $version."
 printf 'Continue? [y/N] '
 read -r reply
 case "$reply" in
@@ -237,13 +272,10 @@ esac
 
 git commit --quiet -am "chore: release $version"
 release_commit_created=1
-# main before the tag: if the branch is protected, this fails while the tag is still local and the
-# only cleanup needed is `git reset --hard origin/main`.
-git push --quiet origin main
-main_pushed=1
-git tag "$tag"
-tag_created=1
-git push --quiet origin "$tag"
+git push --quiet --set-upstream origin "$release_branch"
+branch_pushed=1
+gh pr create --base main --head "$release_branch" --title "chore: release $version" \
+    --body "Bump versions, lockfiles, and image examples to $version. After CI passes and this PR is merged, update main and run scripts/release.sh --tag $version."
 release_complete=1
 
-echo "release: pushed $tag — https://github.com/minipps/aggregato/actions"
+echo "release: PR prepared; merge it before tagging $tag"

@@ -1,28 +1,45 @@
 name: Release
 
-# Tag-driven: `git tag v<version> && git push origin v<version>` is the whole release procedure.
+# Tag a merged version bump with scripts/release.sh --tag <version>, then approve publishing.
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Release tag belongs to main
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
   # The same gates a push to main runs, by reference rather than by copy. A tag that cannot pass CI
   # does not become a release.
   gates:
+    needs: preflight
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci.yml
 
   release:
     needs: gates
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           # `--generate-notes` diffs against the previous tag, so the tags have to be present.
           fetch-depth: 0
 
@@ -65,7 +82,7 @@ jobs:
         # GitHub's own generated source archives honour the same rules, so all three assets agree.
         run: |
           git archive --format=tar.gz --prefix="aggregato-${GITHUB_REF_NAME}/" \
-            -o "aggregato-${GITHUB_REF_NAME}.tar.gz" "${GITHUB_REF_NAME}"
+            -o "aggregato-${GITHUB_REF_NAME}.tar.gz" "$GITHUB_SHA"
           tar -tzf "aggregato-${GITHUB_REF_NAME}.tar.gz" | sed -n '1,40p'
 
       - name: Publish
@@ -85,6 +102,12 @@ jobs:
     # under a tag that has no release.
     needs: [gates, release]
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -96,15 +119,17 @@ jobs:
             suffix: -frontend
             file: docker/frontend.Dockerfile
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # arm64 is emulated, which makes the SPA stage slow — minutes, on a tag-only workflow. Worth
       # it: a self-hosted single-user service lands on Raspberry Pis and Apple silicon at least as
       # often as on amd64, and an operator there cannot build their way out of an amd64-only image.
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -112,7 +137,7 @@ jobs:
           password: ${{ github.token }}
 
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           # Lowercased by the action, which ghcr requires and a repository name does not guarantee.
           images: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
@@ -124,7 +149,7 @@ jobs:
             type=raw,value=latest
 
       - id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.file }}
@@ -142,7 +167,7 @@ jobs:
           provenance: mode=max
 
       - name: Attest image provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
           subject-digest: ${{ steps.build.outputs.digest }}
