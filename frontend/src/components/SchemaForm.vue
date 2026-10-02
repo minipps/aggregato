@@ -23,10 +23,10 @@ const properties = computed(() => Object.entries(props.schema.properties ?? {}))
 
 function resetValues(): void {
   values.value = Object.fromEntries(properties.value.map(([name, field]) => {
-    if (Object.prototype.hasOwnProperty.call(props.modelValue, name)) {
+    if (Object.hasOwn(props.modelValue, name)) {
       return [name, props.modelValue[name] as string | number | boolean | null]
     }
-    if (Object.prototype.hasOwnProperty.call(field, 'default')) {
+    if (Object.hasOwn(field, 'default')) {
       return [name, field.default as string | number | boolean | null]
     }
     const options = enumValues(field)

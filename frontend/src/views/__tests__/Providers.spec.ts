@@ -174,6 +174,22 @@ describe('Providers provider checks', () => {
     expect(wrapper.findAll('button').map((button) => button.text())).not.toContain('Check provider')
   })
 
+  it('sorts enabled providers first without changing the API result order', async () => {
+    const disabled = { ...mocks.provider, enabled: false }
+    const enabled = { ...mocks.secondProvider, enabled: true }
+    const response = Object.freeze([disabled, enabled])
+    mocks.providers.mockResolvedValueOnce(response)
+    const wrapper = mount(Providers)
+    await settle()
+
+    expect(wrapper.findAll('li.card h2').map((heading) => heading.text())).toEqual([
+      enabled.name,
+      disabled.name,
+    ])
+    expect(response.map((provider) => provider.id)).toEqual([disabled.id, enabled.id])
+    wrapper.unmount()
+  })
+
   it('stops checking after the provider view unmounts', async () => {
     vi.useFakeTimers()
     const pendingProvider = {

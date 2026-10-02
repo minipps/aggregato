@@ -21,7 +21,7 @@ All must be clean before anything merges. Warnings are errors.
 uv run ruff format --check . && uv run ruff check . && uv run ty check
 uv run lint-imports          # the decoupling contract — a merge gate, not a convention
 uv run pytest                # CI runs `-m "not bench"`; no test may touch the network
-cd frontend && npm run type-check && npm run test:unit
+cd frontend && npm run lint && npm run type-check && npm run test:unit
 ```
 
 Single test / subset:

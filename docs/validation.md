@@ -18,9 +18,10 @@ export AGGREGATO_TOKEN=dev-token AGGREGATO_DATA=./data
 uv run python -m aggregato.worker
 ```
 
-For frontend work, install Node 22 and run from `frontend/`:
+For frontend work, install Node 26 (CI and Docker use 26.10.0) and run from `frontend/`:
 
 ```bash
+npm install --global npm@12.2.0
 npm ci
 npm run dev
 ```
@@ -40,9 +41,47 @@ uv run pytest -m "not bench"
 ```bash
 cd frontend
 npm ci
+npm run lint
 npm run type-check
 npm run test:unit
 npm run build
+```
+
+Frontend linting uses [E18E's recommended rules](https://github.com/e18e/eslint-plugin) for
+JavaScript, TypeScript, and Vue scripts, including tests. It also checks `package.json` for
+replaceable dependencies. Run `npm run lint:fix` to apply automatic fixes. TypeScript stays on
+6.0.3 because the current TypeScript ESLint parser supports versions below 6.1; upgrade it when
+the parser and Vue tooling support TypeScript 7. The parser's
+[supported dependency versions](https://typescript-eslint.io/users/dependency-versions/) explain
+this constraint. ES2023 built-ins follow Vite's default browser target.
+
+For dependency maintenance, run these from `frontend/`:
+
+```bash
+npm outdated
+npm audit
+npx @e18e/cli@0.7.0 analyze --json
+npx @e18e/cli@0.7.0 migrate --all --dry-run --include 'src/**/*.{ts,js,vue}'
+```
+
+The E18E adoption ran package migrations and all web-feature codemods, extracting Vue scripts
+before trying the latter. No direct dependency needed replacement. Reviewed `Object.hasOwn` and
+array `toSorted` conversions were applied; the codemod's invalid `Set.toSorted` conversion was
+rejected. The CLI reports duplicate transitive versions required by incompatible dependency
+ranges; these are retained rather than forced through overrides. Its advisory warnings make
+`analyze` exit nonzero; `npm run lint` is the enforced CI gate.
+
+The production build's total individually gzipped output measured 79,799 bytes before this
+refresh and 79,858 bytes after it (+0.07%), within the 10% regression limit. Measure after
+`npm run build` with:
+
+```bash
+python - <<'PY'
+import gzip
+from pathlib import Path
+
+print(sum(len(gzip.compress(p.read_bytes())) for p in Path('dist').rglob('*') if p.is_file()))
+PY
 ```
 
 To check one Python test, pass its path to pytest. Provider contract checks can be run with

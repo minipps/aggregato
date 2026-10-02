@@ -52,6 +52,21 @@ describe('SchemaForm', () => {
     })
   })
 
+  it('uses own model values and defaults even when hasOwnProperty is shadowed', () => {
+    const modelValue = Object.create({ visibility: 'private' })
+    modelValue.include_notes = true
+    modelValue.hasOwnProperty = 'shadowed'
+    const wrapper = mount(SchemaForm, {
+      props: { schema, modelValue },
+    })
+
+    expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toMatchObject({
+      visibility: 'public',
+      include_notes: true,
+      score: null,
+    })
+  })
+
   it('emits typed changes for a checkbox', async () => {
     const wrapper = mount(SchemaForm, { props: { schema } })
     await wrapper.get('input[type="checkbox"]').setValue(true)

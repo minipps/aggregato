@@ -15,7 +15,7 @@
 - [ ] `uv run ruff format --check . && uv run ruff check . && uv run ty check`
 - [ ] `uv run lint-imports`
 - [ ] `uv run pytest`, including `tests/conformance/` with any provider registered
-- [ ] `cd frontend && npm run type-check && npm run test:unit` (if frontend changes)
+- [ ] `cd frontend && npm run lint && npm run type-check && npm run test:unit` (if frontend changes)
 
 ## Data and dependencies
 
