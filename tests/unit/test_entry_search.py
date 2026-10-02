@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.config import load_config
@@ -20,7 +20,7 @@ NOW = datetime(2026, 9, 30, 12, tzinfo=UTC)
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
     data = tmp_path / "data"
     data.mkdir()
     app = create_app(
@@ -92,14 +92,16 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
 
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as value,
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
+        ) as value,
     ):
         value.headers["Authorization"] = f"Bearer {TOKEN}"
         yield value
 
 
 async def test_entries_search_unions_titles_and_reviews_across_keyset_pages(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     first = await client.get("/api/v1/entries", params={"q": "echo", "limit": 1})
 

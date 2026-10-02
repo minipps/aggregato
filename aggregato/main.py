@@ -13,10 +13,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import RequestResponseEndpoint
 
 from aggregato.api.deps import CSRF_HEADER, register_auth, require_auth
 from aggregato.api.errors import register_error_handlers
@@ -126,7 +127,7 @@ def _add_security_headers(app: FastAPI) -> None:
     """Set baseline browser isolation headers on API, SPA, and cached media responses."""
 
     @app.middleware("http")
-    async def security_headers(request, call_next):  # type: ignore[no-untyped-def]
+    async def security_headers(request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")

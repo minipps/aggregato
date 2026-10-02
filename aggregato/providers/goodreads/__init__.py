@@ -7,11 +7,11 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
-from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
-from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from aggregato.domain.enums import (
@@ -43,6 +43,9 @@ from aggregato.domain.models import (
 from aggregato.domain.ratings import RatingScale
 from aggregato.providers.base import ProviderContext
 from aggregato.providers.errors import AuthError, BlockedError, ProviderError, StructureChangedError
+
+if TYPE_CHECKING:
+    from xml.etree.ElementTree import Element
 
 GOODREADS_HOSTS = frozenset({"goodreads.com", "www.goodreads.com"})
 REVIEW_ID_RE = re.compile(r"/review/show/(\d+)(?:[/?#]|$)")
@@ -237,7 +240,7 @@ def _items(payload: bytes) -> list[dict[str, str]]:
     return [_rss_row(item) for item in nodes]
 
 
-def _rss_row(item: ET.Element) -> dict[str, str]:
+def _rss_row(item: Element) -> dict[str, str]:
     book_id = _xml_text(item, "book_id")
     title = _xml_text(item, "title")
     author = _xml_text(item, "author_name")
@@ -268,7 +271,7 @@ def _rss_row(item: ET.Element) -> dict[str, str]:
     }
 
 
-def _xml_text(element: ET.Element | None, name: str) -> str:
+def _xml_text(element: Element | None, name: str) -> str:
     if element is None:
         return ""
     value = element.findtext(name)

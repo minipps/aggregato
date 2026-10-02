@@ -20,6 +20,6 @@ artwork are all as the server sends them, because identifier extraction  and
 | `credentials-invalid.json` | the body Koito returns with HTTP 401 (group 7) |
 | `structure-changed.json` | a response whose shape is genuinely wrong — `listens` where `items` belongs — which must raise `StructureChangedError` rather than read as an empty history |
 
-The conformance registration serves `page-*.json` through an `httpx.MockTransport` keyed on the `to`
+The conformance registration serves `page-*.json` through an `httpx2.MockTransport` keyed on the `to`
 query parameter, so replaying them **checks** the backwards paging rather than just handing back
 pages in call order.

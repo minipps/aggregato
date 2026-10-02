@@ -52,7 +52,7 @@ It MUST NOT:
 
 Bundled providers must use `ctx.http`. That host client applies the rate
 `max(your declared rate, the floor for your acquisition mode)`, allows one in-flight request per host
-for scrapers, and honors `Retry-After`. Providers cannot import `httpx` directly. Python providers
+for scrapers, and honors `Retry-After`. Providers cannot import `httpx2` directly. Python providers
 are not sandboxed, so inspect drop-in source before enabling it.
 
 A scraping provider must ship recorded HTML fixtures, including one with a changed structure that

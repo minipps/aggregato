@@ -1,8 +1,8 @@
 """Host-managed HTTP client for provider requests.
 
 This module is the only provider-tree module exempted from the import-linter rule against importing
-``httpx``. Bundled providers are checked by that rule and conformance tests; drop-ins are unreviewed
-Python code and are not sandboxed. Provider code must use the client supplied as
+``httpx2``. Bundled providers are checked by that rule and conformance tests; drop-ins are
+unreviewed Python code and are not sandboxed. Provider code must use the client supplied as
 ``ProviderContext.http``:
 
 * a token bucket at ``max(provider_declared, host_floor_for_acquisition_mode)`` — a ``max``, never a
@@ -34,7 +34,7 @@ from types import TracebackType
 from typing import BinaryIO, cast
 from weakref import WeakKeyDictionary
 
-import httpx
+import httpx2
 
 from aggregato import __version__
 from aggregato.domain.clock import SYSTEM_CLOCK
@@ -309,7 +309,7 @@ class PolitenessPolicy:
 
 
 class PoliteClient:
-    """An ``httpx.AsyncClient`` wrapped in the host's pacing, retries, and identity.
+    """An ``httpx2.AsyncClient`` wrapped in the host's pacing, retries, and identity.
 
     The provider calls ``get``/``post``/``request`` on this exactly as it would on the real client.
     It cannot reach the underlying client to bypass the wrapper, and it cannot change the policy the
@@ -320,11 +320,11 @@ class PoliteClient:
         self,
         policy: PolitenessPolicy,
         *,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
         host_state_dir: Path | None = None,
         rng: random.Random | None = None,
         now: Callable[[], datetime] | None = None,
-        on_response: Callable[[httpx.Response], None] | None = None,
+        on_response: Callable[[httpx2.Response], None] | None = None,
     ) -> None:
         self._policy = policy
         self._limiter = RateLimiter(policy.effective_interval_seconds)
@@ -335,10 +335,10 @@ class PoliteClient:
         self._rng = rng or random.Random()  # noqa: S311 - jitter, not cryptography
         self._now = now or SYSTEM_CLOCK.now
         self._on_response = on_response
-        self._client = client or httpx.AsyncClient(
+        self._client = client or httpx2.AsyncClient(
             headers={"User-Agent": USER_AGENT},
             follow_redirects=False,
-            timeout=httpx.Timeout(30.0, connect=10.0),
+            timeout=httpx2.Timeout(30.0, connect=10.0),
         )
 
     async def __aenter__(self) -> PoliteClient:
@@ -355,7 +355,7 @@ class PoliteClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    def _host_state(self, url: httpx.URL) -> _HostState:
+    def _host_state(self, url: httpx2.URL) -> _HostState:
         host = url.host or ""
         key = (host, self._policy.max_concurrent_per_host)
         loop = asyncio.get_running_loop()
@@ -371,13 +371,13 @@ class PoliteClient:
             state.limiter.ensure_minimum(self._policy.effective_interval_seconds)
         return state
 
-    async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+    async def request(self, method: str, url: str, **kwargs: object) -> httpx2.Response:
         """Perform one request under the host's pacing and retry rules.
 
         Args:
             method: HTTP method.
             url: Absolute URL.
-            **kwargs: Passed through to ``httpx``. An ``ETag`` or ``If-Modified-Since`` header the
+            **kwargs: Passed through to ``httpx2``. An ``ETag`` or ``If-Modified-Since`` header the
                 provider sets is passed through untouched, so an unchanged page costs a 304.
 
         Returns:
@@ -390,7 +390,7 @@ class PoliteClient:
             RateLimited: Still 429 after ``MAX_ATTEMPTS``, carrying ``Retry-After`` when the
                 platform sent one, so the scheduler can lengthen the interval for the whole
                 session.
-            httpx.TransportError: The transport failed on every attempt.
+            httpx2.TransportError: The transport failed on every attempt.
         """
         unexpected = set(kwargs) - _ALLOWED_REQUEST_KWARGS
         if unexpected:
@@ -399,7 +399,7 @@ class PoliteClient:
         raw_headers = kwargs.get("headers")
         if raw_headers is not None and not isinstance(raw_headers, Mapping):
             raise TypeError("headers must be a mapping")
-        headers = httpx.Headers(cast(Mapping[str, str] | None, raw_headers))
+        headers = httpx2.Headers(cast(Mapping[str, str] | None, raw_headers))
         # A plugin may add conditional or authorization headers, but it cannot impersonate a
         # different client or remove the contact identity the host owns.
         headers["User-Agent"] = USER_AGENT
@@ -407,10 +407,10 @@ class PoliteClient:
         request_kwargs["headers"] = headers
         target = _validated_url(url)
         redirects = 0
-        last_transport_error: httpx.TransportError | None = None
+        last_transport_error: httpx2.TransportError | None = None
 
         while True:
-            response: httpx.Response | None = None
+            response: httpx2.Response | None = None
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 state = self._host_state(target)
                 async with state.semaphore:
@@ -434,9 +434,9 @@ class PoliteClient:
                             response = await self._client.request(
                                 method,
                                 target,
-                                **request_kwargs,  # type: ignore[arg-type]
+                                **request_kwargs,  # ty: ignore[invalid-argument-type] - HTTPX2 validates values
                             )
-                        except httpx.TransportError as exc:
+                        except httpx2.TransportError as exc:
                             last_transport_error = exc
                         else:
                             last_transport_error = None
@@ -499,10 +499,10 @@ class PoliteClient:
         # future edit to the loop bounds fails loudly instead of returning None.
         raise AssertionError(f"retry loop fell through for {url}", last_transport_error)
 
-    async def get(self, url: str, **kwargs: object) -> httpx.Response:
+    async def get(self, url: str, **kwargs: object) -> httpx2.Response:
         return await self.request("GET", url, **kwargs)
 
-    async def post(self, url: str, **kwargs: object) -> httpx.Response:
+    async def post(self, url: str, **kwargs: object) -> httpx2.Response:
         return await self.request("POST", url, **kwargs)
 
     async def _sleep_before_retry(self, attempt: int, retry_after: float | None) -> None:
@@ -520,7 +520,7 @@ class PoliteClient:
 
 
 def _parse_retry_after(
-    response: httpx.Response, *, now: Callable[[], datetime] | None = None
+    response: httpx2.Response, *, now: Callable[[], datetime] | None = None
 ) -> float | None:
     """Parse ``Retry-After`` as delta-seconds or an HTTP-date."""
     raw = response.headers.get("Retry-After")
@@ -542,14 +542,14 @@ def _parse_retry_after(
     return max(0.0, seconds)
 
 
-def _validated_url(value: str) -> httpx.URL:
+def _validated_url(value: str) -> httpx2.URL:
     """Allow only ordinary HTTP(S) URLs, including every manually followed redirect."""
-    target = httpx.URL(value)
+    target = httpx2.URL(value)
     if target.scheme not in {"http", "https"} or not target.host:
         raise TransportError("host HTTP requests require an absolute http(s) URL")
     return target
 
 
-def _same_origin(left: httpx.URL, right: httpx.URL) -> bool:
+def _same_origin(left: httpx2.URL, right: httpx2.URL) -> bool:
     """Return whether redirect credentials remain on the same scheme, host, and port."""
     return left.scheme == right.scheme and left.host == right.host and left.port == right.port

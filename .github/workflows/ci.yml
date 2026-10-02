@@ -30,7 +30,7 @@ jobs:
       - name: Lint
         run: uv run ruff check .
       - name: Types
-        run: uv run mypy
+        run: uv run ty check
       - name: Decoupling contract
         run: uv run lint-imports
       - name: Documentation links

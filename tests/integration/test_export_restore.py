@@ -13,7 +13,7 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.engine import make_url
@@ -42,26 +42,26 @@ UPLOAD_NAME = "fixture.xml"
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
     data = tmp_path / "source"
     data.mkdir()
     app = create_app(load_config({"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_DATA": str(data)}))
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AUTH
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test", headers=AUTH
         ) as session,
     ):
         yield session
 
 
-def _app(client: httpx.AsyncClient):
-    transport = client._transport_for_url(httpx.URL("http://test/"))
-    assert isinstance(transport, httpx.ASGITransport)
+def _app(client: httpx2.AsyncClient):
+    transport = client._transport_for_url(httpx2.URL("http://test/"))
+    assert isinstance(transport, httpx2.ASGITransport)
     return transport.app
 
 
-async def _import_fixture(client: httpx.AsyncClient) -> None:
+async def _import_fixture(client: httpx2.AsyncClient) -> None:
     configured = await client.put(
         "/api/v1/providers/fixture/config",
         json={"path": str(EXPORT)},
@@ -82,7 +82,7 @@ async def _import_fixture(client: httpx.AsyncClient) -> None:
 
 
 async def test_export_restores_browsable_archive_without_syncs(
-    client: httpx.AsyncClient, tmp_path: Path
+    client: httpx2.AsyncClient, tmp_path: Path
 ) -> None:
     await _import_fixture(client)
     exported = await client.get("/api/v1/export")
@@ -105,8 +105,8 @@ async def test_export_restores_browsable_archive_without_syncs(
     app = create_app(restored)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
             base_url="http://restored",
             headers={"Authorization": "Bearer fresh-token"},
         ) as fresh,
@@ -153,12 +153,12 @@ async def test_export_requires_operator_for_public_and_readonly_gets(tmp_path: P
     )
     app = create_app(config)
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
         ) as public:
             assert (await public.get("/api/v1/export")).status_code == 403
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
             base_url="http://test",
             headers={"Authorization": "Bearer readonly-export-token"},
         ) as readonly:
@@ -166,7 +166,7 @@ async def test_export_requires_operator_for_public_and_readonly_gets(tmp_path: P
 
 
 async def test_export_reports_unsupported_database_as_a_problem(
-    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: httpx2.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = _app(client)
     config = app.state.config.model_copy(
@@ -188,8 +188,8 @@ async def test_in_memory_sqlite_export_returns_documented_problem(tmp_path: Path
     app = create_app(config)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
             base_url="http://test",
             headers=AUTH,
         ) as client,
@@ -202,7 +202,7 @@ async def test_in_memory_sqlite_export_returns_documented_problem(tmp_path: Path
 
 
 async def test_export_removes_credentials_from_every_archive_member(
-    client: httpx.AsyncClient, tmp_path: Path
+    client: httpx2.AsyncClient, tmp_path: Path
 ) -> None:
     app = _app(client)
     configured = await client.put(
@@ -370,7 +370,7 @@ def test_failed_and_repeated_archive_builds_clean_up(
             archive.unlink(missing_ok=True)
 
 
-async def test_settings_report_storage_and_disable_image_cache(client: httpx.AsyncClient) -> None:
+async def test_settings_report_storage_and_disable_image_cache(client: httpx2.AsyncClient) -> None:
     response = await client.get("/api/v1/settings")
     assert response.status_code == 200
     assert response.json()["backup_supported"] is True

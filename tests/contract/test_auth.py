@@ -2,7 +2,7 @@
 
 The app assembled here is the one ``main.py`` builds: the app-level ``require_auth`` dependency,
 the real error handlers, the real ``POST /auth/session``, and two throwaway routes standing in for
-every other endpoint. Driven in-process through ``httpx.ASGITransport``, over a temp-file SQLite
+every other endpoint. Driven in-process through ``httpx2.ASGITransport``, over a temp-file SQLite
 database, so the autouse socket blocker in ``tests/conftest.py`` is satisfied.
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 from fastapi import Depends, FastAPI
 from sqlalchemy import func, select
@@ -83,13 +83,13 @@ async def app(engine: AsyncEngine, data_dir: Path) -> FastAPI:
 
 
 @pytest.fixture
-async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+async def client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://t") as c:
         yield c
 
 
-def _assert_problem(response: httpx.Response, status: int) -> None:
+def _assert_problem(response: httpx2.Response, status: int) -> None:
     assert response.status_code == status
     assert response.headers["content-type"].startswith(PROBLEM_MEDIA_TYPE)
     body = response.json()
@@ -102,24 +102,24 @@ def _assert_problem(response: httpx.Response, status: int) -> None:
     [("GET", "/probe"), ("POST", "/probe"), ("POST", "/auth/session")],
 )
 async def test_no_endpoint_is_reachable_unauthenticated(
-    client: httpx.AsyncClient, method: str, path: str
+    client: httpx2.AsyncClient, method: str, path: str
 ) -> None:
     """: the default remains authenticated, and no 401 escapes as FastAPI's default shape."""
     _assert_problem(await client.request(method, path), 401)
 
 
-async def test_cached_image_reads_without_credentials(client: httpx.AsyncClient) -> None:
+async def test_cached_image_reads_without_credentials(client: httpx2.AsyncClient) -> None:
     """Covers are embeddable in an <img>, which carries no bearer header ."""
     response = await client.get(f"/media/image/{'a' * 64}")
     assert response.status_code == 200
 
 
-async def test_the_image_exemption_is_reads_only(client: httpx.AsyncClient) -> None:
+async def test_the_image_exemption_is_reads_only(client: httpx2.AsyncClient) -> None:
     _assert_problem(await client.post(f"/media/image/{'a' * 64}"), 401)
 
 
 async def test_public_readonly_mode_allows_reads_but_not_writes(
-    client: httpx.AsyncClient, app: FastAPI, data_dir: Path
+    client: httpx2.AsyncClient, app: FastAPI, data_dir: Path
 ) -> None:
     register_auth(
         app,
@@ -144,17 +144,17 @@ async def test_public_readonly_mode_allows_reads_but_not_writes(
     _assert_problem(await client.post("/auth/session"), 401)
 
 
-async def test_valid_bearer_authenticates(client: httpx.AsyncClient) -> None:
+async def test_valid_bearer_authenticates(client: httpx2.AsyncClient) -> None:
     response = await client.get("/probe", headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 200
     assert response.json() == {"via": "bearer"}
 
 
-async def test_wrong_bearer_is_rejected(client: httpx.AsyncClient) -> None:
+async def test_wrong_bearer_is_rejected(client: httpx2.AsyncClient) -> None:
     _assert_problem(await client.get("/probe", headers={"Authorization": "Bearer nope"}), 401)
 
 
-async def test_bearer_differing_only_in_length_is_rejected(client: httpx.AsyncClient) -> None:
+async def test_bearer_differing_only_in_length_is_rejected(client: httpx2.AsyncClient) -> None:
     """A prefix of the real token must not pass — the comparison is constant-time, not a prefix."""
     for candidate in (TOKEN[:-1], TOKEN + "x"):
         _assert_problem(
@@ -162,7 +162,7 @@ async def test_bearer_differing_only_in_length_is_rejected(client: httpx.AsyncCl
         )
 
 
-async def test_session_exchange_sets_httponly_cookie(client: httpx.AsyncClient) -> None:
+async def test_session_exchange_sets_httponly_cookie(client: httpx2.AsyncClient) -> None:
     response = await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 204
     session_cookie = next(
@@ -179,8 +179,8 @@ async def test_session_exchange_sets_httponly_cookie(client: httpx.AsyncClient) 
 async def test_session_exchange_marks_cookies_secure_over_https(
     app: FastAPI,
 ) -> None:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="https://t") as secure_client:
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="https://t") as secure_client:
         response = await secure_client.post(
             "/auth/session", headers={"Authorization": f"Bearer {TOKEN}"}
         )
@@ -189,7 +189,7 @@ async def test_session_exchange_marks_cookies_secure_over_https(
 
 
 async def test_concurrent_session_issuance_keeps_the_active_cap(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -216,36 +216,36 @@ async def test_postgres_session_issuance_uses_a_transaction_lock() -> None:
     assert "pg_advisory_xact_lock" in str(statement)
 
 
-async def test_cookie_authenticates_a_get(client: httpx.AsyncClient) -> None:
+async def test_cookie_authenticates_a_get(client: httpx2.AsyncClient) -> None:
     await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     response = await client.get("/probe")
     assert response.status_code == 200
     assert response.json() == {"via": "cookie"}
 
 
-async def test_cookie_write_without_csrf_is_rejected(client: httpx.AsyncClient) -> None:
+async def test_cookie_write_without_csrf_is_rejected(client: httpx2.AsyncClient) -> None:
     await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     _assert_problem(await client.post("/probe"), 403)
 
 
-async def test_cookie_write_with_csrf_succeeds(client: httpx.AsyncClient) -> None:
+async def test_cookie_write_with_csrf_succeeds(client: httpx2.AsyncClient) -> None:
     await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     response = await client.post("/probe", headers={CSRF_HEADER: client.cookies[CSRF_COOKIE]})
     assert response.status_code == 200
 
 
-async def test_cookie_write_with_wrong_csrf_is_rejected(client: httpx.AsyncClient) -> None:
+async def test_cookie_write_with_wrong_csrf_is_rejected(client: httpx2.AsyncClient) -> None:
     await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     _assert_problem(await client.post("/probe", headers={CSRF_HEADER: "forged"}), 403)
 
 
-async def test_bearer_write_needs_no_csrf(client: httpx.AsyncClient) -> None:
+async def test_bearer_write_needs_no_csrf(client: httpx2.AsyncClient) -> None:
     """A browser never attaches a bearer token by itself, so there is nothing to forge ."""
     response = await client.post("/probe", headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 200
 
 
-async def test_expired_session_is_rejected(client: httpx.AsyncClient, engine: AsyncEngine) -> None:
+async def test_expired_session_is_rejected(client: httpx2.AsyncClient, engine: AsyncEngine) -> None:
     session_id = "expired-session-id"
     past = datetime.now(UTC) - timedelta(days=1)
     async with transaction(engine) as conn:
@@ -263,7 +263,7 @@ async def test_expired_session_is_rejected(client: httpx.AsyncClient, engine: As
 
 
 async def test_rotating_the_token_invalidates_an_existing_session(
-    client: httpx.AsyncClient, app: FastAPI, data_dir: Path
+    client: httpx2.AsyncClient, app: FastAPI, data_dir: Path
 ) -> None:
     """The whole reason sessions live in the database and carry a token fingerprint ."""
     await client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
@@ -306,25 +306,25 @@ async def readonly_app(engine: AsyncEngine, app: FastAPI, data_dir: Path) -> Fas
 
 
 @pytest.fixture
-async def readonly_client(readonly_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=readonly_app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+async def readonly_client(readonly_app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
+    transport = httpx2.ASGITransport(app=readonly_app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://t") as c:
         yield c
 
 
-async def test_readonly_token_reads(readonly_client: httpx.AsyncClient) -> None:
+async def test_readonly_token_reads(readonly_client: httpx2.AsyncClient) -> None:
     response = await readonly_client.get("/probe", headers={"Authorization": f"Bearer {READONLY}"})
     assert response.status_code == 200
     assert response.json() == {"via": "bearer"}
 
 
-async def test_readonly_token_cannot_write(readonly_client: httpx.AsyncClient) -> None:
+async def test_readonly_token_cannot_write(readonly_client: httpx2.AsyncClient) -> None:
     _assert_problem(
         await readonly_client.post("/probe", headers={"Authorization": f"Bearer {READONLY}"}), 403
     )
 
 
-async def test_readonly_token_reports_itself(readonly_client: httpx.AsyncClient) -> None:
+async def test_readonly_token_reports_itself(readonly_client: httpx2.AsyncClient) -> None:
     """What the SPA reads to render itself read-only."""
     response = await readonly_client.get(
         "/auth/session", headers={"Authorization": f"Bearer {READONLY}"}
@@ -332,13 +332,13 @@ async def test_readonly_token_reports_itself(readonly_client: httpx.AsyncClient)
     assert response.json() == {"via": "bearer", "readonly": True}
 
 
-async def test_full_token_is_not_readonly(client: httpx.AsyncClient) -> None:
+async def test_full_token_is_not_readonly(client: httpx2.AsyncClient) -> None:
     response = await client.get("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.json() == {"via": "bearer", "readonly": False}
 
 
 async def test_readonly_session_cookie_reads_but_cannot_write(
-    readonly_client: httpx.AsyncClient,
+    readonly_client: httpx2.AsyncClient,
 ) -> None:
     """The SPA path: the read-only token buys a cookie, and the cookie is read-only too (
     forbids keeping the token in page source, so the exchange has to be allowed)."""
@@ -360,7 +360,7 @@ async def test_readonly_session_cookie_reads_but_cannot_write(
     )
 
 
-async def test_full_session_cookie_still_writes(readonly_client: httpx.AsyncClient) -> None:
+async def test_full_session_cookie_still_writes(readonly_client: httpx2.AsyncClient) -> None:
     """Configuring a read-only token must not restrict the real one's session."""
     await readonly_client.post("/auth/session", headers={"Authorization": f"Bearer {TOKEN}"})
     session = await readonly_client.get("/auth/session")
@@ -372,7 +372,7 @@ async def test_full_session_cookie_still_writes(readonly_client: httpx.AsyncClie
 
 
 async def test_readonly_token_is_not_accepted_when_unconfigured(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """The default config has no read-only token, so that value is just a wrong token."""
     _assert_problem(

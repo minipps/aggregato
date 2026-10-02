@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from aggregato.config import load_config
 from aggregato.db.engine import transaction
@@ -37,7 +37,9 @@ async def test_raw_run_diagnostics_and_failure_payloads_require_operator(tmp_pat
 
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
+        ) as client,
     ):
         async with transaction(app.state.engine) as conn:
             result = await conn.execute(

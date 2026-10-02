@@ -12,7 +12,7 @@
 
 - [ ] New behaviour has a deterministic test that failed before this change
 - [ ] Fixtures are recorded, redacted, and contain no credentials (if applicable)
-- [ ] `uv run ruff format --check . && uv run ruff check . && uv run mypy`
+- [ ] `uv run ruff format --check . && uv run ruff check . && uv run ty check`
 - [ ] `uv run lint-imports`
 - [ ] `uv run pytest`, including `tests/conformance/` with any provider registered
 - [ ] `cd frontend && npm run type-check && npm run test:unit` (if frontend changes)

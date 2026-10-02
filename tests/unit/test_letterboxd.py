@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.domain.enums import FetchMode
@@ -19,7 +19,7 @@ _ACTIVITY_RSS = Path("tests/fixtures/letterboxd/activity.rss").read_bytes()
 
 def _ctx(respond: object) -> ProviderContext:
     return ProviderContext(
-        http=httpx.AsyncClient(transport=httpx.MockTransport(respond)),  # type: ignore[arg-type]
+        http=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),  # type: ignore[arg-type]
         config=LetterboxdConfig(username="example-user"),
         secrets={},
         log=logging.getLogger(__name__),
@@ -55,9 +55,9 @@ async def test_rss_is_refetched_on_every_automatic_poll() -> None:
     """A previous complete RSS snapshot must not disable subsequent scheduled refreshes."""
     requests: list[str] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         requests.append(str(request.url))
-        return httpx.Response(200, content=_ACTIVITY_RSS)
+        return httpx2.Response(200, content=_ACTIVITY_RSS)
 
     provider = LetterboxdProvider()
     first = [item async for item in provider.fetch(_ctx(respond), None, FetchMode.INCREMENTAL)]

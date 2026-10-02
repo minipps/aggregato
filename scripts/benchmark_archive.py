@@ -24,7 +24,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 from sqlalchemy import create_engine as create_sync_engine
 from sqlalchemy import func, insert, select, update
 
@@ -92,8 +92,8 @@ async def _measure_api(database: Path, samples: int) -> dict[str, Any]:
 
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
             base_url="http://benchmark",
             headers={"Authorization": f"Bearer {TOKEN}"},
         ) as client,
@@ -321,7 +321,7 @@ def _environment() -> dict[str, Any]:
         "host_ram_mib": round(int(memory) / 1024) if memory else None,
         "versions": {
             package: version(package)
-            for package in ("SQLAlchemy", "aiosqlite", "fastapi", "httpx", "pydantic")
+            for package in ("SQLAlchemy", "aiosqlite", "fastapi", "httpx2", "pydantic")
         },
     }
 

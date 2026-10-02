@@ -16,7 +16,7 @@ from typing import Final
 from urllib.parse import SplitResult, urljoin, urlsplit
 from weakref import WeakKeyDictionary
 
-import httpx
+import httpx2
 import puremagic
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -49,7 +49,7 @@ def url_hash(url: str) -> str:
     return sha256(url.encode()).hexdigest()
 
 
-def image_origin(url: str | httpx.URL) -> str:
+def image_origin(url: str | httpx2.URL) -> str:
     """Return the normalized ``scheme://host:port`` origin for an image source.
 
     The API uses this for the narrow exception to the private-address block: an operator may
@@ -121,7 +121,7 @@ async def cached_image(
             path, content_type, bytes_hash, size_bytes = await _fetch_and_store(
                 row.source_url, data_dir, allowed_origins=allowed_origins
             )
-        except (httpx.HTTPError, OSError, TimeoutError, UnsafeImageURL, ValueError):
+        except (httpx2.HTTPError, OSError, TimeoutError, UnsafeImageURL, ValueError):
             failed_at = now or clock.now()
             async with transaction(engine) as conn:
                 await conn.execute(
@@ -158,7 +158,7 @@ async def _fetch_and_store(
 ) -> tuple[Path, str, str, int]:
     """Fetch one source through explicit, validated redirects and atomically store its bytes."""
     current_url = source_url
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         follow_redirects=False,
         timeout=15,
         trust_env=False,
@@ -190,7 +190,7 @@ async def _fetch_and_store(
 
 
 async def _validate_url_and_host(
-    url: str | httpx.URL, *, allowed_origins: Collection[str] = ()
+    url: str | httpx2.URL, *, allowed_origins: Collection[str] = ()
 ) -> str:
     parsed = _parse_url(url)
     # DNS is blocking, but it must not run on the API loop. A daemon thread avoids making an
@@ -223,7 +223,7 @@ def _finish_resolution(
         future.set_exception(error)
 
 
-def _parse_url(url: str | httpx.URL) -> SplitResult:
+def _parse_url(url: str | httpx2.URL) -> SplitResult:
     raw = str(url)
     if len(raw) > 2048 or any(ord(char) < 0x20 for char in raw):
         raise UnsafeImageURL("image URL is malformed")
@@ -269,7 +269,7 @@ def _validate_resolved_host(parsed: SplitResult, *, allowed_origins: Collection[
             raise UnsafeImageURL("image URL resolves to a non-public address")
     if not found:
         raise UnsafeImageURL("image URL host has no addresses")
-    # Returning the validated literal is important. HTTPX's resolver is otherwise free to resolve
+    # Returning the validated literal is important. HTTPX2's resolver is otherwise free to resolve
     # the hostname again after this check, which creates a DNS rebinding/TOCTOU window.
     return str(found[0])
 
@@ -285,11 +285,11 @@ def _origin(parsed: SplitResult) -> str:
 
 
 def _pin_request(
-    url: str | httpx.URL, address: str
-) -> tuple[httpx.URL, dict[str, str], dict[str, str]]:
+    url: str | httpx2.URL, address: str
+) -> tuple[httpx2.URL, dict[str, str], dict[str, str]]:
     """Connect to a checked address while retaining the origin host for HTTP and TLS."""
     parsed = _parse_url(url)
-    pinned_url = httpx.URL(str(url)).copy_with(host=address)
+    pinned_url = httpx2.URL(str(url)).copy_with(host=address)
     host = parsed.hostname
     assert host is not None  # _parse_url checks this
     if ":" in host and not host.startswith("["):
@@ -325,7 +325,7 @@ def _unsafe_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> b
     )
 
 
-async def _store_response(response: httpx.Response, data_dir: Path) -> tuple[Path, str, str, int]:
+async def _store_response(response: httpx2.Response, data_dir: Path) -> tuple[Path, str, str, int]:
     declared_length = response.headers.get("content-length")
     if declared_length is not None and (
         not declared_length.isdigit() or int(declared_length) > MAX_IMAGE_BYTES

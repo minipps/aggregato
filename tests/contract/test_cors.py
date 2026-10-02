@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.api.deps import CSRF_HEADER
@@ -20,7 +20,7 @@ PREFLIGHT = {"Origin": ORIGIN, "Access-Control-Request-Method": "GET"}
 
 
 @asynccontextmanager
-async def app_client(tmp_path: Path, **env: str) -> AsyncIterator[httpx.AsyncClient]:
+async def app_client(tmp_path: Path, **env: str) -> AsyncIterator[httpx2.AsyncClient]:
     data = tmp_path / "data"
     data.mkdir(exist_ok=True)
     config = load_config({"AGGREGATO_TOKEN": TOKEN, "AGGREGATO_DATA": str(data), **env})
@@ -29,7 +29,9 @@ async def app_client(tmp_path: Path, **env: str) -> AsyncIterator[httpx.AsyncCli
         await connection.run_sync(metadata.create_all)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
+        ) as client,
     ):
         yield client
 

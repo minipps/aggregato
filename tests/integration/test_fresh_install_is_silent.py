@@ -9,8 +9,8 @@ a provider module that fetches at import time, a registry that instantiates to r
 a health check that pings, an avatar loaded from a CDN.
 
 `tests/conftest.py` blocks sockets process-wide, so a violation raises here rather than appearing
-months later in a packet capture. This file also watches httpx, catching a request before it reaches
-a real transport.
+months later in a packet capture. This file also watches httpx2, catching a request before it
+reaches a real transport.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.config import Config, load_config
@@ -51,13 +51,13 @@ def outbound(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     exemption this fixture would flag the test's own calls and prove nothing.
     """
     attempts: list[str] = []
-    original = httpx.AsyncClient.send
+    original = httpx2.AsyncClient.send
 
     async def watched(
-        self: httpx.AsyncClient, request: httpx.Request, **kwargs: object
-    ) -> httpx.Response:
+        self: httpx2.AsyncClient, request: httpx2.Request, **kwargs: object
+    ) -> httpx2.Response:
         transport = self._transport_for_url(request.url)
-        if isinstance(transport, httpx.ASGITransport):
+        if isinstance(transport, httpx2.ASGITransport):
             return await original(self, request, **kwargs)  # type: ignore[arg-type]
         attempts.append(f"{request.method} {request.url}")
         raise AssertionError(
@@ -65,7 +65,7 @@ def outbound(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             f"to {type(transport).__name__}"
         )
 
-    monkeypatch.setattr(httpx.AsyncClient, "send", watched)
+    monkeypatch.setattr(httpx2.AsyncClient, "send", watched)
     return attempts
 
 
@@ -81,8 +81,8 @@ async def test_browsing_a_fresh_install_sends_nothing(data_dir: Path, outbound: 
     app = create_app(config_for(data_dir))
 
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
             headers = {"Authorization": f"Bearer {TOKEN}"}
             health = await client.get("/api/v1/health", headers=headers)
             listed = await client.get("/api/v1/providers", headers=headers)
@@ -111,8 +111,8 @@ async def test_every_provider_starts_disabled(data_dir: Path, outbound: list[str
     app = create_app(config_for(data_dir))
 
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}
             )

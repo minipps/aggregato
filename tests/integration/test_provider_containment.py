@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.config import load_config
@@ -94,8 +94,8 @@ async def test_failed_child_is_contained_while_another_provider_and_the_api_cont
     assert failed.status is RunStatus.FAILED
     assert succeeded.status is RunStatus.SUCCESS
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.get("/api/v1/health", headers={"Authorization": "Bearer contained"})
     assert response.status_code == 200

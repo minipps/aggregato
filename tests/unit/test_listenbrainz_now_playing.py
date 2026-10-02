@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any, cast
 
-import httpx
+import httpx2
 import pytest
 from pydantic import SecretStr
 
@@ -36,7 +36,7 @@ def _context(
     base_url: str = "https://listenbrainz.fixture",
 ) -> ProviderContext:
     return ProviderContext(
-        http=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        http=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
         config=ListenBrainzConfig(
             username=username, token=SecretStr(token or "valid"), base_url=base_url
         ),
@@ -47,11 +47,11 @@ def _context(
 
 
 async def test_active_request_uses_quoted_user_endpoint_and_token_header() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200, json=_fixture("now-playing-active.json"))
+        return httpx2.Response(200, json=_fixture("now-playing-active.json"))
 
     context = _context(respond, username="listener name/1", base_url="https://host.fixture/prefix")
     try:
@@ -72,7 +72,7 @@ async def test_active_request_uses_quoted_user_endpoint_and_token_header() -> No
 
 
 async def test_idle_response_returns_no_item() -> None:
-    context = _context(lambda request: httpx.Response(200, json=_fixture("now-playing-idle.json")))
+    context = _context(lambda request: httpx2.Response(200, json=_fixture("now-playing-idle.json")))
     try:
         assert await ListenBrainzProvider().now_playing(context) is None
     finally:
@@ -87,7 +87,7 @@ async def test_current_item_matches_historical_normalization_without_an_entry() 
         )
     )
     context = _context(
-        lambda request: httpx.Response(200, json=_fixture("now-playing-active.json"))
+        lambda request: httpx2.Response(200, json=_fixture("now-playing-active.json"))
     )
     try:
         current = await ListenBrainzProvider().now_playing(context)
@@ -104,7 +104,7 @@ async def test_current_item_matches_historical_normalization_without_an_entry() 
 
 async def test_multiple_current_listens_are_a_structure_change() -> None:
     context = _context(
-        lambda request: httpx.Response(200, json=_fixture("now-playing-multiple.json"))
+        lambda request: httpx2.Response(200, json=_fixture("now-playing-multiple.json"))
     )
     try:
         with pytest.raises(StructureChangedError, match="multiple current listens"):
@@ -115,7 +115,7 @@ async def test_multiple_current_listens_are_a_structure_change() -> None:
 
 async def test_malformed_playing_now_envelope_is_not_idle() -> None:
     context = _context(
-        lambda request: httpx.Response(200, json=_fixture("now-playing-structure-changed.json"))
+        lambda request: httpx2.Response(200, json=_fixture("now-playing-structure-changed.json"))
     )
     try:
         with pytest.raises(StructureChangedError, match="boolean `playing_now`"):
@@ -133,7 +133,7 @@ async def test_authentication_and_rate_limit_statuses_are_classified(
     body = _fixture(
         "credentials-invalid.json" if status == 401 else "now-playing-rate-limited.json"
     )
-    context = _context(lambda request: httpx.Response(status, json=body))
+    context = _context(lambda request: httpx2.Response(status, json=body))
     try:
         with pytest.raises(error):
             await ListenBrainzProvider().now_playing(context)
