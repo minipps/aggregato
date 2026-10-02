@@ -30,8 +30,6 @@ describe('EntryList artwork', () => {
   it('renders the cache path the API supplied, never a platform URL', () => {
     const img = mount(EntryList, { props: { entries: [entry()] }, global: { stubs } }).find('img')
     expect(img.attributes('src')).toBe('/api/v1/media/image/abc123')
-    // This view uses the local cache path supplied by the API.
-    expect(img.attributes('src')).not.toMatch(/^https?:/)
   })
 
   it('renders no img when the work has no artwork', () => {

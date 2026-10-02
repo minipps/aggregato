@@ -36,9 +36,7 @@ let stopped = false
 
 /** Sort enabled providers first while preserving server order within each group. */
 const sorted = computed(() =>
-  [...(list.data.value ?? [])].sort(
-    (a, b) => Number(b.enabled) - Number(a.enabled),
-  ),
+  (list.data.value ?? []).toSorted((a, b) => Number(b.enabled) - Number(a.enabled)),
 )
 
 /** Keep action feedback associated with the provider card that triggered it. */

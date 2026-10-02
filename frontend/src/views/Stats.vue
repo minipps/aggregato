@@ -25,7 +25,7 @@ const counts = computed(
 )
 /** Years with activity, newest first, so the picker never offers an empty grid. */
 const availableYears = computed(() => {
-  const found = new Set([...counts.value.keys()].map((day) => day.slice(0, 4)))
+  const found = new Set(Array.from(counts.value.keys(), (day) => day.slice(0, 4)))
   return [...found].sort((a, b) => b.localeCompare(a))
 })
 const year = ref(String(new Date().getFullYear()))

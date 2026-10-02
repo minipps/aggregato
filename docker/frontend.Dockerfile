@@ -6,7 +6,7 @@
 FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS frontend-build
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-RUN npm install --global npm@12.0.2 --silent && npm --loglevel=error ci
+RUN npm install --global npm@12.2.0 --silent && npm --loglevel=error ci
 COPY frontend/ ./
 RUN npm --loglevel=error run build
 
