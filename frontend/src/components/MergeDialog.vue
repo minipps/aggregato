@@ -8,9 +8,10 @@ const props = withDefaults(defineProps<{
 }>(), { pending: false })
 const emit = defineEmits<{ merge: [loserIds: string[]]; cancel: [] }>()
 const ids = ref('')
+const ID_SEPARATOR = /[\s,]+/
 
 function submit(): void {
-  const loserIds = ids.value.split(/[\s,]+/).filter(Boolean).filter((id) => id !== props.winnerId)
+  const loserIds = ids.value.split(ID_SEPARATOR).filter(Boolean).filter((id) => id !== props.winnerId)
   if (loserIds.length) emit('merge', loserIds)
 }
 </script>

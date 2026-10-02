@@ -13,6 +13,7 @@ const queue = usePaged(() => resolutionQueue())
 const active = ref(0)
 const notice = ref('')
 const undoId = ref<number | undefined>()
+const CANDIDATE_KEY = /^[1-9]$/
 
 function current(): ResolutionItem | undefined { return queue.items.value[active.value] }
 async function decide(decision: 'linked' | 'created' | 'ignored', targetId?: string): Promise<void> {
@@ -36,7 +37,7 @@ function keys(event: KeyboardEvent): void {
   if (event.key === 'ArrowUp' || event.key === 'k') { event.preventDefault(); active.value = Math.max(active.value - 1, 0) }
   if (event.key === 'c') void decide('created')
   if (event.key === 'i') void decide('ignored')
-  if (/^[1-9]$/.test(event.key)) { const candidate = item.candidates[Number(event.key) - 1]; if (candidate) void decide('linked', candidate.id) }
+  if (CANDIDATE_KEY.test(event.key)) { const candidate = item.candidates[Number(event.key) - 1]; if (candidate) void decide('linked', candidate.id) }
 }
 onMounted(() => window.addEventListener('keydown', keys))
 onUnmounted(() => window.removeEventListener('keydown', keys))

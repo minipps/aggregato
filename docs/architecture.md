@@ -43,3 +43,4 @@ These are targets, not capacity claims for every deployment. The bench suite cov
 | Successful now-playing check | Every 15 seconds |
 | Now-playing WebSocket refresh | Poll durable state every 500 ms; normal visibility within 16 seconds |
 | Now-playing freshness | Omit items last checked more than 45 seconds ago |
+| Built SPA, sum of individually gzipped output files | No more than 10% growth from the 79,799-byte baseline without justification |

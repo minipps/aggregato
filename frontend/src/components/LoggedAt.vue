@@ -27,10 +27,11 @@ const props = defineProps<{
 }>()
 
 const UNKNOWN_TEXT = 'Date unknown'
+const ISO_DATE_PARTS = /^(\d{4})-(\d{2})-(\d{2})/
 
 /** Leading calendar fields of the ISO string, read textually — see the component docstring. */
 const parts = computed(() => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(props.at ?? '')
+  const match = ISO_DATE_PARTS.exec(props.at ?? '')
   const [, year, month, day] = match ?? []
   if (year === undefined || month === undefined || day === undefined) return undefined
   return { year, month, day }
