@@ -85,7 +85,7 @@ def make_release_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
     (fake_bin / "git").write_text(
         "#!/bin/sh\n"
         'if [ "${RELEASE_FAIL_PUSH:-}" = 1 ] && [ "$1" = push ] && [ "$2" = --quiet ] '
-        '&& [ "$3" = origin ] && [ "$4" = main ]; then\n'
+        " ; then\n"
         '    echo "simulated push failure" >&2\n'
         "    exit 42\n"
         "fi\n"
@@ -108,6 +108,11 @@ def make_release_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
         encoding="utf-8",
     )
     (fake_bin / "uv").chmod(0o755)
+    (fake_bin / "gh").write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$RELEASE_PR_ARGS"\n[ "${RELEASE_FAIL_PR:-}" != 1 ]\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "gh").chmod(0o755)
 
     tracked = {
         path: (repo / path).read_bytes()
@@ -124,7 +129,14 @@ def make_release_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
 
 
 def run_release(
-    repo: Path, fake_bin: Path, *, fail_push: bool = False
+    repo: Path,
+    fake_bin: Path,
+    *,
+    fail_push: bool = False,
+    fail_pr: bool = False,
+    tag: bool = False,
+    version: str = "0.1.1",
+    reply: str = "y\n",
 ) -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
@@ -133,14 +145,17 @@ def run_release(
         "GIT_AUTHOR_EMAIL": "release-test@example.invalid",
         "GIT_COMMITTER_NAME": "Release Test",
         "GIT_COMMITTER_EMAIL": "release-test@example.invalid",
+        "RELEASE_PR_ARGS": str(fake_bin / "pr-args.txt"),
     }
     if fail_push:
         env["RELEASE_FAIL_PUSH"] = "1"
+    if fail_pr:
+        env["RELEASE_FAIL_PR"] = "1"
     return run_command(
-        [str(repo / "scripts/release.sh"), "0.1.1"],
+        [str(repo / "scripts/release.sh"), *(["--tag"] if tag else []), version],
         cwd=repo,
         env=env,
-        input="y\n",
+        input=reply,
         capture_output=True,
         text=True,
     )
@@ -148,6 +163,7 @@ def run_release(
 
 def test_release_updates_both_documented_image_tags(tmp_path: Path) -> None:
     repo, fake_bin, _ = make_release_fixture(tmp_path)
+    base_commit = git(repo, "rev-parse", "main")
 
     result = run_release(repo, fake_bin)
 
@@ -158,6 +174,12 @@ def test_release_updates_both_documented_image_tags(tmp_path: Path) -> None:
     assert json.loads((repo / "frontend/package.json").read_text())["version"] == "0.1.1"
     assert 'version = "0.1.1"' in (repo / "pyproject.toml").read_text()
     assert 'version = "0.1.1"' in (repo / "uv.lock").read_text()
+    assert git(repo, "branch", "--show-current") == "release/v0.1.1"
+    assert git(repo, "rev-parse", "main") == base_commit
+    assert git(repo, "ls-remote", "origin", "refs/heads/main").startswith(base_commit)
+    assert not git(repo, "ls-remote", "--tags", "origin")
+    args = (fake_bin / "pr-args.txt").read_text().splitlines()
+    assert args[:6] == ["pr", "create", "--base", "main", "--head", "release/v0.1.1"]
 
 
 def test_release_rolls_back_version_files_when_push_fails(tmp_path: Path) -> None:
@@ -170,6 +192,62 @@ def test_release_rolls_back_version_files_when_push_fails(tmp_path: Path) -> Non
     assert "release: failed, release changes rolled back" in result.stderr
     assert git(repo, "rev-parse", "HEAD") == base_commit
     assert git(repo, "status", "--porcelain") == ""
+    assert git(repo, "branch", "--show-current") == "main"
     assert not git(repo, "tag", "--list")
     for path, content in original.items():
         assert (repo / path).read_bytes() == content
+
+
+def test_release_restores_main_when_pr_creation_fails(tmp_path: Path) -> None:
+    repo, fake_bin, original = make_release_fixture(tmp_path)
+    base_commit = git(repo, "rev-parse", "HEAD")
+
+    result = run_release(repo, fake_bin, fail_pr=True)
+
+    assert result.returncode != 0
+    assert "remote branch was not rolled back" in result.stderr
+    assert git(repo, "branch", "--show-current") == "main"
+    assert git(repo, "rev-parse", "HEAD") == base_commit
+    assert git(repo, "status", "--porcelain") == ""
+    assert not git(repo, "ls-remote", "--tags", "origin")
+    for path, content in original.items():
+        assert (repo / path).read_bytes() == content
+
+
+def test_release_only_tags_a_merged_version_bump(tmp_path: Path) -> None:
+    repo, fake_bin, _ = make_release_fixture(tmp_path)
+    prepared = run_release(repo, fake_bin)
+    assert prepared.returncode == 0, prepared.stderr
+    git(repo, "switch", "main")
+    git(repo, "merge", "--ff-only", "release/v0.1.1")
+    git(repo, "push", "origin", "main")
+    merged_commit = git(repo, "rev-parse", "HEAD")
+
+    result = run_release(repo, fake_bin, tag=True)
+
+    assert result.returncode == 0, result.stderr
+    assert git(repo, "rev-parse", "v0.1.1") == merged_commit
+    assert git(repo, "ls-remote", "--tags", "origin").startswith(merged_commit)
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_release_rejects_tag_with_unmerged_version(tmp_path: Path) -> None:
+    repo, fake_bin, _ = make_release_fixture(tmp_path)
+
+    result = run_release(repo, fake_bin, tag=True)
+
+    assert result.returncode != 0
+    assert "disagrees" in result.stderr
+    assert not git(repo, "tag", "--list")
+    assert not git(repo, "ls-remote", "--tags", "origin")
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_release_removes_local_tag_when_tag_push_fails(tmp_path: Path) -> None:
+    repo, fake_bin, _ = make_release_fixture(tmp_path)
+
+    result = run_release(repo, fake_bin, tag=True, version="0.1.0", fail_push=True)
+
+    assert result.returncode != 0
+    assert not git(repo, "tag", "--list")
+    assert git(repo, "status", "--porcelain") == ""

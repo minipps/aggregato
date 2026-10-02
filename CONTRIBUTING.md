@@ -84,6 +84,18 @@ empty result, which could be mistaken for an empty history.
 ## Cutting a release
 
 Run `scripts/release.sh <version>` from a clean `main` that matches `origin/main`. It updates package
-versions, lockfiles, and the image-version examples, then shows the release commit and tag for review.
-Pushing the tag starts [the release workflow](.github/workflows/release.yml), which runs CI and
-publishes the source archive, GitHub release, and multi-architecture images.
+versions, lockfiles, and the image-version examples, then opens a version-bump pull request. GitHub
+CLI authentication is required. Merge it after all required CI checks pass, update your local `main`,
+and run `scripts/release.sh --tag <version>`. Only `@minipps` can create release tags; published tags
+cannot be moved or deleted.
+
+Pushing the tag starts [the release workflow](.github/workflows/release.yml), which checks that the
+commit belongs to `main` and runs CI with read-only permissions. Approve the `release` environment
+jobs on GitHub to publish the source archive, GitHub release, and multi-architecture images. Only
+`@minipps` can approve publishing.
+
+All files have `@minipps` as their sole codeowner. Changes to `main` require a pull request and the
+Python, benchmark, PostgreSQL, and frontend checks. Outside contributions require an owner review;
+stale approvals are dismissed after new commits. The owner can bypass the review requirement for
+their own PRs because GitHub does not allow self-approval, but cannot bypass CI or push directly to
+`main`. Actions use immutable commit pins and the repository only permits the actions used here.
