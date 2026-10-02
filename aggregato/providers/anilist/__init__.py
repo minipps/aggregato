@@ -372,7 +372,7 @@ def _entries(
             # moves the title through, which is what lets the writer's upsert replace the recorded
             # entry rather than accumulate one row per status change.
             native_id=native_id,
-            **progress,  # type: ignore[arg-type]
+            **progress,  # ty: ignore[invalid-argument-type] - validated by NormalizedEntry
         )
     ]
 

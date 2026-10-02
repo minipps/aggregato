@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -52,7 +52,7 @@ def config_for(data_dir: Path) -> Config:
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, Config, AsyncEngine]]:
+async def client(tmp_path: Path) -> AsyncIterator[tuple[httpx2.AsyncClient, Config, AsyncEngine]]:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     config = config_for(data_dir)
@@ -62,8 +62,8 @@ async def client(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, Confi
         await create_search_index(conn)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
         ) as http_client,
     ):
         http_client.headers.update(AUTH)
@@ -82,7 +82,7 @@ async def archive_counts(engine: AsyncEngine) -> tuple[int, int, int]:
 
 
 async def test_single_provider_operator_journey(
-    client: tuple[httpx.AsyncClient, Config, AsyncEngine],
+    client: tuple[httpx2.AsyncClient, Config, AsyncEngine],
 ) -> None:
     """A fresh archive becomes browsable, and a second run has no duplicate writes."""
     http_client, config, engine = client

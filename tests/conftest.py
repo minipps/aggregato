@@ -42,7 +42,7 @@ def block_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def guard(*args: object, **kwargs: object) -> None:
         raise NetworkAccessInTest(
-            "a test opened a socket; use recorded fixtures and httpx ASGITransport instead"
+            "a test opened a socket; use recorded fixtures and httpx2 ASGITransport instead"
         )
 
     monkeypatch.setattr(socket.socket, "connect", guard)

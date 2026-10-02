@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.config import load_config
@@ -20,7 +20,7 @@ NOW = datetime(2026, 7, 30, tzinfo=UTC)
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
     data = tmp_path / "data"
     data.mkdir()
     app = create_app(
@@ -74,14 +74,16 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         )
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as value,
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
+        ) as value,
     ):
         value.headers["Authorization"] = f"Bearer {TOKEN}"
         yield value
 
 
 async def test_completed_selects_the_finished_kinds_and_nothing_else(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.get("/api/v1/entries?status=completed")
 
@@ -91,7 +93,7 @@ async def test_completed_selects_the_finished_kinds_and_nothing_else(
     assert {"progress", "drop"}.isdisjoint(kinds)
 
 
-async def test_status_and_kind_intersect_rather_than_widen(client: httpx.AsyncClient) -> None:
+async def test_status_and_kind_intersect_rather_than_widen(client: httpx2.AsyncClient) -> None:
     """Both filters AND, so ``status`` can never smuggle back a kind ``kind`` excluded."""
     response = await client.get("/api/v1/entries?status=completed&kind=drop")
 
@@ -100,7 +102,7 @@ async def test_status_and_kind_intersect_rather_than_widen(client: httpx.AsyncCl
 
 
 async def test_an_unknown_status_is_a_422_not_a_silent_full_page(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.get("/api/v1/entries?status=in_progress")
 

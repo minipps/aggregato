@@ -20,6 +20,6 @@ the real shape.
 | `credentials-invalid.json` | the body ListenBrainz returns with HTTP 401 (group 7) |
 | `structure-changed.json` | a response whose shape is genuinely wrong — must raise `StructureChangedError` |
 
-The conformance registration serves `page-*.json` through an `httpx.MockTransport` keyed on the
+The conformance registration serves `page-*.json` through an `httpx2.MockTransport` keyed on the
 `max_ts` query parameter, so replaying them **checks** the backwards paging rather than just handing
 back pages in call order.

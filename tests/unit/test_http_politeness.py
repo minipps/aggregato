@@ -19,7 +19,7 @@ from contextlib import suppress
 from importlib.metadata import version
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato import __version__
@@ -42,8 +42,8 @@ def client_for(
     policy: PolitenessPolicy,
     handler: object,
 ) -> PoliteClient:
-    transport = httpx.MockTransport(handler)  # type: ignore[arg-type]
-    inner = httpx.AsyncClient(transport=transport, headers={"User-Agent": USER_AGENT})
+    transport = httpx2.MockTransport(handler)  # type: ignore[arg-type]
+    inner = httpx2.AsyncClient(transport=transport, headers={"User-Agent": USER_AGENT})
     return PoliteClient(policy, client=inner, rng=random.Random(FIXED_RNG))
 
 
@@ -98,14 +98,14 @@ async def test_a_scraper_cannot_exceed_one_concurrent_request_per_host() -> None
     in_flight = 0
     peak = 0
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
         # Yield control, so any missing mutual exclusion actually manifests.
         await asyncio.sleep(0)
         in_flight -= 1
-        return httpx.Response(200, text="ok")
+        return httpx2.Response(200, text="ok")
 
     # Zero pacing delay, so the semaphore is the only thing preventing overlap.
     policy = PolitenessPolicy(acquisition=Acquisition.SCRAPE, declared_interval_seconds=0.0)
@@ -189,13 +189,13 @@ async def test_separate_hosts_do_not_block_each_other() -> None:
     started = {host: asyncio.Event() for host in ("a.test", "b.test")}
     release_a = asyncio.Event()
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         host = request.url.host
         assert host is not None
         started[host].set()
         if host == "a.test":
             await release_a.wait()
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     policy = PolitenessPolicy(acquisition=Acquisition.SCRAPE, declared_interval_seconds=0.0)
     client = client_for(policy, handler)
@@ -220,9 +220,9 @@ async def test_requests_carry_an_identifying_user_agent() -> None:
     """An operator whose scraper misbehaves should be reachable, not anonymous."""
     captured: list[str] = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(request.headers["User-Agent"])
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     async with client_for(PolitenessPolicy(acquisition=Acquisition.API), handler) as client:
         await client.get("https://example.test/")
@@ -242,10 +242,10 @@ async def test_a_block_raises_immediately_and_is_never_retried(status: int) -> N
     """Retrying a block deepens it, so this must short-circuit rather than climb the ladder."""
     attempts = 0
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(status)
+        return httpx2.Response(status)
 
     async with client_for(PolitenessPolicy(acquisition=Acquisition.SCRAPE), handler) as client:
         with pytest.raises(BlockedError, match="not retrying"):
@@ -258,9 +258,9 @@ async def test_a_block_raises_immediately_and_is_never_retried(status: int) -> N
 
 
 async def test_transient_server_errors_are_retried_then_succeed() -> None:
-    responses = [httpx.Response(503), httpx.Response(502), httpx.Response(200, text="finally")]
+    responses = [httpx2.Response(503), httpx2.Response(502), httpx2.Response(200, text="finally")]
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         return responses.pop(0)
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
@@ -280,8 +280,8 @@ async def test_retry_after_is_honoured_over_the_backoff() -> None:
         slept.append(delay)
         await original(0)
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, headers={"Retry-After": "7"}, text="slow down")
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": "7"}, text="slow down")
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -295,8 +295,8 @@ async def test_retry_after_is_honoured_over_the_backoff() -> None:
 
 
 async def test_a_rate_limit_without_retry_after_still_reports_the_class() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429)
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429)
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -311,8 +311,8 @@ async def test_a_rate_limit_without_retry_after_still_reports_the_class() -> Non
 
 
 async def test_an_http_date_retry_after_is_parsed_without_sleeping_forever() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -328,10 +328,10 @@ async def test_an_http_date_retry_after_is_parsed_without_sleeping_forever() -> 
 async def test_retries_are_bounded() -> None:
     attempts = 0
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(503)
+        return httpx2.Response(503)
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -347,10 +347,10 @@ async def test_retries_are_bounded() -> None:
 async def test_transport_errors_are_retried_then_classified() -> None:
     attempts = 0
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        raise httpx.ConnectError("no route to host")
+        raise httpx2.ConnectError("no route to host")
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -373,10 +373,10 @@ async def test_non_retryable_responses_come_straight_back(status: int) -> None:
     """
     attempts = 0
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(status)
+        return httpx2.Response(status)
 
     async with client_for(PolitenessPolicy(acquisition=Acquisition.API), handler) as client:
         response = await client.get("https://example.test/")
@@ -389,9 +389,9 @@ async def test_conditional_request_headers_pass_through_untouched() -> None:
     """ETag / If-Modified-Since belong to the provider; the host must not strip or rewrite them."""
     captured: dict[str, str] = {}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         captured.update(request.headers)
-        return httpx.Response(304)
+        return httpx2.Response(304)
 
     async with client_for(PolitenessPolicy(acquisition=Acquisition.FEED), handler) as client:
         response = await client.get(
@@ -409,13 +409,13 @@ async def test_conditional_request_headers_pass_through_untouched() -> None:
 
 async def test_cross_origin_redirect_drops_credential_headers() -> None:
     """A redirect must not send provider credentials to a different origin."""
-    captured: list[httpx.Headers] = []
+    captured: list[httpx2.Headers] = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(request.headers)
         if len(captured) == 1:
-            return httpx.Response(302, headers={"Location": "https://other.test/landing"})
-        return httpx.Response(200)
+            return httpx2.Response(302, headers={"Location": "https://other.test/landing"})
+        return httpx2.Response(200)
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -443,13 +443,13 @@ async def test_cross_origin_redirect_drops_credential_headers() -> None:
 
 async def test_same_origin_redirect_keeps_credential_headers() -> None:
     """Credentials remain available when the redirect stays on the original origin."""
-    captured: list[httpx.Headers] = []
+    captured: list[httpx2.Headers] = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(request.headers)
         if len(captured) == 1:
-            return httpx.Response(302, headers={"Location": "/landing"})
-        return httpx.Response(200)
+            return httpx2.Response(302, headers={"Location": "/landing"})
+        return httpx2.Response(200)
 
     policy = PolitenessPolicy(acquisition=Acquisition.API, declared_interval_seconds=0.0)
     async with client_for(policy, handler) as client:
@@ -476,8 +476,8 @@ async def test_the_limiter_spaces_requests_by_the_effective_interval() -> None:
         slept.append(delay)
         await original(0)
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200)
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)
 
     policy = PolitenessPolicy(acquisition=Acquisition.SCRAPE)
     async with client_for(policy, handler) as client:

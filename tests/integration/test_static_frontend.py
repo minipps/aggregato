@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from aggregato.config import load_config
 from aggregato.main import create_app
@@ -29,8 +29,8 @@ async def test_spa_serves_assets_but_cannot_escape_its_root(tmp_path: Path) -> N
     app = create_app(config, run_migrations=False)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
             base_url="http://test",
             headers={"Authorization": f"Bearer {TOKEN}"},
         ) as client,

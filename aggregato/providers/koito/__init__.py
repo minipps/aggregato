@@ -327,8 +327,8 @@ class KoitoProvider:
         except ProviderError as exc:
             return CheckResult(ok=False, error_class=exc.error_class, detail=str(exc))
         except Exception as exc:
-            # Deliberately broad, and it cannot be narrower here: naming `httpx.TransportError`
-            # would mean importing httpx, which the  import contract forbids in a provider
+            # Deliberately broad, and it cannot be narrower here: naming `httpx2.TransportError`
+            # would mean importing httpx2, which the  import contract forbids in a provider
             # package. `check` is a diagnostic the operator asked for (contract §1), so a DNS
             # failure has to come back as the answer rather than as a crash in the settings UI.
             return CheckResult(

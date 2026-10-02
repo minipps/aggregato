@@ -5,13 +5,13 @@ retry ladder decides from that class alone. Provider exceptions carry their own 
 for those classification is a lookup. Everything else is either a transport failure of the
 host-owned HTTP client or, by definition, ``internal``.
 
-This module may import ``httpx``: the import-linter contract fences ``aggregato.providers``, not
+This module may import ``httpx2``: the import-linter contract fences ``aggregato.providers``, not
 ``aggregato.sync``, and classifying "the network broke" needs the client's exception tree.
 """
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 
 from aggregato.domain.enums import ErrorClass
 from aggregato.providers.errors import ProviderError
@@ -66,13 +66,13 @@ def classify(exc: BaseException) -> ErrorClass:
     """
     if isinstance(exc, ProviderError):
         return exc.error_class
-    if isinstance(exc, httpx.HTTPStatusError):
+    if isinstance(exc, httpx2.HTTPStatusError):
         # A 5xx is the platform failing, not us; 4xx that a provider did not turn into AuthError or
         # BlockedError is a provider bug, so it stays `internal` and is visible as one.
         if exc.response.status_code >= _SERVER_ERROR_FLOOR:
             return ErrorClass.TRANSPORT
         return ErrorClass.INTERNAL
-    if isinstance(exc, httpx.TransportError):
+    if isinstance(exc, httpx2.TransportError):
         return ErrorClass.TRANSPORT
     return ErrorClass.INTERNAL
 

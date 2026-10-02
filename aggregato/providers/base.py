@@ -30,9 +30,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     import logging
     from pathlib import Path
 
-    # Type-only import: an import-linter contract forbids `aggregato.providers -> httpx` and this
+    # Type-only import: an import-linter contract forbids `aggregato.providers -> httpx2` and this
     # module has no exemption (pyproject.toml). The host constructs the client; we only name it.
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
 
 @dataclass(frozen=True)

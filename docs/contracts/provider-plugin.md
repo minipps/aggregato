@@ -75,7 +75,7 @@ or fixture change unless they opt in.
 |---|---|---|
 | `normalize` is **pure**: no network, clock, randomness, or storage | Replay must produce the same derived rows from retained payloads | Conformance calls it twice for each fixture record; sockets are blocked, the clock is frozen, and writes are checked |
 | A provider receives only its selected context and no database engine | Database writes and validation remain in the host process | The worker child passes explicit inputs without an engine; import-linter forbids provider modules from importing `aggregato.db` or `aggregato.ingest`. This process boundary is not an OS sandbox. |
-| A provider uses the host HTTP client | The host enforces request pacing, acquisition floors, and contact identity | Use `ctx.http`; import-linter forbids provider modules from importing `httpx` |
+| A provider uses the host HTTP client | The host enforces request pacing, acquisition floors, and contact identity | Use `ctx.http`; import-linter forbids provider modules from importing `httpx2` |
 | A provider uses the closed `media_type`, `role`, and `subject_ref` vocabularies | Queries and stored rows share one core vocabulary | Parent-side ingest validation rejects invalid records into `ingest_failures` |
 | Extract every identifier present in a payload | Aggregato does not enrich records from third-party metadata sources | Conformance checks that fixture identifiers appear in normalized output |
 | Never bypass a CAPTCHA or anti-bot challenge | Acquisition policy forbids circumvention | Raise `BlockedError`; the host stops and does not retry automatically |
@@ -89,7 +89,7 @@ or fixture change unless they opt in.
 
 | Field | Guarantee |
 |---|---|
-| `http` | `httpx.AsyncClient` wrapped with rate limiting at `max(declared, host_floor)`, one in-flight request per host within that run for `scrapes` providers, retry on 5xx/429/transport with jitter, `Retry-After` compliance, ETag pass-through, and the project User-Agent with a contact URL |
+| `http` | `httpx2.AsyncClient` wrapped with rate limiting at `max(declared, host_floor)`, one in-flight request per host within that run for `scrapes` providers, retry on 5xx/429/transport with jitter, `Retry-After` compliance, ETag pass-through, and the project User-Agent with a contact URL |
 | `config` | This provider's resolved settings, validated by its `config_model` |
 | `secrets` | This provider's credentials, resolved before the child starts and sent explicitly |
 | `log` | Logger already bound to `provider_id`, `run_id`, `lineage_id` |
@@ -98,6 +98,14 @@ or fixture change unless they opt in.
 
 The host owns scheduling, the retry ladder, rate limiting, cursor persistence, idempotency, identity
 resolution, storage, migrations, image caching, and the 15-second now-playing poll schedule.
+
+### Migrating from HTTPX to HTTPX2
+
+The host now uses `httpx2` for requests, responses, and transport exceptions. Providers continue to
+use `ctx.http`; fetch/check/normalize signatures and payload formats are unchanged. Drop-ins with
+type-only `httpx` imports must rename them to `httpx2`. Use host provider errors for runtime error
+signalling; importing either HTTP client directly to bypass `ctx.http` remains forbidden. This
+dependency change requires no `schema_version` bump because normalization mappings are unchanged.
 
 ---
 
@@ -158,7 +166,7 @@ source structure has changed. `check` returns a `CheckResult` for both success a
 | `BlockedError` | `blocked` | No automatic retry; the provider becomes degraded. Do not retry or circumvent a block. |
 | `StructureChangedError` | `structure_changed` | No automatic retry; the provider becomes degraded until its implementation is updated. |
 | `RateLimited(retry_after=…)` | `rate_limit` | Retries, honors `Retry-After`, and lengthens the effective interval for the rest of the session. |
-| `TransportError`, `httpx` transport errors, or a raised 5xx response | `transport` | The HTTP client retries in-run; remaining failures use the run retry policy. |
+| `TransportError`, `httpx2` transport errors, or a raised 5xx response | `transport` | The HTTP client retries in-run; remaining failures use the run retry policy. |
 | Validation failure on one record | `parse` | The record goes to `ingest_failures`; the run continues. |
 | Anything else | `internal` | Uses the run retry policy; the traceback is retained in the run log excerpt. |
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.domain.enums import Acquisition, Capability, FetchMode
@@ -29,7 +29,7 @@ from aggregato.providers.base import Provider, ProviderContext
 from aggregato.providers.registry import load_provider
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
 
 @dataclass(frozen=True)
@@ -174,17 +174,17 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
     """A context holding only what contract §2 says the host hands over."""
     http: AsyncClient
     if registration.provider_id == "listenbrainz":
-        http = httpx.AsyncClient(transport=httpx.MockTransport(_listenbrainz_fixture(path)))
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_listenbrainz_fixture(path)))
     elif registration.provider_id == "spotify":
-        http = httpx.AsyncClient(transport=httpx.MockTransport(_spotify_fixture(path)))
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_spotify_fixture(path)))
     elif registration.provider_id == "anilist":
-        http = httpx.AsyncClient(transport=httpx.MockTransport(_anilist_fixture(path)))
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_anilist_fixture(path)))
     elif registration.provider_id == "koito":
-        http = httpx.AsyncClient(transport=httpx.MockTransport(_koito_fixture(path)))
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_koito_fixture(path)))
     elif registration.provider_id == "goodreads":
-        http = httpx.AsyncClient(transport=httpx.MockTransport(_goodreads_fixture(path)))
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_goodreads_fixture(path)))
     elif registration.provider_id == "letterboxd":
-        http = httpx.AsyncClient(transport=httpx.MockTransport(_letterboxd_fixture(path)))
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_letterboxd_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -197,19 +197,19 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
     )
 
 
-def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
-    """Serve the recorded ListenBrainz pages without exposing provider code to httpx."""
+def _listenbrainz_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve the recorded ListenBrainz pages without exposing provider code to httpx2."""
     directory = path.parent
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         if request.headers.get("Authorization") == "Token invalid":
-            return httpx.Response(
+            return httpx2.Response(
                 401, json=json.loads((directory / "credentials-invalid.json").read_text())
             )
         if request.url.path.endswith("/playing-now"):
             if path.name == "now-playing-rate-limited.json":
-                return httpx.Response(429, json=json.loads(path.read_text()))
-            return httpx.Response(200, json=json.loads(path.read_text()))
+                return httpx2.Response(429, json=json.loads(path.read_text()))
+            return httpx2.Response(200, json=json.loads(path.read_text()))
         max_ts = request.url.params.get("max_ts")
         name = (
             "page-1.json"
@@ -218,20 +218,20 @@ def _listenbrainz_fixture(path: Path) -> Callable[[httpx.Request], httpx.Respons
             if max_ts == "1700000200"
             else "page-3-empty.json"
         )
-        return httpx.Response(200, json=json.loads((directory / name).read_text()))
+        return httpx2.Response(200, json=json.loads((directory / name).read_text()))
 
     return respond
 
 
-def _spotify_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+def _spotify_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
     """Serve recorded Spotify token and recently-played responses without network access."""
     directory = path.parent
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         if request.url.host == "accounts.spotify.com":
             if path.name == "credentials-invalid.json":
-                return httpx.Response(400, json=json.loads(path.read_text()))
-            return httpx.Response(
+                return httpx2.Response(400, json=json.loads(path.read_text()))
+            return httpx2.Response(
                 200, json=json.loads((directory / "credentials-valid.json").read_text())
             )
 
@@ -247,12 +247,12 @@ def _spotify_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
         )
         if name is None:
             raise AssertionError(f"unexpected Spotify before cursor: {before}")
-        return httpx.Response(200, json=json.loads((directory / name).read_text()))
+        return httpx2.Response(200, json=json.loads((directory / name).read_text()))
 
     return respond
 
 
-def _koito_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+def _koito_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
     """Serve the recorded Koito pages, keyed on the backwards `to` boundary the provider sends.
 
     `to` is one second below the oldest listen on `page-1.json` (2026-07-20T17:58:03Z), so a walk
@@ -261,13 +261,13 @@ def _koito_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
     """
     directory = path.parent
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         if request.headers.get("Authorization") == "Token invalid":
-            return httpx.Response(
+            return httpx2.Response(
                 401, json=json.loads((directory / "credentials-invalid.json").read_text())
             )
         if request.url.path.endswith("/now-playing"):
-            return httpx.Response(200, json=json.loads(path.read_text()))
+            return httpx2.Response(200, json=json.loads(path.read_text()))
         to = request.url.params.get("to")
         name = (
             "page-1.json"
@@ -276,16 +276,16 @@ def _koito_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
             if to == "1784570282"
             else "page-3-empty.json"
         )
-        return httpx.Response(200, json=json.loads((directory / name).read_text()))
+        return httpx2.Response(200, json=json.loads((directory / name).read_text()))
 
     return respond
 
 
-def _anilist_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
-    def respond(request: httpx.Request) -> httpx.Response:
+def _anilist_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         if request.headers.get("Authorization") == "Bearer invalid":
-            return httpx.Response(401, json=json.loads(path.read_text()))
-        return httpx.Response(
+            return httpx2.Response(401, json=json.loads(path.read_text()))
+        return httpx2.Response(
             200, json=json.loads(path.parent.joinpath("records.json").read_text())
         )
 
@@ -306,24 +306,24 @@ _GOODREADS_INVALID_RSS = (
 )
 
 
-def _goodreads_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+def _goodreads_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
     """Serve the recorded Goodreads RSS response for both valid and changed structures."""
 
     payload = _GOODREADS_INVALID_RSS if path.name == "structure-changed.csv" else _GOODREADS_RSS
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=payload)
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=payload)
 
     return respond
 
 
-def _letterboxd_fixture(path: Path) -> Callable[[httpx.Request], httpx.Response]:
+def _letterboxd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
     """Serve the recorded Letterboxd RSS response selected by the registration fixture."""
 
     payload = path.read_bytes()
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=payload)
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=payload)
 
     return respond
 

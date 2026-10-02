@@ -18,7 +18,7 @@ import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import inspect
 
@@ -89,8 +89,8 @@ async def test_the_served_api_answers_after_a_cold_start(data_dir: Path) -> None
     app = create_app(config_for(data_dir))
 
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
             unauthenticated = await client.get("/api/v1/health")
             authenticated = await client.get(
                 "/api/v1/health", headers={"Authorization": f"Bearer {TOKEN}"}
@@ -114,8 +114,8 @@ async def test_a_fresh_install_makes_no_outbound_request(data_dir: Path) -> None
     """
     app = create_app(config_for(data_dir))
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/health", headers={"Authorization": f"Bearer {TOKEN}"}
             )

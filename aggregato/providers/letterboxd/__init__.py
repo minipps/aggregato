@@ -8,10 +8,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from html import unescape
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
-from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from aggregato.domain.enums import (
@@ -40,6 +40,9 @@ from aggregato.domain.models import (
 from aggregato.domain.ratings import RatingScale
 from aggregato.providers.base import ProviderContext
 from aggregato.providers.errors import ProviderError, StructureChangedError
+
+if TYPE_CHECKING:
+    from xml.etree.ElementTree import Element
 
 LB = "{https://letterboxd.com}"
 TMDB = "{https://themoviedb.org}"
@@ -194,7 +197,7 @@ def _items(payload: bytes) -> list[dict[str, Any]]:
     return parsed
 
 
-def _item(item: ET.Element) -> dict[str, Any]:
+def _item(item: Element) -> dict[str, Any]:
     values = {
         "guid": item.findtext("guid"),
         "pub_date": item.findtext("pubDate"),

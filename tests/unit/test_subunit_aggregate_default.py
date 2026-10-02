@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.config import load_config
@@ -19,7 +19,7 @@ NOW = datetime(2026, 7, 30, tzinfo=UTC)
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
     data = tmp_path / "data"
     data.mkdir()
     app = create_app(
@@ -106,14 +106,16 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         )
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as value,
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test"
+        ) as value,
     ):
         value.headers["Authorization"] = f"Bearer {TOKEN}"
         yield value
 
 
 async def test_stats_exclude_subunit_entries_until_explicitly_requested(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """The default protects whole-work statistics from episode/track activity corruption."""
     default = await client.get("/api/v1/stats/summary")

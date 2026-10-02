@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.domain.enums import ErrorClass
@@ -35,21 +35,21 @@ def test_provider_exceptions_map_to_their_documented_class(
 @pytest.mark.parametrize(
     "exc",
     [
-        httpx.ConnectError("no route"),
-        httpx.ReadTimeout("too slow"),
-        httpx.ConnectTimeout("too slow"),
-        httpx.RemoteProtocolError("truncated"),
+        httpx2.ConnectError("no route"),
+        httpx2.ReadTimeout("too slow"),
+        httpx2.ConnectTimeout("too slow"),
+        httpx2.RemoteProtocolError("truncated"),
     ],
 )
-def test_httpx_transport_errors_are_transport(exc: httpx.TransportError) -> None:
+def test_httpx2_transport_errors_are_transport(exc: httpx2.TransportError) -> None:
     assert classify(exc) is ErrorClass.TRANSPORT
 
 
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_http_5xx_is_transport(status: int) -> None:
-    request = httpx.Request("GET", "https://example.invalid/list")
-    exc = httpx.HTTPStatusError(
-        "server error", request=request, response=httpx.Response(status, request=request)
+    request = httpx2.Request("GET", "https://example.invalid/list")
+    exc = httpx2.HTTPStatusError(
+        "server error", request=request, response=httpx2.Response(status, request=request)
     )
     assert classify(exc) is ErrorClass.TRANSPORT
 
@@ -57,9 +57,9 @@ def test_http_5xx_is_transport(status: int) -> None:
 def test_http_4xx_a_provider_did_not_classify_is_internal() -> None:
     # A 4xx should have been raised as AuthError or BlockedError by the provider. Leaving it
     # `internal` keeps the provider bug visible instead of dressing it up as a network blip.
-    request = httpx.Request("GET", "https://example.invalid/list")
-    exc = httpx.HTTPStatusError(
-        "teapot", request=request, response=httpx.Response(418, request=request)
+    request = httpx2.Request("GET", "https://example.invalid/list")
+    exc = httpx2.HTTPStatusError(
+        "teapot", request=request, response=httpx2.Response(418, request=request)
     )
     assert classify(exc) is ErrorClass.INTERNAL
 

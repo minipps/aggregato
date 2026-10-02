@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.sync import child
@@ -20,12 +20,12 @@ def test_response_message_discards_credentials_and_content(monkeypatch: pytest.M
         "body-access-token",
         "body-refresh-token",
     )
-    request = httpx.Request(
+    request = httpx2.Request(
         "POST",
         "https://url-user:url-password@example.test/oauth/token"
         "?access_token=query-token#fragment-token",
     )
-    response = httpx.Response(
+    response = httpx2.Response(
         200,
         request=request,
         headers={

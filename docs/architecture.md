@@ -16,7 +16,7 @@ The child process and wall-clock timeout contain ordinary crashes and hangs, but
 
 Storage uses SQLAlchemy Core and explicit connections, without an ORM or repository layer. SQLite with WAL is the default; PostgreSQL uses the same application schema. Full-text search has a SQLite FTS5 implementation and a PostgreSQL tsvector implementation.
 
-Import boundaries are checked by import-linter: API and sync code depend inward through ingest, db, and domain. Import-linter forbids provider imports of db and ingest, or imports of httpx outside the host client. See [pyproject.toml](../pyproject.toml) and [providers/http.py](../aggregato/providers/http.py).
+Import boundaries are checked by import-linter: API and sync code depend inward through ingest, db, and domain. Import-linter forbids provider imports of db and ingest, or imports of httpx2 outside the host client. See [pyproject.toml](../pyproject.toml) and [providers/http.py](../aggregato/providers/http.py).
 
 ## Sync and ingest invariants
 

@@ -6,7 +6,7 @@ import csv
 import logging
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.domain.enums import FetchMode
@@ -89,13 +89,13 @@ def test_empty_optional_settings_are_unset() -> None:
 
 
 async def test_goodreads_rss_is_refetched_on_every_automatic_poll() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200, content=RSS)
+        return httpx2.Response(200, content=RSS)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
     context = ProviderContext(
         http=client,
         config=GoodreadsConfig(

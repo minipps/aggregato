@@ -18,7 +18,7 @@ cd frontend && npm install && npm run dev    # Vite dev server proxies /api to :
 All must be clean before anything merges. Warnings are errors.
 
 ```bash
-uv run ruff format --check . && uv run ruff check . && uv run mypy
+uv run ruff format --check . && uv run ruff check . && uv run ty check
 uv run lint-imports          # the decoupling contract — a merge gate, not a convention
 uv run pytest                # CI runs `-m "not bench"`; no test may touch the network
 cd frontend && npm run lint && npm run type-check && npm run test:unit
@@ -56,7 +56,7 @@ exists to make a requirement physically true rather than reviewed:
 
 Dependency direction is enforced by `[tool.importlinter]` in `pyproject.toml`:
 `api | sync` → `ingest` → `db` → `domain`, plus `aggregato.providers` may not import
-`aggregato.db`, `aggregato.ingest`, or `httpx` (one exemption: `providers/http.py`, which *is* the
+`aggregato.db`, `aggregato.ingest`, or `httpx2` (one exemption: `providers/http.py`, which *is* the
 host-owned client).
 
 Storage is SQLAlchemy **Core** only — no ORM, no session, no repository layer; a `Connection` is the
@@ -124,7 +124,7 @@ replays stored payloads through the child before fetching.
   `api.cors_origins` lists an origin: the SPA is same-origin in both prod and dev, so no browser
   preflights, and `OPTIONS` is a 405 by design. `*` is refused — credentials are enabled.
 - **Tests block sockets** (autouse fixture in `tests/conftest.py`), including loopback; use
-  recorded fixtures under `tests/fixtures/<provider_id>/` and httpx `ASGITransport`. `Clock` is
+  recorded fixtures under `tests/fixtures/<provider_id>/` and httpx2 `ASGITransport`. `Clock` is
   injected — no test sleeps.
 - **Migrations** are forward-only. A SQLite table rebuild turns foreign keys off around itself, and
   a migration needs a test that seeds rows at the previous revision and asserts they survive. Never

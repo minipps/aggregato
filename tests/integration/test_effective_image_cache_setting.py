@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
@@ -23,7 +23,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 @pytest.fixture
 async def disabled_cache_client(
     tmp_path: Path,
-) -> AsyncIterator[tuple[httpx.AsyncClient, FastAPI]]:
+) -> AsyncIterator[tuple[httpx2.AsyncClient, FastAPI]]:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     config_file = tmp_path / "config.yaml"
@@ -35,15 +35,15 @@ async def disabled_cache_client(
     app = create_app(config)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AUTH
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://test", headers=AUTH
         ) as client,
     ):
         yield client, app
 
 
 async def test_config_hard_disables_cache_and_preserves_database_preference(
-    disabled_cache_client: tuple[httpx.AsyncClient, FastAPI],
+    disabled_cache_client: tuple[httpx2.AsyncClient, FastAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, app = disabled_cache_client

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -39,7 +39,7 @@ async def engine(data_dir: Path) -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.fixture
-async def client(engine: AsyncEngine, data_dir: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(engine: AsyncEngine, data_dir: Path) -> AsyncIterator[httpx2.AsyncClient]:
     app = FastAPI(dependencies=[Depends(require_auth)])
     register_error_handlers(app)
     register_auth(
@@ -48,8 +48,8 @@ async def client(engine: AsyncEngine, data_dir: Path) -> AsyncIterator[httpx.Asy
         engine=engine,
     )
     app.include_router(health.router)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://t") as c:
         yield c
 
 
@@ -80,20 +80,20 @@ async def _add_provider(
             )
 
 
-async def test_requires_auth(client: httpx.AsyncClient) -> None:
+async def test_requires_auth(client: httpx2.AsyncClient) -> None:
     response = await client.get("/health")
     assert response.status_code == 401
     assert response.headers["content-type"].startswith(PROBLEM_MEDIA_TYPE)
 
 
-async def test_fresh_install_has_no_providers(client: httpx.AsyncClient) -> None:
+async def test_fresh_install_has_no_providers(client: httpx2.AsyncClient) -> None:
     """Zero provider rows is a fresh install, not an error."""
     response = await client.get("/health", headers=AUTH)
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "providers": []}
 
 
-async def test_shape_matches_contract(client: httpx.AsyncClient, engine: AsyncEngine) -> None:
+async def test_shape_matches_contract(client: httpx2.AsyncClient, engine: AsyncEngine) -> None:
     await _add_provider(
         engine,
         "letterboxd",
@@ -117,7 +117,7 @@ async def test_shape_matches_contract(client: httpx.AsyncClient, engine: AsyncEn
 
 
 async def test_degraded_when_any_provider_is_degraded(
-    client: httpx.AsyncClient, engine: AsyncEngine
+    client: httpx2.AsyncClient, engine: AsyncEngine
 ) -> None:
     await _add_provider(engine, "letterboxd", ProviderStatus.IDLE)
     await _add_provider(

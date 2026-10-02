@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.api.routes.images import _PLACEHOLDER, _add_base_url_origin, image
@@ -147,12 +147,12 @@ def engine(monkeypatch: pytest.MonkeyPatch) -> _FakeDatabase:
 
 
 def _mock_client(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
-    real_client = httpx.AsyncClient
+    real_client = httpx2.AsyncClient
 
-    def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
-        return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+    def factory(*args: Any, **kwargs: Any) -> httpx2.AsyncClient:
+        return real_client(*args, transport=httpx2.MockTransport(handler), **kwargs)
 
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(httpx2, "AsyncClient", factory)
 
 
 async def _register(engine: _FakeDatabase, url: str) -> str:
@@ -180,11 +180,11 @@ async def _register(engine: _FakeDatabase, url: str) -> str:
 async def test_image_source_rejects_unsafe_urls(
     engine: _FakeDatabase, data_dir: Path, monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
-    calls: list[httpx.Request] = []
+    calls: list[httpx2.Request] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200, request=request, headers={"content-type": "image/png"}, content=_PNG
         )
 
@@ -205,8 +205,8 @@ async def test_dns_results_are_checked_before_a_request(
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.10", port))]
 
     monkeypatch.setattr(socket, "getaddrinfo", private_result)
-    calls: list[httpx.Request] = []
-    _mock_client(monkeypatch, lambda request: calls.append(request) or httpx.Response(200))
+    calls: list[httpx2.Request] = []
+    _mock_client(monkeypatch, lambda request: calls.append(request) or httpx2.Response(200))
     digest = await _register(engine, "https://image.example/image.png")
 
     assert await cached_image(engine, data_dir, digest) is None
@@ -223,11 +223,11 @@ async def test_explicitly_configured_private_origin_can_serve_artwork(
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.23.0.2", port))]
 
     monkeypatch.setattr(socket, "getaddrinfo", private_result)
-    calls: list[httpx.Request] = []
+    calls: list[httpx2.Request] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200, request=request, headers={"content-type": "image/webp"}, content=_WEBP
         )
 
@@ -260,11 +260,11 @@ def test_only_a_provider_base_url_becomes_a_private_image_origin() -> None:
 async def test_redirect_target_is_validated_before_following(
     engine: _FakeDatabase, data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[httpx.Request] = []
+    calls: list[httpx2.Request] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             302,
             request=request,
             headers={"location": "https://127.0.0.1/private.png"},
@@ -291,8 +291,8 @@ async def test_dns_address_is_pinned_for_the_connection_request(
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
 
     monkeypatch.setattr(socket, "getaddrinfo", rebinding_result)
-    calls: list[httpx.Request] = []
-    _mock_client(monkeypatch, lambda request: calls.append(request) or httpx.Response(200))
+    calls: list[httpx2.Request] = []
+    _mock_client(monkeypatch, lambda request: calls.append(request) or httpx2.Response(200))
     digest = await _register(engine, "https://image.example/image.png")
 
     assert await cached_image(engine, data_dir, digest) is None
@@ -317,8 +317,8 @@ async def test_image_body_must_be_a_non_svg_known_format(
     content_type: str,
     body: bytes,
 ) -> None:
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, request=request, headers={"content-type": content_type}, content=body
         )
 
@@ -352,8 +352,8 @@ async def test_common_raster_formats_pass_magic_detection(
     content_type: str,
     body: bytes,
 ) -> None:
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, request=request, headers={"content-type": content_type}, content=body
         )
 
@@ -373,8 +373,8 @@ async def test_response_size_is_bounded_before_publication(
     monkeypatch.setattr(image_cache, "MAX_IMAGE_BYTES", 16)
     body = _PNG + b"x" * 16
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, request=request, headers={"content-type": "image/png"}, content=body
         )
 
@@ -392,7 +392,7 @@ async def test_declared_response_size_is_bounded_before_streaming(
     monkeypatch.setattr(image_cache, "MAX_IMAGE_BYTES", 16)
     streamed = False
 
-    class _Body(httpx.AsyncByteStream):
+    class _Body(httpx2.AsyncByteStream):
         async def __aiter__(self) -> Any:
             nonlocal streamed
             streamed = True
@@ -401,8 +401,8 @@ async def test_declared_response_size_is_bounded_before_streaming(
         async def aclose(self) -> None:
             return None
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             request=request,
             headers={"content-type": "image/png", "content-length": "17"},
@@ -422,10 +422,10 @@ async def test_valid_image_is_hashed_and_published_atomically(
 ) -> None:
     calls = 0
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(
+        return httpx2.Response(
             200, request=request, headers={"content-type": "image/jpeg"}, content=_PNG
         )
 
@@ -447,10 +447,10 @@ async def test_corrupt_cached_bytes_are_not_served(
 ) -> None:
     calls = 0
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(
+        return httpx2.Response(
             200, request=request, headers={"content-type": "image/png"}, content=_PNG
         )
 
@@ -507,7 +507,7 @@ async def test_concurrent_misses_share_one_digest_fetch(
     assert calls == 1
 
 
-class _InterruptedStream(httpx.AsyncByteStream):
+class _InterruptedStream(httpx2.AsyncByteStream):
     async def __aiter__(self) -> Any:
         yield _PNG
         raise OSError("connection interrupted")
@@ -519,8 +519,8 @@ class _InterruptedStream(httpx.AsyncByteStream):
 async def test_interrupted_stream_leaves_no_partial_file(
     engine: _FakeDatabase, data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             request=request,
             headers={"content-type": "image/png"},

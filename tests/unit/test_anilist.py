@@ -7,7 +7,7 @@ import logging
 from decimal import Decimal
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from aggregato.domain.enums import CreatorKind, EntryKind, FetchMode, Role, ScaleKind
 from aggregato.domain.models import Cursor, NormalizedEntry, RawRecord
@@ -45,16 +45,16 @@ def test_anilist_fixture_has_season_staff_studio_and_ordinal_rating() -> None:
 async def test_anilist_fetches_anime_and_manga_collections_separately() -> None:
     requests: list[dict[str, object]] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         variables = json.loads(request.content)["variables"]
         requests.append(dict(variables))
         media_type = variables["type"]
         item = {"id": media_type, "media": {"type": media_type}}
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"data": {"MediaListCollection": {"lists": [{"entries": [item]}]}}}
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http:
         context = ProviderContext(
             http=http,  # type: ignore[arg-type]
             config=AniListProvider.config_model(username="mini"),
@@ -81,16 +81,16 @@ async def test_a_stored_cursor_does_not_silence_later_runs() -> None:
     """
     calls = 0
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         nonlocal calls
         calls += 1
         media_type = json.loads(request.content)["variables"]["type"]
         item = {"id": media_type, "status": "COMPLETED", "media": {"type": media_type}}
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"data": {"MediaListCollection": {"lists": [{"entries": [item]}]}}}
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http:
         context = ProviderContext(
             http=http,
             config=AniListProvider.config_model(username="mini"),
@@ -112,10 +112,10 @@ async def test_a_stored_cursor_does_not_silence_later_runs() -> None:
 async def test_no_checkpoint_is_yielded_so_no_cursor_goes_stale() -> None:
     """One unpaginated request per media type has no resumable position to record."""
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": {"MediaListCollection": {"lists": []}}})
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"data": {"MediaListCollection": {"lists": []}}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http:
         context = ProviderContext(
             http=http,
             config=AniListProvider.config_model(username="mini"),
@@ -240,7 +240,7 @@ async def test_a_five_point_account_is_rated_on_the_five_point_scale() -> None:
     score itself says which, so the format has to be fetched and retained alongside it.
     """
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx2.Request) -> httpx2.Response:
         item = {
             "id": 7,
             "score": 4,
@@ -248,7 +248,7 @@ async def test_a_five_point_account_is_rated_on_the_five_point_scale() -> None:
             "updatedAt": 1700000000,
             "media": {"id": 70, "type": json.loads(request.content)["variables"]["type"]},
         }
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "data": {
@@ -260,7 +260,7 @@ async def test_a_five_point_account_is_rated_on_the_five_point_scale() -> None:
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http:
         context = ProviderContext(
             http=http,  # type: ignore[arg-type]
             config=AniListProvider.config_model(username="mini"),

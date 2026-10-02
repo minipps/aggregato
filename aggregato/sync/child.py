@@ -105,7 +105,7 @@ async def run(
         _politeness_policy(provider), host_state_dir=host_state_dir, on_response=_response
     )
     ctx = ProviderContext(
-        http=client,  # type: ignore[arg-type]  # PoliteClient is the wrapper the contract promises
+        http=client,  # ty: ignore[invalid-argument-type] - PoliteClient is the contract's wrapper
         config=provider.config_model.model_validate(_with_secrets(config, secrets)),
         secrets=secrets,
         log=log,

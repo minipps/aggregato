@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from aggregato.config import load_config
@@ -21,7 +21,7 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
     data = tmp_path / "data"
     data.mkdir()
     app = create_app(
@@ -105,8 +105,8 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         )
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
             base_url="http://test",
             headers={"Authorization": f"Bearer {TOKEN}"},
         ) as value,
@@ -114,7 +114,7 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         yield value
 
 
-async def test_linked_decision_serializes_the_queue_snapshot(client: httpx.AsyncClient) -> None:
+async def test_linked_decision_serializes_the_queue_snapshot(client: httpx2.AsyncClient) -> None:
     response = await client.post(
         "/api/v1/resolution-queue/1/decide",
         json={"decision": "linked", "target_id": "dd0529d2-a6b2-4bf5-8ce9-6870e725196d"},
@@ -125,7 +125,7 @@ async def test_linked_decision_serializes_the_queue_snapshot(client: httpx.Async
 
 
 async def test_linked_decision_follows_a_merged_creator_candidate(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.post(
         "/api/v1/resolution-queue/2/decide",

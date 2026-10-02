@@ -15,7 +15,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.36",
     "alembic>=1.14",
     "aiosqlite>=0.20",
-    "httpx>=0.28",
+    "httpx2>=2.13.1",
     "pyyaml>=6.0",
     "puremagic>=1.30",
 ]
@@ -28,9 +28,10 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
-    "mypy>=1.13",
     "import-linter>=2.1",
     "types-pyyaml>=6.0",
+    "python-e18e",
+    "ty>=0.0.84",
 ]
 
 [build-system]
@@ -61,6 +62,8 @@ select = [
     "ASYNC",
     "S",                # bandit
     "DTZ",              # naive datetime — stored timestamps must be timezone-aware
+    "ANN001", "ANN002", "ANN003",  # require parameter annotations (formerly mypy strict)
+    "ANN201", "ANN202", "ANN204", "ANN205", "ANN206",  # require return annotations
 ]
 ignore = [
     "S101",  # asserts are how tests assert
@@ -73,20 +76,27 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S105", "S106", "S311"]
+"tests/**" = ["S105", "S106", "S311", "ANN"]
 
-[tool.mypy]
-python_version = "3.13"
-files = ["aggregato"]
-strict = true
-warn_unreachable = true
-enable_error_code = ["redundant-expr", "truthy-bool", "ignore-without-code"]
-# Alembic's generated revision modules are not typed and are not hand-maintained code.
-exclude = "aggregato/db/migrations/versions"
+[tool.ty.environment]
+python-version = "3.13"
 
-[[tool.mypy.overrides]]
-module = "aggregato.db.migrations.*"
-ignore_errors = true
+[tool.ty.src]
+include = ["aggregato"]
+# Preserve the existing exclusion of Alembic runtime and generated revisions.
+exclude = ["aggregato/db/migrations"]
+
+[tool.ty.rules]
+dynamic-function-decorator-return = "error"
+missing-type-argument = "error"
+possibly-unresolved-reference = "error"
+unused-ignore-comment = "error"
+
+[tool.ty.analysis]
+respect-type-ignore-comments = false
+
+[tool.ty.terminal]
+error-on-warning = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -100,7 +110,7 @@ markers = ["bench: performance budget checks (performance guidance)"]
 
 [tool.importlinter]
 root_packages = ["aggregato"]
-# Needed because one contract forbids an *external* module (httpx) rather than a first-party one.
+# Needed because one contract forbids an *external* module (httpx2) rather than a first-party one.
 include_external_packages = true
 # A `if TYPE_CHECKING:` import cannot construct anything at runtime, so it cannot break any contract
 # here — the rules below are about reachable capability, not about which names a module can spell.
@@ -111,14 +121,14 @@ exclude_type_checking_imports = true
 name = "Providers cannot reach storage, ingest, or an HTTP client of their own"
 type = "forbidden"
 source_modules = ["aggregato.providers"]
-forbidden_modules = ["aggregato.db", "aggregato.ingest", "httpx"]
+forbidden_modules = ["aggregato.db", "aggregato.ingest", "httpx", "httpx2"]
 # `providers/http.py` is the host-owned client wrapper for request pacing, so it is exempted from
-# the rule against importing httpx. The import rule applies to bundled provider
+# the rule against importing httpx2. The import rule applies to bundled provider
 # code; drop-in packages are unreviewed Python and are not sandboxed.
 #
-# `providers/base.py` gets no exemption and needs none: it takes the httpx *type* behind
+# `providers/base.py` gets no exemption and needs none: it takes the httpx2 *type* behind
 # `if TYPE_CHECKING`, which the session-level exclude_type_checking_imports above discounts.
-ignore_imports = ["aggregato.providers.http -> httpx"]
+ignore_imports = ["aggregato.providers.http -> httpx2"]
 
 [[tool.importlinter.contracts]]
 name = "The API never drives the scheduler in-process"
@@ -136,3 +146,6 @@ layers = [
     "aggregato.domain",
 ]
 exhaustive = false
+
+[tool.uv.sources]
+python-e18e = { git = "https://github.com/python-e18e/cli", rev = "1cb588e5b4a039f8c1e426287dc1191c40abbbf8" }

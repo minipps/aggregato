@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import select, update
 
@@ -37,34 +37,34 @@ def config_for(data_dir: Path, **overrides: object) -> Config:
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     app = create_app(config_for(data_dir))
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
             c.headers.update(AUTH)
             yield c
 
 
-async def _engine_for(client: httpx.AsyncClient) -> object:
+async def _engine_for(client: httpx2.AsyncClient) -> object:
     """The app's own engine, so a test can inspect state the API does not expose."""
-    transport = client._transport_for_url(httpx.URL("http://test/"))
-    assert isinstance(transport, httpx.ASGITransport)
+    transport = client._transport_for_url(httpx2.URL("http://test/"))
+    assert isinstance(transport, httpx2.ASGITransport)
     return transport.app.state.engine  # type: ignore[union-attr]
 
 
 # --- Listing -----------------------------------------------------------------------------------
 
 
-async def test_listing_requires_authentication(client: httpx.AsyncClient) -> None:
+async def test_listing_requires_authentication(client: httpx2.AsyncClient) -> None:
     response = await client.get("/api/v1/providers", headers={"Authorization": ""})
     assert response.status_code == 401
     assert response.headers["content-type"] == "application/problem+json"
 
 
-async def test_listing_returns_the_contract_shape(client: httpx.AsyncClient) -> None:
+async def test_listing_returns_the_contract_shape(client: httpx2.AsyncClient) -> None:
     response = await client.get("/api/v1/providers")
     assert response.status_code == 200
     body = response.json()
@@ -85,7 +85,7 @@ async def test_listing_returns_the_contract_shape(client: httpx.AsyncClient) -> 
 
 
 async def test_a_discovered_provider_is_listed_before_it_is_enabled(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """Discovery is not activation, and test-only providers are not advertised ."""
     body = (await client.get("/api/v1/providers")).json()
@@ -94,13 +94,13 @@ async def test_a_discovered_provider_is_listed_before_it_is_enabled(
 
 
 async def test_readonly_provider_list_hides_raw_error_details(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     from aggregato.domain.enums import ErrorClass
 
     engine = await _engine_for(client)
-    transport = client._transport_for_url(httpx.URL("http://test/"))
-    assert isinstance(transport, httpx.ASGITransport)
+    transport = client._transport_for_url(httpx2.URL("http://test/"))
+    assert isinstance(transport, httpx2.ASGITransport)
     app = transport.app
     assert app is not None
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
@@ -164,8 +164,8 @@ async def test_readonly_provider_list_hides_raw_error_details(
         db_overrides={"providers": {"fixture": {"path": str(FIXTURE)}}},
     )
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://test"
     ) as reader:
         for headers in (
             {"Authorization": "Bearer provider-readonly-token"},
@@ -195,11 +195,11 @@ async def test_readonly_provider_list_hides_raw_error_details(
 
 
 async def test_disable_reenable_during_run_keeps_operation_locked(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     engine = await _engine_for(client)
-    transport = client._transport_for_url(httpx.URL("http://test/"))
-    assert isinstance(transport, httpx.ASGITransport)
+    transport = client._transport_for_url(httpx2.URL("http://test/"))
+    assert isinstance(transport, httpx2.ASGITransport)
     app = transport.app
     assert app is not None
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
@@ -284,14 +284,14 @@ async def test_disable_reenable_during_run_keeps_operation_locked(
     assert state.requested_lineage_id == lineage
 
 
-async def test_bundled_providers_are_marked_reviewed(client: httpx.AsyncClient) -> None:
+async def test_bundled_providers_are_marked_reviewed(client: httpx2.AsyncClient) -> None:
     """: ``reviewed`` false is for drop-in development providers, which the UI labels."""
     body = (await client.get("/api/v1/providers")).json()
     assert all(p["reviewed"] is True for p in body)
 
 
 async def test_provider_config_schema_is_declared_by_the_provider(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.get("/api/v1/providers/anilist/config-schema")
     assert response.status_code == 200
@@ -301,7 +301,7 @@ async def test_provider_config_schema_is_declared_by_the_provider(
 
 
 async def test_config_schema_of_an_unknown_provider_is_a_404_problem(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.get("/api/v1/providers/not-a-provider/config-schema")
     assert response.status_code == 404
@@ -309,7 +309,7 @@ async def test_config_schema_of_an_unknown_provider_is_a_404_problem(
 
 
 async def test_configure_provider_persists_validated_settings_without_enabling_it(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """Web configuration is durable but cannot start a provider without a separate enable action."""
     response = await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
@@ -325,7 +325,7 @@ async def test_configure_provider_persists_validated_settings_without_enabling_i
 
 
 async def test_listing_shows_only_non_sensitive_current_provider_settings(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.put(
         "/api/v1/providers/anilist/config",
@@ -351,7 +351,7 @@ async def test_listing_shows_only_non_sensitive_current_provider_settings(
 
 
 async def test_invalid_provider_config_is_rejected_without_creating_provider_state(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     response = await client.put("/api/v1/providers/fixture/config", json={"wrong_key": 1})
 
@@ -367,7 +367,7 @@ async def test_invalid_provider_config_is_rejected_without_creating_provider_sta
 # --- Enable and disable -------------------------------------------------------------------------
 
 
-async def test_enabling_makes_a_provider_enabled_and_due(client: httpx.AsyncClient) -> None:
+async def test_enabling_makes_a_provider_enabled_and_due(client: httpx2.AsyncClient) -> None:
     response = await client.post("/api/v1/providers/fixture/enable")
     assert response.status_code == 200
     body = response.json()
@@ -378,11 +378,11 @@ async def test_enabling_makes_a_provider_enabled_and_due(client: httpx.AsyncClie
 
 
 async def test_valid_config_change_requeues_only_a_suspended_enabled_provider(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     engine = await _engine_for(client)
-    transport = client._transport_for_url(httpx.URL("http://test/"))
-    assert isinstance(transport, httpx.ASGITransport)
+    transport = client._transport_for_url(httpx2.URL("http://test/"))
+    assert isinstance(transport, httpx2.ASGITransport)
     app = transport.app
     assert app is not None
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
@@ -439,7 +439,7 @@ async def test_valid_config_change_requeues_only_a_suspended_enabled_provider(
     assert next_run.replace(tzinfo=UTC) == now
 
 
-async def test_enabling_twice_is_harmless(client: httpx.AsyncClient) -> None:
+async def test_enabling_twice_is_harmless(client: httpx2.AsyncClient) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     second = await client.post("/api/v1/providers/fixture/enable")
     assert second.status_code == 200
@@ -447,7 +447,7 @@ async def test_enabling_twice_is_harmless(client: httpx.AsyncClient) -> None:
 
 
 async def test_disabling_stops_it_being_due_without_deleting_anything(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """Disabling is not a way to lose history ."""
     await client.post("/api/v1/providers/fixture/enable")
@@ -460,7 +460,7 @@ async def test_disabling_stops_it_being_due_without_deleting_anything(
     assert body["next_run_at"] is None
 
 
-async def test_enabling_an_unknown_provider_is_a_404_problem(client: httpx.AsyncClient) -> None:
+async def test_enabling_an_unknown_provider_is_a_404_problem(client: httpx2.AsyncClient) -> None:
     response = await client.post("/api/v1/providers/not-a-provider/enable")
     assert response.status_code == 404
     assert response.headers["content-type"] == "application/problem+json"
@@ -471,7 +471,7 @@ async def test_enabling_an_unknown_provider_is_a_404_problem(client: httpx.Async
 
 
 async def test_sync_status_reports_queue_and_live_run_progress(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     await client.post("/api/v1/providers/fixture/sync")
@@ -520,7 +520,7 @@ async def test_sync_status_reports_queue_and_live_run_progress(
     assert run["progress_percent"] is None
 
 
-async def test_sync_now_queues_and_returns_a_lineage(client: httpx.AsyncClient) -> None:
+async def test_sync_now_queues_and_returns_a_lineage(client: httpx2.AsyncClient) -> None:
     """202, because the run is queued rather than performed — the API cannot spawn it ."""
     await client.post("/api/v1/providers/fixture/enable")
     response = await client.post("/api/v1/providers/fixture/sync")
@@ -529,7 +529,7 @@ async def test_sync_now_queues_and_returns_a_lineage(client: httpx.AsyncClient) 
     assert response.json()["lineage_id"]
 
 
-async def test_sync_now_makes_the_provider_due(client: httpx.AsyncClient) -> None:
+async def test_sync_now_makes_the_provider_due(client: httpx2.AsyncClient) -> None:
     """The whole mechanism: the API writes next_run_at, the scheduler notices."""
     from datetime import UTC, datetime
 
@@ -543,7 +543,7 @@ async def test_sync_now_makes_the_provider_due(client: httpx.AsyncClient) -> Non
     assert [d.provider_id for d in due] == ["fixture"]
 
 
-async def test_a_full_sync_clears_the_cursor(client: httpx.AsyncClient) -> None:
+async def test_a_full_sync_clears_the_cursor(client: httpx2.AsyncClient) -> None:
     """A full run that resumed from a cursor would not be a full run."""
     await client.post("/api/v1/providers/fixture/enable")
     engine = await _engine_for(client)
@@ -562,7 +562,7 @@ async def test_a_full_sync_clears_the_cursor(client: httpx.AsyncClient) -> None:
     assert cursor is None
 
 
-async def test_a_full_sync_request_reaches_the_dispatcher(client: httpx.AsyncClient) -> None:
+async def test_a_full_sync_request_reaches_the_dispatcher(client: httpx2.AsyncClient) -> None:
     """Clearing the cursor is not enough on its own.
 
     The scheduler has no mode of its own — it is a timestamp column — so a run dispatched from it
@@ -583,7 +583,7 @@ async def test_a_full_sync_request_reaches_the_dispatcher(client: httpx.AsyncCli
 
 
 async def test_an_incremental_sync_leaves_no_mode_request_behind(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """A scheduled run is incremental, so the ordinary case stores nothing to consume."""
     from datetime import UTC, datetime
@@ -598,7 +598,7 @@ async def test_an_incremental_sync_leaves_no_mode_request_behind(
     assert due.requested_mode == "incremental"
 
 
-async def test_an_incremental_sync_keeps_the_cursor(client: httpx.AsyncClient) -> None:
+async def test_an_incremental_sync_keeps_the_cursor(client: httpx2.AsyncClient) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     engine = await _engine_for(client)
 
@@ -616,13 +616,13 @@ async def test_an_incremental_sync_keeps_the_cursor(client: httpx.AsyncClient) -
     assert cursor == {"next_page": 7}
 
 
-async def test_syncing_a_disabled_provider_is_a_409(client: httpx.AsyncClient) -> None:
+async def test_syncing_a_disabled_provider_is_a_409(client: httpx2.AsyncClient) -> None:
     response = await client.post("/api/v1/providers/fixture/sync")
     assert response.status_code == 409
     assert response.headers["content-type"] == "application/problem+json"
 
 
-async def test_syncing_while_a_run_is_in_flight_is_a_409(client: httpx.AsyncClient) -> None:
+async def test_syncing_while_a_run_is_in_flight_is_a_409(client: httpx2.AsyncClient) -> None:
     """Two concurrent runs of one provider would race on its cursor."""
     await client.post("/api/v1/providers/fixture/enable")
     engine = await _engine_for(client)
@@ -639,14 +639,14 @@ async def test_syncing_while_a_run_is_in_flight_is_a_409(client: httpx.AsyncClie
     assert "already syncing" in response.json()["detail"]
 
 
-async def test_an_unknown_sync_mode_is_rejected(client: httpx.AsyncClient) -> None:
+async def test_an_unknown_sync_mode_is_rejected(client: httpx2.AsyncClient) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     response = await client.post("/api/v1/providers/fixture/sync", json={"mode": "sideways"})
     assert response.status_code == 422
     assert response.headers["content-type"] == "application/problem+json"
 
 
-async def test_syncing_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -> None:
+async def test_syncing_an_unknown_provider_is_a_404(client: httpx2.AsyncClient) -> None:
     response = await client.post("/api/v1/providers/nope/sync")
     assert response.status_code == 404
 
@@ -655,7 +655,7 @@ async def test_syncing_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -
 
 
 async def test_check_queues_a_disabled_provider_without_rescheduling_it(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     """A diagnostic is an explicit worker job, not an enable or a schedule mutation."""
     await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
@@ -703,7 +703,7 @@ async def test_check_queues_a_disabled_provider_without_rescheduling_it(
 
 
 async def test_check_runs_in_isolation_and_is_not_sync_history(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
 ) -> None:
     await client.put("/api/v1/providers/fixture/config", json={"path": str(FIXTURE)})
     engine = await _engine_for(client)
@@ -723,8 +723,8 @@ async def test_check_runs_in_isolation_and_is_not_sync_history(
 
     due = await due_providers(engine, now=datetime(2026, 1, 1, tzinfo=UTC))  # type: ignore[arg-type]
     assert await claim(engine, "fixture", now=datetime(2026, 1, 1, tzinfo=UTC))  # type: ignore[arg-type]
-    transport = client._transport_for_url(httpx.URL("http://test/"))
-    assert isinstance(transport, httpx.ASGITransport)
+    transport = client._transport_for_url(httpx2.URL("http://test/"))
+    assert isinstance(transport, httpx2.ASGITransport)
     await build_dispatch(engine, transport.app.state.config)(due[0])  # type: ignore[arg-type, union-attr]
 
     async with transaction(engine) as conn:  # type: ignore[arg-type]
@@ -772,7 +772,7 @@ async def test_check_runs_in_isolation_and_is_not_sync_history(
     assert view.json()["last_check"]["status"] == "success"
 
 
-async def test_check_rejects_invalid_configuration(client: httpx.AsyncClient) -> None:
+async def test_check_rejects_invalid_configuration(client: httpx2.AsyncClient) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     engine = await _engine_for(client)
     async with transaction(engine) as conn:  # type: ignore[arg-type]
@@ -793,7 +793,7 @@ async def test_check_rejects_invalid_configuration(client: httpx.AsyncClient) ->
     assert requested is None
 
 
-async def test_check_rejects_an_active_sync(client: httpx.AsyncClient) -> None:
+async def test_check_rejects_an_active_sync(client: httpx2.AsyncClient) -> None:
     await client.post("/api/v1/providers/fixture/enable")
     engine = await _engine_for(client)
     async with transaction(engine) as conn:  # type: ignore[arg-type]
@@ -815,7 +815,7 @@ async def test_check_rejects_an_active_sync(client: httpx.AsyncClient) -> None:
 # --- Latest recorded run -----------------------------------------------------------------------
 
 
-async def test_latest_run_on_a_provider_that_never_ran_says_so(client: httpx.AsyncClient) -> None:
+async def test_latest_run_on_a_provider_that_never_ran_says_so(client: httpx2.AsyncClient) -> None:
     """Not-yet-known is different from broken, and the response must not conflate them."""
     response = await client.get("/api/v1/providers/fixture/last-run")
     assert response.status_code == 200
@@ -825,7 +825,7 @@ async def test_latest_run_on_a_provider_that_never_ran_says_so(client: httpx.Asy
     assert "not run yet" in body["detail"]
 
 
-async def test_latest_run_reports_the_last_run_error_class(client: httpx.AsyncClient) -> None:
+async def test_latest_run_reports_the_last_run_error_class(client: httpx2.AsyncClient) -> None:
     from datetime import UTC, datetime
     from uuid import uuid4
 
@@ -852,7 +852,7 @@ async def test_latest_run_reports_the_last_run_error_class(client: httpx.AsyncCl
     assert body["detail"] == "token rejected"
 
 
-async def test_latest_run_on_an_unknown_provider_is_a_404(client: httpx.AsyncClient) -> None:
+async def test_latest_run_on_an_unknown_provider_is_a_404(client: httpx2.AsyncClient) -> None:
     assert (await client.get("/api/v1/providers/nope/last-run")).status_code == 404
 
 
@@ -875,8 +875,8 @@ async def test_an_invalid_provider_config_does_not_break_listing(tmp_path: Path)
     app = create_app(config)
 
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
             c.headers.update(AUTH)
             listing = await c.get("/api/v1/providers")
             health = await c.get("/api/v1/health")
