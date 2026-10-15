@@ -31,6 +31,47 @@ When Goodreads provides a supported personal-library feed or export endpoint, th
 
 Retain historical payload support when changing acquisition surfaces.
 
+## Backloggd
+
+Backloggd's public documentation does not publish a public API or authenticated feed/export
+endpoint for account history. Its [roadmap](https://backloggd.com/roadmap/) still lists CSV export
+as a requested feature. The highest documented account-history surface is the public Reviews RSS
+feed at `/u/<username>/reviews/rss/`. The [changelog](https://backloggd.com/changelog/) says this
+feed contains only the user's latest 20 reviews. Configure the provider with the username from your
+own profile; it derives the feed URL and polls every six hours. No account credential is needed for
+this public feed, and Backloggd does not document an RSS request limit.
+
+```yaml
+providers:
+  backloggd:
+    enabled: true
+    settings:
+      username: your_backloggd_username
+```
+
+The RSS 2.0 items expose a review GUID, title, optional review link, feed `pubDate`, review text,
+numeric `backloggd:user_rating` (namespace URI `https://backloggd.com/`), reviewer, and optional
+cover image. The review GUID is the native review identity and should remain the `provider_item`
+identity; the feed has no native game identifier, so game identity is left to host resolution from
+the title and release year. `pubDate` is the feed item's publication time, not a documented play
+date.
+
+This surface supports review and rating synchronization only. It does not expose the user's full
+log history, journal sessions, play dates, play status, backlog or wishlist, and it cannot backfill
+past the latest 20 reviews. The provider must not infer played entries from reviews. Full fetches
+read the same bounded feed and must not be presented as complete-history backfills. The official
+[About page](https://backloggd.com/about/) describes logs and journals separately from reviews and
+allows multiple logs for a game, which confirms that the RSS feed is not a complete activity
+archive.
+
+`tests/fixtures/backloggd/reviews.rss` is a sanitized, user-supplied recording of a real 20-item
+feed response. It preserves the feed structure and item order while replacing the source account
+name and per-review identifiers with placeholders; no original account identity or review IDs are
+stored in the repository. The recording verifies one actual rolling-feed snapshot, not full-history
+coverage or behavior across account visibility settings. CI reads this fixture offline and never
+captures a live feed. The empty-feed envelope, missing-user status, and block/throttle responses are
+not defined by Backloggd's public documentation; their fixtures are synthetic.
+
 ## Koito
 
 Koito is self-hosted, so its API is the highest surface and already the one in use:

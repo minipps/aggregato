@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:backloggd="https://backloggd.com/"
+     xmlns:future="https://example.invalid/future/">
+  <channel>
+    <title>user-0001 reviews</title>
+    <link>https://backloggd.com/u/user-0001/reviews/</link>
+    <description>Synthetic item extension preservation case.</description>
+    <item>
+      <title>Future Game (2025) - ★★★</title>
+      <link>https://backloggd.com/u/user-0001/review/9000999/future-game/</link>
+      <pubDate>Wed, 01 Jan 2025 12:00:00 +0000</pubDate>
+      <description><![CDATA[A synthetic review with an unrecognized item field.]]></description>
+      <guid isPermaLink="false">backloggd-review-9000999</guid>
+      <backloggd:user_rating>6</backloggd:user_rating>
+      <backloggd:reviewer>user-0001</backloggd:reviewer>
+      <future:future_game_id>future-value-001</future:future_game_id>
+    </item>
+  </channel>
+</rss>

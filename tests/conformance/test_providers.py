@@ -334,7 +334,7 @@ async def test_group6_cursor_round_trip(
     assert len(set(full)) == len(full), "the uninterrupted fetch itself yields duplicate native ids"
 
 
-# --- group 7: check reports, for valid and invalid credentials ------------------------------------
+# --- group 7: check reports, for valid and invalid inputs -----------------------------------------
 
 
 async def test_group7_check_reports_both_outcomes(
@@ -343,12 +343,13 @@ async def test_group7_check_reports_both_outcomes(
     ctx: ProviderContext,
     provider_fixtures: Path,
 ) -> None:
-    """Group 7: ``check`` returns a ``CheckResult`` for a valid and for an invalid credential set.
+    """Group 7: ``check`` returns a ``CheckResult`` for valid and invalid provider inputs.
 
     ``check`` is a diagnostic the operator asked for, so its failure is the answer, not an error
     (contract §1): raising here would surface in the UI as a crash instead of as the sentence that
-    tells the operator what to fix. The invalid case must also name an ``error_class``, because that
-    is what the host records on ``providers.last_error``.
+    tells the operator what to fix. Credentialed APIs receive invalid credentials; unauthenticated
+    feeds use an invalid response. The negative case must name an ``error_class``, because that is
+    what the host records on ``providers.last_error``.
     """
     ok = await provider.check(ctx)
     assert isinstance(ok, CheckResult)

@@ -5,10 +5,11 @@ This suite is a **merge gate** (testing guidance and V) and the third-party comp
 provider: adding a provider means adding a ``Registration`` below, not writing new tests.
 
 A provider registers by naming its id, the recorded fixture ``fetch`` should read, the fixture that
-must make ``check`` fail, and how to build its config from a fixture path. Everything else is
-derived: the provider object comes from ``load_provider``, and the records come out of the
-provider's own ``fetch`` rather than from a second reader of the wire format written here — a
-conformance suite that parsed the fixtures itself would be asserting against its own parser.
+must make ``check`` fail, and how to build its config from a fixture path. Paginated resumable
+sources span at least two pages; rolling feeds may be a single snapshot. Everything else is derived:
+the provider object comes from ``load_provider``, and the records come out of the provider's own
+``fetch`` rather than from a second reader of the wire format written here — a conformance suite
+that parsed the fixtures itself would be asserting against its own parser.
 """
 
 from __future__ import annotations
@@ -38,11 +39,11 @@ class Registration:
 
     Attributes:
         provider_id: The slug, which is also the package name and the fixture directory name.
-        records: Fixture under ``tests/fixtures/<id>/`` holding the recorded records, spanning at
-            least two pages so group 6 has a checkpoint to resume from.
-        invalid: Fixture that stands in for an invalid credential set, so group 7 can assert
-            ``check`` reports rather than raises. For a file-based provider this is an unreadable
-            file; for an API provider it is a rejected-credentials response.
+        records: Fixture under ``tests/fixtures/<id>/`` holding source records. Paginated resumable
+            sources span at least two pages; rolling feeds may be a single snapshot.
+        invalid: Fixture that makes ``check`` report an actionable failure rather than raise.
+            Credentialed APIs use rejected credentials; public feeds can use an invalid feed
+            response because they have no credentials to reject.
         config: Builds the ``config_model`` kwargs from the fixture path being exercised. Providers
             that do not read a path ignore the argument.
         secrets: What the host would resolve from the environment. Placeholders only — a real
@@ -125,6 +126,12 @@ REGISTERED = [
             "username": None if path.name == "structure-changed.rss" else "fixture_user"
         },
     ),
+    Registration(
+        provider_id="backloggd",
+        records="reviews.rss",
+        invalid="structure-changed.rss",
+        config=lambda _path: {"username": "user-0001"},
+    ),
 ]
 """Every bundled provider. ``test_every_bundled_provider_is_registered`` fails if one is missing, so
 shipping a provider without entering it into the gate is not possible (contract §5)."""
@@ -185,6 +192,8 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_goodreads_fixture(path)))
     elif registration.provider_id == "letterboxd":
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_letterboxd_fixture(path)))
+    elif registration.provider_id == "backloggd":
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_backloggd_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -324,6 +333,40 @@ def _letterboxd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Respons
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, content=payload)
+
+    return respond
+
+
+def _backloggd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve the selected synthetic RSS case only at Backloggd's public reviews-feed route."""
+
+    feed_path = "/u/user-0001/reviews/rss/"
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method != "GET" or request.url.host != "backloggd.com":
+            raise AssertionError(f"unexpected Backloggd request: {request.method} {request.url}")
+        if request.url.path != feed_path or request.url.params:
+            raise AssertionError(f"unexpected Backloggd reviews-feed route: {request.url}")
+        if "authorization" in request.headers or "cookie" in request.headers:
+            raise AssertionError("the public Backloggd feed must not send credentials")
+
+        if path.name in {"blocked.html", "blocked-200.html"}:
+            return httpx2.Response(
+                200 if path.name == "blocked-200.html" else 403,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "rate-limited.txt":
+            return httpx2.Response(
+                429,
+                content=path.read_bytes(),
+                headers={"content-type": "text/plain; charset=utf-8", "retry-after": "120"},
+            )
+        return httpx2.Response(
+            200,
+            content=path.read_bytes(),
+            headers={"content-type": "application/rss+xml; charset=utf-8"},
+        )
 
     return respond
 

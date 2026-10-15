@@ -151,6 +151,14 @@ _goodreads_profile = _nullable_string(
     min_length=1,
     max_length=2083,
 )
+_backloggd_username, _ = _string(
+    description=(
+        "Backloggd username whose public Reviews RSS feed to poll. The feed contains only the "
+        "latest 20 reviews; it does not include playthrough history."
+    ),
+    required=True,
+    min_length=1,
+)
 _koito_base_url, _ = _string(
     description=(
         "Base URL of the Koito server: scheme, host and optional port, for example "
@@ -268,6 +276,24 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 maximum="3",
                 step="1",
                 labels={"1": 0, "2": 50, "3": 100},
+            ),
+        ),
+    ),
+    "backloggd": _manifest(
+        name="Backloggd",
+        media_types=("game",),
+        capabilities=("poll", "has_ratings", "has_reviews"),
+        acquisition="feed",
+        schema_version=1,
+        interval_seconds=21600,
+        config_schema=_object_schema({"username": _backloggd_username}, required=["username"]),
+        rating_scales=(
+            _scale(
+                "backloggd-10-point",
+                kind="linear",
+                minimum="1",
+                maximum="10",
+                step="1",
             ),
         ),
     ),

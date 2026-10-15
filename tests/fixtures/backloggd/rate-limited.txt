@@ -1,0 +1,1 @@
+Synthetic HTTP 429 response. The offline test transport supplies Retry-After: 120.
