@@ -1,0 +1,28 @@
+{
+  "reviews": [
+    {
+      "id": 910001,
+      "rating": 9,
+      "showId": 66573,
+      "seasonId": 810002,
+      "showName": "The Good Place",
+      "showPremiereDate": "2016-09-19",
+      "showSeasons": [
+        {"id": 810001, "seasonNumber": 1, "name": "Season 1"},
+        {"id": 810002, "seasonNumber": 2, "name": "Season 2"},
+        {"id": 810003, "seasonNumber": 3, "name": "Season 3"},
+        {"id": 810004, "seasonNumber": 4, "name": "Season 4"}
+      ],
+      "showBannerImage": "/example-banner.webp",
+      "dateAdded": "2025-02-13T09:15:00.000Z",
+      "isRewatch": false,
+      "isLog": false,
+      "episodeNumber": 3,
+      "reviewText": "  A synthetic fixture review for a season two episode. \n",
+      "containsSpoiler": true,
+      "episodeName": "The Trolley Problem",
+      "like": true
+    }
+  ],
+  "totalPages": 2
+}

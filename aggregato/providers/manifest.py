@@ -239,6 +239,22 @@ _spotify_refresh_token, _ = _string(
     format="password",
     min_length=1,
 )
+_serializd_username, _ = _string(
+    description="Serializd username whose own diary is synchronized.",
+    required=True,
+    min_length=1,
+)
+_serializd_token, _ = _string(
+    description=(
+        "Bearer token from the tvproject_credentials browser cookie for your own Serializd "
+        "account. Use a ${ENV_VAR} reference; the provider never logs in or accepts an "
+        "email/password."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
 _youtube_music_cookie, _ = _string(
     description=(
         "Full Cookie request-header value from an authenticated POST to music.youtube.com/browse. "
@@ -415,6 +431,27 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 "refresh_token": _spotify_refresh_token,
             },
             required=["client_id", "client_secret", "refresh_token"],
+        ),
+    ),
+    "serializd": _manifest(
+        name="Serializd",
+        media_types=("tv",),
+        capabilities=("poll", "backfill", "scrapes", "has_ratings", "has_reviews"),
+        acquisition="scrape",
+        schema_version=1,
+        interval_seconds=21600,
+        config_schema=_object_schema(
+            {"username": _serializd_username, "token": _serializd_token},
+            required=["username", "token"],
+        ),
+        rating_scales=(
+            _scale(
+                "serializd-10-point",
+                kind="linear",
+                minimum="1",
+                maximum="10",
+                step="1",
+            ),
         ),
     ),
     "youtube_music": _manifest(

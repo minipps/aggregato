@@ -54,6 +54,21 @@ def test_discovery_declares_youtube_music_as_an_authenticated_scraper() -> None:
     assert Capability.BACKFILL not in info.capabilities
 
 
+def test_discovery_declares_serializd_as_a_private_authenticated_scraper() -> None:
+    info = _info("serializd")
+
+    assert info.acquisition == Acquisition.SCRAPE
+    assert Capability.SCRAPES in info.capabilities
+    assert Capability.POLL in info.capabilities
+    assert Capability.BACKFILL in info.capabilities
+    assert "tv" in info.media_types
+
+    properties = info.config_schema["properties"]
+    assert properties["username"]["x-aggregato-public"] is True
+    assert properties["token"]["writeOnly"] is True
+    assert properties["token"]["x-aggregato-public"] is False
+
+
 def test_bundled_providers_are_reviewed() -> None:
     # : bundled providers ship with the core and went through review; drop-ins  will
     # arrive with reviewed=False and a UI label.

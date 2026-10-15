@@ -111,6 +111,54 @@ reader should replace only the acquisition adapter. Preserve `id="letterboxd"` a
 available; otherwise bump `schema_version`, document the full-resync changeover, and retain the RSS
 normalizer for replay of stored historical payloads.
 
+## Serializd
+
+Serializd's [official homepage and FAQ](https://www.serializd.com/) describe show tracking, ratings,
+reviews, and a TV diary. They list imports from TV Time and Trakt, but no outgoing Serializd export.
+The official material reviewed does not publish an account-history API, authenticated feed/export,
+or public RSS/JSON feed. Its inbound import feature does not provide a user export. The provider
+therefore uses the authenticated internal JSON routes observed in Serializd's
+[shared frontend bundle](https://www.serializd.com/_next/static/chunks/pages/_app-9bc50fbf3b31c617.js)
+and [diary page bundle](https://www.serializd.com/_next/static/chunks/pages/user/UserDiary-adbc6b5301b32ead.js)
+on 2026-10-15, and is classified as `scrape`; these routes are first-party implementation details,
+not a supported public API. The inspected frontend falls back to
+`https://serializddesktop.onrender.com/api` and allows a build-time backend override.
+
+Configure the username and a secret token from **your own** signed-in Serializd browser session. In
+the browser's Network tools, copy the `tvproject_credentials` cookie value to an environment variable;
+the provider sends it as a bearer token. It does not submit an email or password. Treat the cookie
+value like a login credential and keep it out of logs, fixtures, and source control.
+
+The provider calls `/api/user_information?shouldGetUserContext=true`, matching the logged-in UI's
+identity check. It compares the returned `username` with the configured name and discards other
+user-context fields. It then reads `/api/user/{username}/diary?page=N&include_target=ALL`, whose
+response has page-numbered `reviews` and `totalPages`. The provider reads all reported pages from
+page 1 on each run, including entries with the show's rating, review, like, spoiler, rewatch, and
+season/episode fields when present. A row marked `isLog=false` retains its opinion and withdraws its
+watch entry; the host tombstones a prior entry with that identity. Rows without a valid `isLog` flag
+raise `StructureChangedError` rather than being guessed to be watches. It remains unverified whether
+`include_target=ALL` returns every rating-only row for every account. Pages have no stable cursor or
+checkpoint, so runs cannot resume partway through;
+new diary rows may shift pages during a fetch and cause overlap or gaps until a later full reread. A
+six-hour poll is a project cadence, since Serializd publishes no request limit for this route. A full
+run covers the pages reported by the route, not a transactionally consistent snapshot. No official
+maximum history window is documented. Keep `infer_deletes` disabled: a shifted page walk is not a
+stable snapshot from which to infer removals.
+
+When “Add to Diary” is on, the app's [review composer](https://www.serializd.com/_next/static/chunks/7053-3ba2623410930c77.js)
+offers a date-only “Watched on” picker. For logged records, the provider takes the calendar date from
+`backdate`, stores it at UTC midnight, and sets `logged_precision=day`; it retains `dateAdded` as raw
+data without treating it as watch time. Rating-only rows do not require `backdate`. Special episodes
+can belong to season 0 in Serializd, while Aggregato permits only positive season references. A
+season-zero entry, or an episode with no resolvable positive season, fails normalization individually
+and remains in `ingest_failures` with its raw payload instead of being reassigned to another season.
+
+The fixtures are synthetic examples, not sanitized recordings. No account request or live
+compatibility check has been made, so the observed route and response assumptions still need
+validation against a sanitized response from an operator's own account. The synthetic fixtures do not
+establish exact live timestamp serialization or which diary fields may be null for a particular
+account.
+
 ## YouTube Music
 
 No official YouTube Music history feed or YouTube Data API history method is documented. The YouTube

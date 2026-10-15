@@ -50,6 +50,7 @@ class Registration:
             credential in this tree is a review failure (tests/fixtures/README.md).
         structure_changed: A fixture whose structure no longer matches the reader. Required for
             scraping providers (group 9), meaningless for others.
+        empty: A valid empty source response, when the provider exposes one.
         blocked: A fixture representing a block page. Scrapers should raise ``BlockedError`` for
             this response rather than retrying or attempting to work around it.
         rate_limited: A fixture representing a rate-limited response. When registered, group 10
@@ -62,6 +63,7 @@ class Registration:
     config: Callable[[Path], dict[str, Any]] = lambda _path: {}
     secrets: dict[str, str] = field(default_factory=dict)
     structure_changed: str | None = None
+    empty: str | None = None
     blocked: str | None = None
     rate_limited: str | None = None
 
@@ -155,6 +157,21 @@ REGISTERED = [
         blocked="blocked.html",
         rate_limited="rate-limited.json",
     ),
+    Registration(
+        provider_id="serializd",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "username": "fixture-user",
+            "token": "invalid-token"
+            if path.name == "credentials-invalid.json"
+            else "fixture-token",
+        },
+        structure_changed="structure-changed.html",
+        empty="empty.json",
+        blocked="blocked.html",
+        rate_limited="rate-limited.json",
+    ),
 ]
 """Every bundled provider. ``test_every_bundled_provider_is_registered`` fails if one is missing, so
 shipping a provider without entering it into the gate is not possible (contract §5)."""
@@ -219,6 +236,8 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_backloggd_fixture(path)))
     elif registration.provider_id == "youtube_music":
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_youtube_music_fixture(path)))
+    elif registration.provider_id == "serializd":
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_serializd_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -453,6 +472,84 @@ def _youtube_music_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Resp
             json=json.loads(path.read_text()),
             headers={"date": "Thu, 15 Oct 2026 10:00:00 GMT"},
         )
+
+    return respond
+
+
+def _serializd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve synthetic Serializd identity and diary responses by route and page number."""
+    directory = path.parent
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method != "GET" or request.url.host != "serializddesktop.onrender.com":
+            raise AssertionError(f"unexpected Serializd request: {request.method} {request.url}")
+        if request.headers.get("x-requested-with") != "serializd_vercel":
+            raise AssertionError("Serializd request omitted the first-party requested-with header")
+
+        expected_token = (
+            "invalid-token" if path.name == "credentials-invalid.json" else "fixture-token"
+        )
+        if request.headers.get("authorization") != f"Bearer {expected_token}":
+            raise AssertionError("Serializd request omitted the configured bearer token")
+
+        if request.url.path == "/api/user_information":
+            if request.url.params.get("shouldGetUserContext") != "true":
+                raise AssertionError("Serializd identity check omitted its user-context parameter")
+            if path.name == "credentials-invalid.json":
+                return httpx2.Response(401, json=json.loads(path.read_text()))
+            return httpx2.Response(200, json={"username": "fixture-user"})
+
+        diary_path = "/api/user/fixture-user/diary"
+        if request.url.path != diary_path:
+            raise AssertionError(f"unexpected Serializd diary route: {request.url}")
+        if request.url.params.get("include_target") != "ALL":
+            raise AssertionError("Serializd diary request must include every diary target")
+
+        if path.name == "blocked.html":
+            return httpx2.Response(
+                403,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "rate-limited.json":
+            return httpx2.Response(
+                429,
+                json=json.loads(path.read_text()),
+                headers={"retry-after": "120"},
+            )
+        if path.name == "http-error.json":
+            return httpx2.Response(503, json=json.loads(path.read_text()))
+        if path.name == "structure-changed.html":
+            return httpx2.Response(
+                200,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "malformed.json":
+            return httpx2.Response(200, json=json.loads(path.read_text()))
+        if path.name == "empty.json":
+            return httpx2.Response(200, json=json.loads(path.read_text()))
+
+        page = request.url.params.get("page")
+        if path.name in {
+            "page-2-empty.json",
+            "page-2-total-pages-changed.json",
+            "page-2-duplicate-id.json",
+        }:
+            if page == "1":
+                fixture_name = "page-1.json"
+            elif page == "2":
+                fixture_name = path.name
+            else:
+                raise AssertionError(f"unexpected Serializd diary page: {page!r}")
+            return httpx2.Response(200, json=json.loads((directory / fixture_name).read_text()))
+        if page == "1":
+            fixture_name = "page-1.json"
+        elif page == "2":
+            fixture_name = "page-2.json"
+        else:
+            raise AssertionError(f"unexpected Serializd diary page: {page!r}")
+        return httpx2.Response(200, json=json.loads((directory / fixture_name).read_text()))
 
     return respond
 

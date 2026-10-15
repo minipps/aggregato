@@ -366,6 +366,26 @@ async def test_group7_check_reports_both_outcomes(
     assert bad.detail, "a failed check must say what an operator should do about it"
 
 
+async def test_valid_empty_fixture_is_not_reported_as_a_failure(
+    provider: Provider,
+    registration: Registration,
+    provider_fixtures: Path,
+) -> None:
+    """A documented empty source is different from a changed or malformed response."""
+    if registration.empty is None:
+        pytest.skip("registration has no valid empty-source fixture")
+
+    empty_path = provider_fixtures / registration.empty
+    assert empty_path.exists(), f"registered empty-source fixture is missing: {empty_path}"
+    items = await fetch_all(
+        provider,
+        build_ctx(registration, empty_path),
+        None,
+        FetchMode.FULL,
+    )
+    assert only_records(items) == [], "a valid empty source returned records"
+
+
 # --- group 8: optional now-playing capability ----------------------------------------------------
 
 
