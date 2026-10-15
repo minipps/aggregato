@@ -3,7 +3,7 @@
 # Base images use exact version tags plus immutable manifest digests, matching the backend image.
 
 # --- Stage 1: build the SPA --------------------------------------------------------------------
-FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS frontend-build
+FROM node:26.10.0-slim@sha256:930557a230abacbc3f4fd9b8648abf8f4bee1e17cb72195dcdfb2f709bc85b33 AS frontend-build
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN npm install --global npm@12.2.0 --silent && npm --loglevel=error ci
