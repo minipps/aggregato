@@ -239,6 +239,30 @@ _spotify_refresh_token, _ = _string(
     format="password",
     min_length=1,
 )
+_youtube_music_cookie, _ = _string(
+    description=(
+        "Full Cookie request-header value from an authenticated POST to music.youtube.com/browse. "
+        "The provider needs the __Secure-3PAPISID cookie to authorize history requests. Use a "
+        "${ENV_VAR} reference to keep the browser session out of the config file."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
+_youtube_music_auth_user, _ = _string(
+    description="Value of X-Goog-AuthUser from the same authenticated browser request.",
+    default="0",
+    min_length=1,
+)
+_youtube_music_timezone, _ = _string(
+    description=(
+        "IANA time zone used by YouTube Music to group history days, for example Europe/Madrid. "
+        "This anchors Today, Yesterday, and weekday labels; the default is UTC."
+    ),
+    default="UTC",
+    min_length=1,
+)
 
 
 BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
@@ -391,6 +415,22 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 "refresh_token": _spotify_refresh_token,
             },
             required=["client_id", "client_secret", "refresh_token"],
+        ),
+    ),
+    "youtube_music": _manifest(
+        name="YouTube Music",
+        media_types=("track",),
+        capabilities=("poll", "scrapes", "has_credits"),
+        acquisition="scrape",
+        schema_version=1,
+        interval_seconds=900,
+        config_schema=_object_schema(
+            {
+                "cookie": _youtube_music_cookie,
+                "auth_user": _youtube_music_auth_user,
+                "timezone": _youtube_music_timezone,
+            },
+            required=["cookie"],
         ),
     ),
 }

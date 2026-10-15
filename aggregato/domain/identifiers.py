@@ -41,6 +41,9 @@ REGISTERED_NAMESPACES = frozenset(
         "tmdb",
         "tmdb_person",
         "tvdb",
+        "youtube_channel",
+        "youtube_music",
+        "youtube_video",
         "wikidata",
     }
 )

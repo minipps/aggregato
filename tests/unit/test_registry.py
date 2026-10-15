@@ -45,6 +45,15 @@ def test_discovery_finds_the_fixture_provider() -> None:
     assert Capability.POLL in info.capabilities
 
 
+def test_discovery_declares_youtube_music_as_an_authenticated_scraper() -> None:
+    info = _info("youtube_music")
+
+    assert info.acquisition == Acquisition.SCRAPE
+    assert Capability.SCRAPES in info.capabilities
+    assert Capability.POLL in info.capabilities
+    assert Capability.BACKFILL not in info.capabilities
+
+
 def test_bundled_providers_are_reviewed() -> None:
     # : bundled providers ship with the core and went through review; drop-ins  will
     # arrive with reviewed=False and a UI label.
