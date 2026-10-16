@@ -1,0 +1,15 @@
+{
+  "contents": {
+    "singleColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "content": {
+              "sectionListRenderer": {"contents": []}
+            }
+          }
+        }
+      ]
+    }
+  }
+}
