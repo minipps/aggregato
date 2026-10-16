@@ -37,6 +37,8 @@ REGISTERED_NAMESPACES = frozenset(
         "musicbrainz_release",
         "olid",
         "openlibrary",
+        "serializd",
+        "serializd_season",
         "spotify",
         "tmdb",
         "tmdb_person",

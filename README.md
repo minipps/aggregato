@@ -35,6 +35,7 @@ a platform or explicitly request a credential check or import.
 | **ListenBrainz** | listens (tracks) | username + user token | its API, every 15 minutes. Also works against a compatible server such as Maloja via `base_url` |
 | **AniList** | anime + manga, with ratings | username, plus an OAuth token for private lists | its API, hourly |
 | **Letterboxd** | films + series, with ratings and reviews | your username or public RSS URL | public feed, every 6 hours |
+| **Serializd** | TV diary entries, with ratings and reviews | username + your browser's `tvproject_credentials` token ([setup](docs/provider-acquisition-roadmap.md#serializd)) | authenticated web routes, every 6 hours |
 | **Spotify** | recently played (tracks) | app client ID + secret, plus a refresh token with `user-read-recently-played` ([setup](docs/provider-acquisition-roadmap.md#spotify)) | its Web API, every 15 minutes |
 | **Goodreads** | books, ratings, and reviews in its rolling feed | public profile/RSS URL | [public RSS feed](docs/goodreads.md), daily |
 
@@ -101,6 +102,9 @@ providers:
     refresh_token: ${SPOTIFY_REFRESH_TOKEN}
   letterboxd:
     username: your-name
+  serializd:
+    username: your-serializd-username
+    token: ${SERIALIZD_TOKEN}
   goodreads:
     profile_url: https://www.goodreads.com/user/show/155188990-mini
 ```
