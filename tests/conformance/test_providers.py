@@ -29,7 +29,7 @@ from aggregato.domain.enums import (
 from aggregato.domain.models import Checkpoint, CheckResult, NowPlayingItem, RawRecord
 from aggregato.domain.subject_ref import SUBJECT_REF_KEYS, validate_subject_ref
 from aggregato.providers.base import NowPlayingProvider, Provider, ProviderContext
-from aggregato.providers.errors import AuthError, RateLimited, StructureChangedError
+from aggregato.providers.errors import AuthError, BlockedError, RateLimited, StructureChangedError
 from aggregato.providers.registry import discover_providers
 from tests.conformance.conftest import (
     REGISTERED,
@@ -366,6 +366,26 @@ async def test_group7_check_reports_both_outcomes(
     assert bad.detail, "a failed check must say what an operator should do about it"
 
 
+async def test_valid_empty_fixture_is_not_reported_as_a_failure(
+    provider: Provider,
+    registration: Registration,
+    provider_fixtures: Path,
+) -> None:
+    """A documented empty source is different from a changed or malformed response."""
+    if registration.empty is None:
+        pytest.skip("registration has no valid empty-source fixture")
+
+    empty_path = provider_fixtures / registration.empty
+    assert empty_path.exists(), f"registered empty-source fixture is missing: {empty_path}"
+    items = await fetch_all(
+        provider,
+        build_ctx(registration, empty_path),
+        None,
+        FetchMode.FULL,
+    )
+    assert only_records(items) == [], "a valid empty source returned records"
+
+
 # --- group 8: optional now-playing capability ----------------------------------------------------
 
 
@@ -464,7 +484,7 @@ def test_group8_config_schema_is_renderable(provider: Provider) -> None:
 async def test_group9_scraping_obligations(
     provider: Provider, registration: Registration, provider_fixtures: Path
 ) -> None:
-    """Group 10: scrapers only — recorded HTML fixtures, ``StructureChangedError`` on a changed
+    """Group 10: scrapers only — offline source fixtures, ``StructureChangedError`` on a changed
     structure, and no solver in the import graph.
 
     Skips for every non-scraping provider, and activates automatically on either declaration, so a
@@ -476,7 +496,7 @@ async def test_group9_scraping_obligations(
         pytest.skip("not a scraping provider: group 9 does not apply (contract §5)")
 
     html = list(provider_fixtures.glob("*.html"))  # noqa: ASYNC240 - local fixture dir, no I/O wait
-    assert html, f"{provider.id} scrapes but ships no recorded HTML fixtures in {provider_fixtures}"
+    assert html, f"{provider.id} scrapes but ships no HTML fixture in {provider_fixtures}"
 
     changed = registration.structure_changed
     assert changed, (
@@ -504,3 +524,44 @@ async def test_group9_scraping_obligations(
         f"{provider.id}'s import graph reaches an anti-bot solver: "
         f"{sorted(loaded.intersection(_SOLVERS))} ( is a hard line, not a default)"
     )
+
+
+async def test_group10_authenticated_scraper_classifies_http_failures(
+    provider: Provider,
+    registration: Registration,
+    provider_fixtures: Path,
+) -> None:
+    """Authenticated scrapers classify rejected cookies and preserve the server's retry delay."""
+    if registration.rate_limited is None:
+        pytest.skip("registration has no recorded rate-limit response")
+
+    invalid_path = provider_fixtures / registration.invalid
+    with pytest.raises(AuthError):
+        await fetch_all(
+            provider,
+            build_ctx(registration, invalid_path),
+            None,
+            FetchMode.FULL,
+        )
+
+    rate_path = provider_fixtures / registration.rate_limited
+    assert rate_path.exists(), f"missing rate-limit fixture: {rate_path}"
+    with pytest.raises(RateLimited) as caught:
+        await fetch_all(
+            provider,
+            build_ctx(registration, rate_path),
+            None,
+            FetchMode.FULL,
+        )
+    assert caught.value.retry_after == 120
+
+    if registration.blocked is not None:
+        blocked_path = provider_fixtures / registration.blocked
+        assert blocked_path.exists(), f"missing block-page fixture: {blocked_path}"
+        with pytest.raises(BlockedError):
+            await fetch_all(
+                provider,
+                build_ctx(registration, blocked_path),
+                None,
+                FetchMode.FULL,
+            )
