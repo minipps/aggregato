@@ -5,10 +5,11 @@ This suite is a **merge gate** (testing guidance and V) and the third-party comp
 provider: adding a provider means adding a ``Registration`` below, not writing new tests.
 
 A provider registers by naming its id, the recorded fixture ``fetch`` should read, the fixture that
-must make ``check`` fail, and how to build its config from a fixture path. Everything else is
-derived: the provider object comes from ``load_provider``, and the records come out of the
-provider's own ``fetch`` rather than from a second reader of the wire format written here — a
-conformance suite that parsed the fixtures itself would be asserting against its own parser.
+must make ``check`` fail, and how to build its config from a fixture path. Paginated resumable
+sources span at least two pages; rolling feeds may be a single snapshot. Everything else is derived:
+the provider object comes from ``load_provider``, and the records come out of the provider's own
+``fetch`` rather than from a second reader of the wire format written here — a conformance suite
+that parsed the fixtures itself would be asserting against its own parser.
 """
 
 from __future__ import annotations
@@ -38,17 +39,22 @@ class Registration:
 
     Attributes:
         provider_id: The slug, which is also the package name and the fixture directory name.
-        records: Fixture under ``tests/fixtures/<id>/`` holding the recorded records, spanning at
-            least two pages so group 6 has a checkpoint to resume from.
-        invalid: Fixture that stands in for an invalid credential set, so group 7 can assert
-            ``check`` reports rather than raises. For a file-based provider this is an unreadable
-            file; for an API provider it is a rejected-credentials response.
+        records: Fixture under ``tests/fixtures/<id>/`` holding source records. Paginated resumable
+            sources span at least two pages; rolling feeds may be a single snapshot.
+        invalid: Fixture that makes ``check`` report an actionable failure rather than raise.
+            Credentialed APIs use rejected credentials; public feeds can use an invalid feed
+            response because they have no credentials to reject.
         config: Builds the ``config_model`` kwargs from the fixture path being exercised. Providers
             that do not read a path ignore the argument.
         secrets: What the host would resolve from the environment. Placeholders only — a real
             credential in this tree is a review failure (tests/fixtures/README.md).
         structure_changed: A fixture whose structure no longer matches the reader. Required for
             scraping providers (group 9), meaningless for others.
+        empty: A valid empty source response, when the provider exposes one.
+        blocked: A fixture representing a block page. Scrapers should raise ``BlockedError`` for
+            this response rather than retrying or attempting to work around it.
+        rate_limited: A fixture representing a rate-limited response. When registered, group 10
+            requires the provider to preserve its retry delay.
     """
 
     provider_id: str
@@ -57,6 +63,9 @@ class Registration:
     config: Callable[[Path], dict[str, Any]] = lambda _path: {}
     secrets: dict[str, str] = field(default_factory=dict)
     structure_changed: str | None = None
+    empty: str | None = None
+    blocked: str | None = None
+    rate_limited: str | None = None
 
 
 REGISTERED = [
@@ -125,6 +134,44 @@ REGISTERED = [
             "username": None if path.name == "structure-changed.rss" else "fixture_user"
         },
     ),
+    Registration(
+        provider_id="backloggd",
+        records="reviews.rss",
+        invalid="structure-changed.rss",
+        config=lambda _path: {"username": "user-0001"},
+    ),
+    Registration(
+        provider_id="youtube_music",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "cookie": (
+                "__Secure-3PAPISID=fixture-invalid"
+                if path.name == "credentials-invalid.json"
+                else "__Secure-3PAPISID=fixture-session"
+            ),
+            "auth_user": "0",
+            "timezone": "UTC",
+        },
+        structure_changed="structure-changed.json",
+        blocked="blocked.html",
+        rate_limited="rate-limited.json",
+    ),
+    Registration(
+        provider_id="serializd",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "username": "fixture-user",
+            "token": "invalid-token"
+            if path.name == "credentials-invalid.json"
+            else "fixture-token",
+        },
+        structure_changed="structure-changed.html",
+        empty="empty.json",
+        blocked="blocked.html",
+        rate_limited="rate-limited.json",
+    ),
 ]
 """Every bundled provider. ``test_every_bundled_provider_is_registered`` fails if one is missing, so
 shipping a provider without entering it into the gate is not possible (contract §5)."""
@@ -185,6 +232,12 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_goodreads_fixture(path)))
     elif registration.provider_id == "letterboxd":
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_letterboxd_fixture(path)))
+    elif registration.provider_id == "backloggd":
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_backloggd_fixture(path)))
+    elif registration.provider_id == "youtube_music":
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_youtube_music_fixture(path)))
+    elif registration.provider_id == "serializd":
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_serializd_fixture(path)))
     else:
         http = cast("AsyncClient", _InertHTTP())
     return ProviderContext(
@@ -324,6 +377,179 @@ def _letterboxd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Respons
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, content=payload)
+
+    return respond
+
+
+def _backloggd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve the selected synthetic RSS case only at Backloggd's public reviews-feed route."""
+
+    feed_path = "/u/user-0001/reviews/rss/"
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method != "GET" or request.url.host != "backloggd.com":
+            raise AssertionError(f"unexpected Backloggd request: {request.method} {request.url}")
+        if request.url.path != feed_path or request.url.params:
+            raise AssertionError(f"unexpected Backloggd reviews-feed route: {request.url}")
+        if "authorization" in request.headers or "cookie" in request.headers:
+            raise AssertionError("the public Backloggd feed must not send credentials")
+
+        if path.name in {"blocked.html", "blocked-200.html"}:
+            return httpx2.Response(
+                200 if path.name == "blocked-200.html" else 403,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "rate-limited.txt":
+            return httpx2.Response(
+                429,
+                content=path.read_bytes(),
+                headers={"content-type": "text/plain; charset=utf-8", "retry-after": "120"},
+            )
+        return httpx2.Response(
+            200,
+            content=path.read_bytes(),
+            headers={"content-type": "application/rss+xml; charset=utf-8"},
+        )
+
+    return respond
+
+
+def _youtube_music_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve synthetic YouTube Music browse responses and failure cases offline."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if (
+            request.method != "POST"
+            or request.url.host != "music.youtube.com"
+            or request.url.path != "/youtubei/v1/browse"
+        ):
+            raise AssertionError(
+                f"unexpected YouTube Music request: {request.method} {request.url}"
+            )
+        if request.url.params.get("alt") != "json" or request.url.params.get("key") != (
+            "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
+        ):
+            raise AssertionError(
+                "YouTube Music browse request omitted alt=json or the WEB_REMIX key"
+            )
+
+        body = json.loads(request.content)
+        if body.get("browseId") != "FEmusic_history":
+            raise AssertionError(f"unexpected YouTube Music browse body: {body}")
+        context = body.get("context")
+        if not isinstance(context, dict) or not isinstance(context.get("client"), dict):
+            raise AssertionError("YouTube Music browse request omitted its web client context")
+        client = context["client"]
+        if client.get("clientName") != "WEB_REMIX" or not client.get("hl"):
+            raise AssertionError("YouTube Music browse request omitted its client name or language")
+        if request.headers.get("x-goog-authuser") != "0":
+            raise AssertionError("YouTube Music request omitted the selected account index")
+        if request.headers.get("origin") != "https://music.youtube.com":
+            raise AssertionError("YouTube Music request omitted the expected origin header")
+        if not request.headers.get("authorization", "").startswith("SAPISIDHASH "):
+            raise AssertionError("YouTube Music request omitted its SAPISIDHASH authorization")
+        if "__Secure-3PAPISID=fixture-" not in request.headers.get("cookie", ""):
+            raise AssertionError("YouTube Music request omitted the configured browser cookie")
+
+        if path.name == "blocked.html":
+            return httpx2.Response(
+                403,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "rate-limited.json":
+            return httpx2.Response(
+                429,
+                json=json.loads(path.read_text()),
+                headers={"retry-after": "120"},
+            )
+        if path.name == "credentials-invalid.json":
+            return httpx2.Response(401, json=json.loads(path.read_text()))
+
+        return httpx2.Response(
+            200,
+            json=json.loads(path.read_text()),
+            headers={"date": "Thu, 15 Oct 2026 10:00:00 GMT"},
+        )
+
+    return respond
+
+
+def _serializd_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve synthetic Serializd identity and diary responses by route and page number."""
+    directory = path.parent
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method != "GET" or request.url.host != "serializddesktop.onrender.com":
+            raise AssertionError(f"unexpected Serializd request: {request.method} {request.url}")
+        if request.headers.get("x-requested-with") != "serializd_vercel":
+            raise AssertionError("Serializd request omitted the first-party requested-with header")
+
+        expected_token = (
+            "invalid-token" if path.name == "credentials-invalid.json" else "fixture-token"
+        )
+        if request.headers.get("authorization") != f"Bearer {expected_token}":
+            raise AssertionError("Serializd request omitted the configured bearer token")
+
+        if request.url.path == "/api/user_information":
+            if request.url.params.get("shouldGetUserContext") != "true":
+                raise AssertionError("Serializd identity check omitted its user-context parameter")
+            if path.name == "credentials-invalid.json":
+                return httpx2.Response(401, json=json.loads(path.read_text()))
+            return httpx2.Response(200, json={"username": "fixture-user"})
+
+        diary_path = "/api/user/fixture-user/diary"
+        if request.url.path != diary_path:
+            raise AssertionError(f"unexpected Serializd diary route: {request.url}")
+        if request.url.params.get("include_target") != "ALL":
+            raise AssertionError("Serializd diary request must include every diary target")
+
+        if path.name == "blocked.html":
+            return httpx2.Response(
+                403,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "rate-limited.json":
+            return httpx2.Response(
+                429,
+                json=json.loads(path.read_text()),
+                headers={"retry-after": "120"},
+            )
+        if path.name == "http-error.json":
+            return httpx2.Response(503, json=json.loads(path.read_text()))
+        if path.name == "structure-changed.html":
+            return httpx2.Response(
+                200,
+                content=path.read_bytes(),
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        if path.name == "malformed.json":
+            return httpx2.Response(200, json=json.loads(path.read_text()))
+        if path.name == "empty.json":
+            return httpx2.Response(200, json=json.loads(path.read_text()))
+
+        page = request.url.params.get("page")
+        if path.name in {
+            "page-2-empty.json",
+            "page-2-total-pages-changed.json",
+            "page-2-duplicate-id.json",
+        }:
+            if page == "1":
+                fixture_name = "page-1.json"
+            elif page == "2":
+                fixture_name = path.name
+            else:
+                raise AssertionError(f"unexpected Serializd diary page: {page!r}")
+            return httpx2.Response(200, json=json.loads((directory / fixture_name).read_text()))
+        if page == "1":
+            fixture_name = "page-1.json"
+        elif page == "2":
+            fixture_name = "page-2.json"
+        else:
+            raise AssertionError(f"unexpected Serializd diary page: {page!r}")
+        return httpx2.Response(200, json=json.loads((directory / fixture_name).read_text()))
 
     return respond
 

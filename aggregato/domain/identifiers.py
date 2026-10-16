@@ -37,10 +37,15 @@ REGISTERED_NAMESPACES = frozenset(
         "musicbrainz_release",
         "olid",
         "openlibrary",
+        "serializd",
+        "serializd_season",
         "spotify",
         "tmdb",
         "tmdb_person",
         "tvdb",
+        "youtube_channel",
+        "youtube_music",
+        "youtube_video",
         "wikidata",
     }
 )

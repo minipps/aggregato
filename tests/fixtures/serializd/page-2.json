@@ -1,0 +1,26 @@
+{
+  "reviews": [
+    {
+      "id": 910003,
+      "rating": 7,
+      "showId": 6675,
+      "seasonId": 820001,
+      "showName": "Parks and Recreation",
+      "showPremiereDate": "2009-04-09",
+      "showSeasons": [
+        {"id": 820001, "seasonNumber": 1, "name": "Season 1"},
+        {"id": 820002, "seasonNumber": 2, "name": "Season 2"}
+      ],
+      "showBannerImage": "/example-parks-banner.webp",
+      "dateAdded": "2025-01-02T18:45:00.000Z",
+      "isRewatch": false,
+      "isLog": false,
+      "episodeNumber": 2,
+      "reviewText": "A second-page synthetic review.",
+      "containsSpoiler": false,
+      "episodeName": "Canvassing",
+      "like": true
+    }
+  ],
+  "totalPages": 2
+}
