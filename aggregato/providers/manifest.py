@@ -151,6 +151,14 @@ _goodreads_profile = _nullable_string(
     min_length=1,
     max_length=2083,
 )
+_backloggd_username, _ = _string(
+    description=(
+        "Backloggd username whose public Reviews RSS feed to poll. The feed contains only the "
+        "latest 20 reviews; it does not include playthrough history."
+    ),
+    required=True,
+    min_length=1,
+)
 _koito_base_url, _ = _string(
     description=(
         "Base URL of the Koito server: scheme, host and optional port, for example "
@@ -231,6 +239,46 @@ _spotify_refresh_token, _ = _string(
     format="password",
     min_length=1,
 )
+_serializd_username, _ = _string(
+    description="Serializd username whose own diary is synchronized.",
+    required=True,
+    min_length=1,
+)
+_serializd_token, _ = _string(
+    description=(
+        "Bearer token from the tvproject_credentials browser cookie for your own Serializd "
+        "account. Use a ${ENV_VAR} reference; the provider never logs in or accepts an "
+        "email/password."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
+_youtube_music_cookie, _ = _string(
+    description=(
+        "Full Cookie request-header value from an authenticated POST to music.youtube.com/browse. "
+        "The provider needs the __Secure-3PAPISID cookie to authorize history requests. Use a "
+        "${ENV_VAR} reference to keep the browser session out of the config file."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
+_youtube_music_auth_user, _ = _string(
+    description="Value of X-Goog-AuthUser from the same authenticated browser request.",
+    default="0",
+    min_length=1,
+)
+_youtube_music_timezone, _ = _string(
+    description=(
+        "IANA time zone used by YouTube Music to group history days, for example Europe/Madrid. "
+        "This anchors Today, Yesterday, and weekday labels; the default is UTC."
+    ),
+    default="UTC",
+    min_length=1,
+)
 
 
 BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
@@ -268,6 +316,24 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 maximum="3",
                 step="1",
                 labels={"1": 0, "2": 50, "3": 100},
+            ),
+        ),
+    ),
+    "backloggd": _manifest(
+        name="Backloggd",
+        media_types=("game",),
+        capabilities=("poll", "has_ratings", "has_reviews"),
+        acquisition="feed",
+        schema_version=1,
+        interval_seconds=21600,
+        config_schema=_object_schema({"username": _backloggd_username}, required=["username"]),
+        rating_scales=(
+            _scale(
+                "backloggd-10-point",
+                kind="linear",
+                minimum="1",
+                maximum="10",
+                step="1",
             ),
         ),
     ),
@@ -365,6 +431,43 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
                 "refresh_token": _spotify_refresh_token,
             },
             required=["client_id", "client_secret", "refresh_token"],
+        ),
+    ),
+    "serializd": _manifest(
+        name="Serializd",
+        media_types=("tv",),
+        capabilities=("poll", "backfill", "scrapes", "has_ratings", "has_reviews"),
+        acquisition="scrape",
+        schema_version=1,
+        interval_seconds=21600,
+        config_schema=_object_schema(
+            {"username": _serializd_username, "token": _serializd_token},
+            required=["username", "token"],
+        ),
+        rating_scales=(
+            _scale(
+                "serializd-10-point",
+                kind="linear",
+                minimum="1",
+                maximum="10",
+                step="1",
+            ),
+        ),
+    ),
+    "youtube_music": _manifest(
+        name="YouTube Music",
+        media_types=("track",),
+        capabilities=("poll", "scrapes", "has_credits"),
+        acquisition="scrape",
+        schema_version=1,
+        interval_seconds=900,
+        config_schema=_object_schema(
+            {
+                "cookie": _youtube_music_cookie,
+                "auth_user": _youtube_music_auth_user,
+                "timezone": _youtube_music_timezone,
+            },
+            required=["cookie"],
         ),
     ),
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:backloggd="https://backloggd.com/">
+  <channel>
+    <title>user-0001 reviews</title>
+    <link>https://backloggd.com/u/user-0001/reviews/</link>
+    <description>Synthetic review text challenge-marker case.</description>
+    <item>
+      <title>Safe Text (2025) - ★★★</title>
+      <link>https://backloggd.com/u/user-0001/review/9000998/safe-text/</link>
+      <pubDate>Wed, 01 Jan 2025 12:00:00 +0000</pubDate>
+      <description><![CDATA[This review mentions CAPTCHA, /login, and verify you are human.]]></description>
+      <guid isPermaLink="false">backloggd-review-9000998</guid>
+      <backloggd:user_rating>6</backloggd:user_rating>
+      <backloggd:reviewer>user-0001</backloggd:reviewer>
+    </item>
+  </channel>
+</rss>

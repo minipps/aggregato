@@ -7,7 +7,7 @@ tries is a failure rather than a slow test.
 ## Conventions
 
 - **One directory per provider**, named exactly as the provider's `id`: `listenbrainz/`,
-  `anilist/`, `goodreads/`, `letterboxd/`, `fixture/`.
+  `anilist/`, `goodreads/`, `letterboxd/`, `backloggd/`, `fixture/`.
 - **One file per acquisition response**, in the wire format that provider actually receives:
   `.json` for APIs, `.jsonl` for paged streams (one page per line), `.csv` for export files,
   `.xml` for feeds, `.html` for scraped pages.
@@ -30,10 +30,10 @@ provider is not conformant without them:
 
 | Fixture | Proves |
 |---|---|
-| at least two pages | cursors round-trip with no duplicate and no gap (group 6) |
+| at least two pages for resumable sources; a documented rolling snapshot for feed sources | cursors round-trip with no duplicate and no gap, or the snapshot is fetched on each poll (group 6) |
 | one record per declared capability | declared capabilities match observed behaviour (group 2) |
 | one record carrying every identifier the platform exposes | identifier extraction (group 5) |
-| a valid and an invalid credential response | `check` returns a `CheckResult` for both (group 7) |
+| a valid source response and a negative check case | `check` returns a `CheckResult` for both (group 7); credentialed APIs use rejected credentials, while unauthenticated feeds use a malformed response or other actionable failure |
 | **scraping providers only**: a structurally-changed page | `StructureChangedError` rather than a silent empty result (group 9) |
 
 ## Recording a fixture
