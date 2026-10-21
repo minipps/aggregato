@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -76,7 +76,7 @@ def create_app(
     engine = create_engine(settings.database_url)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         if run_migrations:
             # Alembic's environment calls asyncio.run, so run it in a thread rather than inside
             # lifespan's active event loop.
