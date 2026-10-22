@@ -12,7 +12,7 @@ import fcntl
 import logging
 import signal
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
@@ -35,7 +35,7 @@ _WORKER_LOCK_KEY = 482901737
 
 
 @contextmanager
-def _sqlite_worker_lock(database_url: str) -> Iterator[bool]:
+def _sqlite_worker_lock(database_url: str) -> Generator[bool]:
     url = make_url(database_url)
     # ponytail: one worker per SQLite file; durable ownership is for multi-host workers.
     database = url.database
@@ -57,7 +57,7 @@ def _sqlite_worker_lock(database_url: str) -> Iterator[bool]:
 
 
 @asynccontextmanager
-async def single_worker_lock(engine: AsyncEngine, database_url: str) -> AsyncIterator[bool]:
+async def single_worker_lock(engine: AsyncEngine, database_url: str) -> AsyncGenerator[bool]:
     """Hold the process-lifetime scheduler lock for SQLite or PostgreSQL."""
     url = make_url(database_url)
     if url.get_backend_name() == "sqlite":

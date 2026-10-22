@@ -16,6 +16,7 @@ import os
 import random
 import signal
 from contextlib import suppress
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from aggregato.providers.http import (
     PolitenessPolicy,
     ProcessHostState,
 )
+from tests.conftest import FROZEN_NOW
 
 # Deterministic jitter: testing guidance makes randomness injectable rather than ambient.
 FIXED_RNG = 1234
@@ -44,7 +46,7 @@ def client_for(
 ) -> PoliteClient:
     transport = httpx2.MockTransport(handler)  # type: ignore[arg-type]
     inner = httpx2.AsyncClient(transport=transport, headers={"User-Agent": USER_AGENT})
-    return PoliteClient(policy, client=inner, rng=random.Random(FIXED_RNG))
+    return PoliteClient(policy, client=inner, rng=random.Random(FIXED_RNG), now=lambda: FROZEN_NOW)
 
 
 # --- The floor is a max(), never a provider-supplied value ------------------------------------
@@ -321,8 +323,8 @@ async def test_an_http_date_retry_after_is_parsed_without_sleeping_forever() -> 
             with pytest.raises(RateLimited) as caught:
                 await client.get("https://example.test/")
 
-    assert caught.value.retry_after is not None
-    assert caught.value.retry_after > 0
+    expected = (datetime(2026, 10, 21, 7, 28, tzinfo=UTC) - FROZEN_NOW).total_seconds()
+    assert caught.value.retry_after == expected
 
 
 async def test_retries_are_bounded() -> None:

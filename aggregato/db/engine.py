@@ -10,7 +10,7 @@ single-container install, ``postgresql+asyncpg://…`` past ~1M entries, with no
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -64,7 +64,7 @@ def _apply_sqlite_pragmas(engine: AsyncEngine) -> None:
 
 
 @asynccontextmanager
-async def transaction(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
+async def transaction(engine: AsyncEngine) -> AsyncGenerator[AsyncConnection]:
     """Yield a connection inside one transaction, committing on exit and rolling back on error.
 
     Inputs: the engine. Yields an ``AsyncConnection`` — pass it straight to ``conn.execute(...)``.

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -37,7 +37,7 @@ def current_run() -> dict[str, str]:
 
 
 @contextmanager
-def bind_run(**fields: str) -> Iterator[None]:
+def bind_run(**fields: str) -> Generator[None]:
     """Bind run fields (``provider_id``, ``run_id``, ``lineage_id``) for the enclosed block.
 
     Args:
