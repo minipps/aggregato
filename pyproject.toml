@@ -100,6 +100,8 @@ error-on-warning = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Async tests use pytest-asyncio; do not autoload AnyIO's unused pytest plugin.
+addopts = "-p no:anyio"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
