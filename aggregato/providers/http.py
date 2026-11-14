@@ -149,7 +149,8 @@ class _FileLock:
 class ProcessHostState:
     """Coordinate request reservations and scraper exclusivity across child processes.
 
-    The reservation clock is monotonic and the state is protected by a kernel file lock. A caller
+    Reservations use UTC Unix timestamps so persisted state survives host reboots; in-process
+    pacing remains monotonic. The state is protected by a kernel file lock. A caller
     reserves a future slot without holding that lock during the request itself. Scrapers acquire a
     second per-host lock and hold its descriptor for the complete request, so a crashed process
     releases exclusivity when the kernel closes its descriptors.
@@ -157,7 +158,7 @@ class ProcessHostState:
 
     def __init__(self, directory: Path, *, clock: Callable[[], float] | None = None) -> None:
         self._directory = directory
-        self._clock = clock or time.monotonic
+        self._clock = clock or time.time
 
     def reserve(
         self,
@@ -262,7 +263,11 @@ def _unlock_handle(handle: BinaryIO) -> None:
 def _read_next_allowed(path: Path) -> float:
     """Read a reservation, treating a missing or interrupted state as empty."""
     try:
-        value = float(path.read_text(encoding="ascii"))
+        state = path.read_text(encoding="ascii")
+        # Unmarked reservations used a monotonic clock whose epoch resets on host reboot.
+        if not state.startswith("unix:"):
+            return 0.0
+        value = float(state.removeprefix("unix:"))
     except (FileNotFoundError, ValueError):
         return 0.0
     return value if math.isfinite(value) else 0.0
@@ -276,7 +281,7 @@ def _write_next_allowed(path: Path, value: float) -> None:
     )
     try:
         with os.fdopen(descriptor, "w", encoding="ascii") as handle:
-            handle.write(f"{value:.9f}\n")
+            handle.write(f"unix:{value:.9f}\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_name, path)

@@ -121,7 +121,7 @@ async def test_a_scraper_cannot_exceed_one_concurrent_request_per_host() -> None
 
 
 def test_process_shared_reservations_queue_across_coordinators(tmp_path: Path) -> None:
-    """Separate coordinator instances reserve one monotonic host timeline."""
+    """Separate coordinator instances reserve one shared host timeline."""
     first = ProcessHostState(tmp_path, clock=lambda: 100.0)
     second = ProcessHostState(tmp_path, clock=lambda: 100.0)
 
@@ -137,9 +137,34 @@ def test_process_shared_reservation_discards_stale_state(tmp_path: Path) -> None
     coordinator = ProcessHostState(tmp_path)
     state_path = coordinator._state_path("example.test")
     state_path.parent.mkdir(exist_ok=True)
-    state_path.write_text("98\n", encoding="ascii")
+    state_path.write_text("unix:98\n", encoding="ascii")
 
     assert coordinator.reserve("example.test", 2.0, now=100.0) == 0.0
+
+
+def test_process_shared_reservations_use_unix_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new coordinator keeps UTC reservations even when the host uptime resets."""
+    monkeypatch.setattr("aggregato.providers.http.time.time", lambda: 1_800_000_000.0)
+    monkeypatch.setattr("aggregato.providers.http.time.monotonic", lambda: 6_400_000.0)
+    first = ProcessHostState(tmp_path)
+    assert first.reserve("example.test", 2.0) == 0.0
+    monkeypatch.setattr("aggregato.providers.http.time.monotonic", lambda: 1.0)
+    second = ProcessHostState(tmp_path)
+    assert second.reserve("example.test", 2.0) == 2.0
+    assert first._state_path("example.test").read_text() == "unix:1800000004.000000000\n"
+
+
+@pytest.mark.parametrize("state", ["6400000\n", "unix:invalid\n", "unix:nan\n", "unix:inf\n"])
+def test_process_shared_reservation_discards_legacy_or_invalid_state(
+    tmp_path: Path, state: str
+) -> None:
+    coordinator = ProcessHostState(tmp_path, clock=lambda: 100.0)
+    coordinator._state_path("example.test").write_text(state, encoding="ascii")
+
+    assert coordinator.reserve("example.test", 2.0) == 0.0
+    assert coordinator.reserve("example.test", 2.0) == 2.0
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process-group file-lock test requires POSIX")
