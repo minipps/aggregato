@@ -1,0 +1,97 @@
+{
+  "data": {
+    "user_books": [
+      {
+        "id": 5003,
+        "status": 5,
+        "rating": null,
+        "review_raw": null,
+        "review_has_spoilers": false,
+        "reviewed_at": null,
+        "date_added": "2026-01-05",
+        "updated_at": "2026-02-14T08:30:00+00:00",
+        "last_read_date": null,
+        "owned": false,
+        "book": {
+          "id": 103,
+          "title": "Fixture Abandoned Audiobook",
+          "subtitle": null,
+          "slug": "fixture-abandoned-audiobook",
+          "release_year": 2021,
+          "pages": null,
+          "image": null,
+          "contributions": [
+            {"contribution": null, "author": {"id": 204, "name": "Third Fixture Author"}},
+            {"contribution": "Narrator", "author": {"id": 205, "name": "Fixture Narrator"}}
+          ]
+        },
+        "edition": {
+          "id": 303,
+          "isbn_10": null,
+          "isbn_13": "9780306406158",
+          "asin": null,
+          "edition_format": "Audible Audio"
+        },
+        "user_book_reads": [
+          {
+            "id": 9004,
+            "finished_at": null,
+            "finished_at_precision": null,
+            "progress_pages": null,
+            "progress_seconds": 5400
+          }
+        ]
+      },
+      {
+        "id": 5004,
+        "status": 1,
+        "rating": null,
+        "review_raw": null,
+        "review_has_spoilers": false,
+        "reviewed_at": null,
+        "date_added": "2026-09-09",
+        "updated_at": "2026-09-09T12:00:00+00:00",
+        "last_read_date": null,
+        "owned": false,
+        "book": {
+          "id": 104,
+          "title": "Fixture Want To Read",
+          "subtitle": null,
+          "slug": "fixture-want-to-read",
+          "release_year": 2026,
+          "pages": 250,
+          "image": null,
+          "contributions": []
+        },
+        "edition": null,
+        "user_book_reads": []
+      },
+      {
+        "id": 5005,
+        "status": 3,
+        "rating": 3,
+        "review_raw": null,
+        "review_has_spoilers": false,
+        "reviewed_at": null,
+        "date_added": "2019-05-01",
+        "updated_at": "2023-06-01T00:00:00+00:00",
+        "last_read_date": "2019-05-01",
+        "owned": false,
+        "book": {
+          "id": 105,
+          "title": "Fixture Imported Read",
+          "subtitle": null,
+          "slug": "fixture-imported-read",
+          "release_year": 2001,
+          "pages": 180,
+          "image": null,
+          "contributions": [
+            {"contribution": null, "author": {"id": 201, "name": "Fixture Author"}}
+          ]
+        },
+        "edition": null,
+        "user_book_reads": []
+      }
+    ]
+  }
+}

@@ -31,6 +31,44 @@ When Goodreads provides a supported personal-library feed or export endpoint, th
 
 Retain historical payload support when changing acquisition surfaces.
 
+## Hardcover
+
+Hardcover's official GraphQL API (`https://api.hardcover.app/v1/graphql`,
+[docs](https://docs.hardcover.app/api/getting-started/)) is the highest surface, so the provider uses
+it directly; no feed, export, or scrape is involved. Create a token under **Settings → Hardcover
+API** on hardcover.app with the `read:me` and `read:library` scopes and an expiry you are willing to
+renew. A token pasted with its `Bearer ` prefix is accepted. Hardcover documents that it may reset
+tokens during the API beta; an expired or reset token surfaces as an `auth` failure.
+
+```yaml
+providers:
+  hardcover:
+    enabled: true
+    settings:
+      token: ${HARDCOVER_TOKEN}
+```
+
+Each run reads `me { id }` and then the account's whole `user_books` library in `id` order, 100 rows
+per request, until an empty page. A library entry is mutable state, so every run re-reads it all;
+the keyset checkpoint exists only so a failed run resumes where it stopped. Each request is one
+top-level field, so it costs one unit of the plan's rate limit (free plan: 60 a minute, burst 10,
+5,000 a day); the host client honors `Retry-After` on a 429.
+
+Mapping: every finished `user_book_reads` row is a `read` on its `finished_at`, at the precision
+the reader stated (`finished_at_precision` day/month/year). The newest unfinished read becomes
+`progress` (pages, or seconds for audiobooks) while the book is Reading or Paused, and `drop` when it
+is Did Not Finish; both are dated by the entry's `updated_at` because reads carry no timestamp of
+their own. An entry marked Read with only a `last_read_date` (typical of imports) is one `read` at
+day precision. Want to Read and Ignored log nothing and withdraw any earlier entry. Ratings use a
+0.5–5 half-star scale; `review_raw` is stored as a plain-text review. Identifiers: the Hardcover book
+id (`hardcover`), edition id, ISBN-13/10, ASIN, and author ids (`hardcover_author`). Hardcover keeps
+some checksum-invalid ISBNs in its user-edited catalog; those are left in the retained payload but
+not asserted as identifiers.
+
+`private_notes` is deliberately not requested. The fixtures under `tests/fixtures/hardcover/` are
+synthetic, built from the documented schema rather than recorded from a live account; replace them
+with a redacted recording when one is available.
+
 ## Backloggd
 
 Backloggd's public documentation does not publish a public API or authenticated feed/export

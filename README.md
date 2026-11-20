@@ -37,6 +37,7 @@ a platform or explicitly request a credential check or import.
 | **Letterboxd** | films + series, with ratings and reviews | your username or public RSS URL | public feed, every 6 hours |
 | **Serializd** | TV diary entries, with ratings and reviews | username + your browser's `tvproject_credentials` token ([setup](docs/provider-acquisition-roadmap.md#serializd)) | authenticated web routes, every 6 hours |
 | **Spotify** | recently played (tracks) | app client ID + secret, plus a refresh token with `user-read-recently-played` ([setup](docs/provider-acquisition-roadmap.md#spotify)) | its Web API, every 15 minutes |
+| **Hardcover** | books, read dates, progress, ratings, and reviews | an API token from Settings → Hardcover API ([setup](docs/provider-acquisition-roadmap.md#hardcover)) | its GraphQL API, every 6 hours |
 | **Goodreads** | books, ratings, and reviews in its rolling feed | public profile/RSS URL | [public RSS feed](docs/goodreads.md), daily |
 
 Anything else is a plugin away: see [docs/writing-a-provider.md](docs/writing-a-provider.md).

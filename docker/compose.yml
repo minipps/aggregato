@@ -52,6 +52,7 @@ services:
       # ${VAR}, resolved at read time and never written back. Pass whichever ones your config names.
       # LISTENBRAINZ_TOKEN: ${LISTENBRAINZ_TOKEN:-}
       # ANILIST_TOKEN: ${ANILIST_TOKEN:-}
+      # HARDCOVER_TOKEN: ${HARDCOVER_TOKEN:-}
     volumes:
       - aggregato-data:/data
     healthcheck:

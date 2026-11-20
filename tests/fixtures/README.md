@@ -7,7 +7,7 @@ tries is a failure rather than a slow test.
 ## Conventions
 
 - **One directory per provider**, named exactly as the provider's `id`: `listenbrainz/`,
-  `anilist/`, `goodreads/`, `letterboxd/`, `backloggd/`, `fixture/`.
+  `anilist/`, `goodreads/`, `hardcover/`, `letterboxd/`, `backloggd/`, `fixture/`.
 - **One file per acquisition response**, in the wire format that provider actually receives:
   `.json` for APIs, `.jsonl` for paged streams (one page per line), `.csv` for export files,
   `.xml` for feeds, `.html` for scraped pages.

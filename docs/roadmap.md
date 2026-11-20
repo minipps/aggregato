@@ -21,8 +21,8 @@ Release checks and development follow-ups.
 
 ## Provider development
 
-Candidate providers to evaluate include MyAnimeList, Kitsu, Last.fm, AOTY, RateYourMusic, Hardcover,
-and The StoryGraph. Confirm a supported acquisition surface and record fixtures before implementing
+Candidate providers to evaluate include MyAnimeList, Kitsu, Last.fm, AOTY, RateYourMusic, and The
+StoryGraph. Confirm a supported acquisition surface and record fixtures before implementing
 one; these names do not imply current API availability or planned support.
 
 Keep the [provider guide](writing-a-provider.md), [plugin contract](contracts/provider-plugin.md),
