@@ -1,7 +1,7 @@
 # Aggregato
 
 
-<img width="2524" height="1336" alt="Aggregato landing page" src="https://github.com/user-attachments/assets/4863cba9-3996-4b32-99a4-e6049eaa6d0a" />
+<img width="1920" height="1200" alt="Aggregato dashboard: every provider healthy, no sync running, and a list of recent listens." src="site/screenshots/dashboard.webp" />
 
 Aggregato pulls your media logs — films, series, books, comics, albums, games — out of the
 platforms you already log them on and keeps them in one local database you own, browsable through one
