@@ -86,6 +86,14 @@ REGISTERED = [
         },
     ),
     Registration(
+        provider_id="hardcover",
+        records="page-1.json",
+        invalid="credentials-invalid.json",
+        config=lambda path: {
+            "token": "invalid" if path.name == "credentials-invalid.json" else "fixture-token"
+        },
+    ),
+    Registration(
         provider_id="listenbrainz",
         records="page-1.json",
         invalid="credentials-invalid.json",
@@ -226,6 +234,8 @@ def build_ctx(registration: Registration, path: Path, **overrides: Any) -> Provi
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_spotify_fixture(path)))
     elif registration.provider_id == "anilist":
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_anilist_fixture(path)))
+    elif registration.provider_id == "hardcover":
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(_hardcover_fixture(path)))
     elif registration.provider_id == "koito":
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(_koito_fixture(path)))
     elif registration.provider_id == "goodreads":
@@ -341,6 +351,35 @@ def _anilist_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
         return httpx2.Response(
             200, json=json.loads(path.parent.joinpath("records.json").read_text())
         )
+
+    return respond
+
+
+def _hardcover_fixture(path: Path) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Serve the recorded Hardcover GraphQL pages, keyed on the keyset ``after`` variable.
+
+    ``after`` must be the last ``user_books.id`` of the previous page, so a walk that computed its
+    keyset wrongly gets the terminal empty page and fails group 6 rather than passing on call order.
+    """
+    directory = path.parent
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.method != "POST" or str(request.url) != "https://api.hardcover.app/v1/graphql":
+            raise AssertionError(f"unexpected Hardcover request: {request.method} {request.url}")
+        if request.headers.get("authorization") == "Bearer invalid":
+            return httpx2.Response(401, json=json.loads(path.read_text()))
+        if request.headers.get("authorization") != "Bearer fixture-token":
+            raise AssertionError("Hardcover request omitted the configured bearer token")
+        body = json.loads(request.content)
+        if "user_books" not in body["query"]:
+            return httpx2.Response(200, json=json.loads((directory / "me.json").read_text()))
+        variables = body["variables"]
+        if variables["user_id"] != 4242:
+            raise AssertionError(f"Hardcover library query is not scoped to the account: {body}")
+        name = {0: "page-1.json", 5002: "page-2.json", 5005: "page-3-empty.json"}[
+            variables["after"]
+        ]
+        return httpx2.Response(200, json=json.loads((directory / name).read_text()))
 
     return respond
 

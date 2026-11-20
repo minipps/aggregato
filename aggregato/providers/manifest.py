@@ -159,6 +159,17 @@ _backloggd_username, _ = _string(
     required=True,
     min_length=1,
 )
+_hardcover_token, _ = _string(
+    description=(
+        "Hardcover API token, from Settings -> Hardcover API on hardcover.app. It needs the "
+        "read:me and read:library scopes. Use a ${ENV_VAR} reference to keep it out of the "
+        "config file."
+    ),
+    required=True,
+    secret=True,
+    format="password",
+    min_length=1,
+)
 _koito_base_url, _ = _string(
     description=(
         "Base URL of the Koito server: scheme, host and optional port, for example "
@@ -367,6 +378,20 @@ BUNDLED_MANIFESTS: dict[str, dict[str, Any]] = {
         config_schema=_object_schema({"profile_url": _goodreads_profile}),
         rating_scales=(
             _scale("goodreads-5-star", kind="linear", minimum="1", maximum="5", step="1"),
+        ),
+    ),
+    "hardcover": _manifest(
+        name="Hardcover",
+        media_types=("book",),
+        capabilities=("poll", "backfill", "has_ratings", "has_reviews", "has_credits"),
+        acquisition="api",
+        schema_version=1,
+        interval_seconds=21600,
+        config_schema=_object_schema({"token": _hardcover_token}, required=["token"]),
+        rating_scales=(
+            _scale(
+                "hardcover-5-star-halves", kind="linear", minimum="0.5", maximum="5", step="0.5"
+            ),
         ),
     ),
     "koito": _manifest(

@@ -1,0 +1,88 @@
+{
+  "data": {
+    "user_books": [
+      {
+        "id": 5001,
+        "status": 3,
+        "rating": 4.5,
+        "review_raw": "Recorded fixture review.",
+        "review_has_spoilers": false,
+        "reviewed_at": "2025-03-02T10:00:00",
+        "date_added": "2023-12-20",
+        "updated_at": "2025-03-02T10:00:00+00:00",
+        "last_read_date": "2025-03-01",
+        "owned": true,
+        "book": {
+          "id": 101,
+          "title": "Fixture Novel",
+          "subtitle": "A Recorded Example",
+          "slug": "fixture-novel",
+          "release_year": 2019,
+          "pages": 320,
+          "image": {"url": "https://images.example/fixture-novel.jpg"},
+          "contributions": [
+            {"contribution": null, "author": {"id": 201, "name": "Fixture Author"}},
+            {"contribution": "Translator", "author": {"id": 202, "name": "Fixture Translator"}}
+          ]
+        },
+        "edition": {
+          "id": 301,
+          "isbn_10": "0306406152",
+          "isbn_13": "9780306406157",
+          "asin": "B0FIXTURE1",
+          "edition_format": "Paperback"
+        },
+        "user_book_reads": [
+          {
+            "id": 9001,
+            "finished_at": "2024-01-10",
+            "finished_at_precision": 1,
+            "progress_pages": 320,
+            "progress_seconds": null
+          },
+          {
+            "id": 9002,
+            "finished_at": "2025-03-01",
+            "finished_at_precision": 2,
+            "progress_pages": 320,
+            "progress_seconds": null
+          }
+        ]
+      },
+      {
+        "id": 5002,
+        "status": 2,
+        "rating": null,
+        "review_raw": null,
+        "review_has_spoilers": false,
+        "reviewed_at": null,
+        "date_added": "2026-10-01",
+        "updated_at": "2026-11-02T21:15:00+00:00",
+        "last_read_date": null,
+        "owned": false,
+        "book": {
+          "id": 102,
+          "title": "Fixture Currently Reading",
+          "subtitle": null,
+          "slug": "fixture-currently-reading",
+          "release_year": 2024,
+          "pages": 410,
+          "image": null,
+          "contributions": [
+            {"contribution": null, "author": {"id": 203, "name": "Second Fixture Author"}}
+          ]
+        },
+        "edition": null,
+        "user_book_reads": [
+          {
+            "id": 9003,
+            "finished_at": null,
+            "finished_at_precision": null,
+            "progress_pages": 120,
+            "progress_seconds": null
+          }
+        ]
+      }
+    ]
+  }
+}
