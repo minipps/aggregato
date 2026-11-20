@@ -15,17 +15,23 @@ const props = defineProps<{ title: string; detail?: string }>()
 /* Flat, not a box: this renders inside Bento cards, and a bordered panel there would read as a
    card within a card. */
 .state {
-  padding: var(--space-6) var(--space-3);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  padding: var(--space-8) var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
   text-align: center;
 }
 
 .state__title {
   margin: 0;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .state__detail {
-  margin: var(--space-2) 0 0;
+  margin: 0;
   color: var(--text-muted);
+  font-size: 0.9rem;
 }
 </style>

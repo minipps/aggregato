@@ -48,6 +48,14 @@ async function showDiagnostics(run: (typeof visibleRuns.value)[number]): Promise
 }
 
 async function select(): Promise<void> { await history.restart() }
+
+/** Run outcomes share the badge tones used for provider status. */
+const RUN_TONE: Record<string, string> = {
+  success: 'badge--ok',
+  running: 'badge--accent',
+  partial: 'badge--warn',
+  failed: 'badge--danger',
+}
 </script>
 
 <template>
@@ -101,7 +109,7 @@ async function select(): Promise<void> { await history.restart() }
           :key="attempts[0]?.lineage_id"
           :class="['card', index === 0 ? 'span-4' : 'span-2']"
         >
-          <h2>Sync lineage · {{ attempts.length }} attempt{{ attempts.length === 1 ? '' : 's' }}</h2>
+          <h2 class="card__title">Sync lineage · {{ attempts.length }} attempt{{ attempts.length === 1 ? '' : 's' }}</h2>
           <ul class="plain">
             <li v-for="run in attempts" :key="run.id">
               <button
@@ -111,9 +119,9 @@ async function select(): Promise<void> { await history.restart() }
                 :aria-expanded="expanded === run.id"
                 @click="showDiagnostics(run)"
               >
-                <strong>{{ run.status }}</strong> · attempt {{ run.attempt }}
+                <span :class="['badge', 'badge--dot', RUN_TONE[run.status]]">{{ run.status }}</span> attempt {{ run.attempt }}
               </button>
-              <strong v-else>{{ run.status }}</strong> · attempt {{ run.attempt }} ·
+              <template v-else><span :class="['badge', 'badge--dot', RUN_TONE[run.status]]">{{ run.status }}</span> attempt {{ run.attempt }}</template> ·
               <LoggedAt :at="run.started_at" precision="exact" /> ·
               {{ run.items_seen }} seen · {{ run.items_written }} written, {{ run.items_failed }} failed ·
               {{ run.checkpoint_count }} checkpoints
@@ -145,3 +153,10 @@ async function select(): Promise<void> { await history.restart() }
     </template>
   </section>
 </template>
+
+<style scoped>
+.link-button { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 600; }
+.plain > li { padding: var(--space-2) 0; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.plain > li:first-child { border-top: 0; padding-top: 0; }
+.plain > li > p { margin-top: var(--space-1); }
+</style>

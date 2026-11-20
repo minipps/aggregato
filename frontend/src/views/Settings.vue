@@ -13,7 +13,7 @@ const busy = ref(false)
 const error = ref<Problem | undefined>()
 
 function bytes(value: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'unit', unit: 'byte', notation: 'compact' }).format(value)
+  return new Intl.NumberFormat(undefined, { style: 'unit', unit: 'byte', notation: 'compact', unitDisplay: 'narrow' }).format(value)
 }
 
 async function save(): Promise<void> {
@@ -131,14 +131,26 @@ async function exportNow(): Promise<void> {
    is the box. */
 fieldset {
   display: grid;
-  gap: var(--space-3);
-  justify-items: start;
+  gap: var(--space-4);
+  justify-items: stretch;
   border: 0;
   margin: 0;
   padding: 0;
 }
 
-fieldset label {
-  gap: var(--space-3);
+/* Number fields stack label over input so every input starts on the same edge. */
+fieldset label:has(> input[type='number']) {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+fieldset label > input[type='number'] {
+  max-width: 12rem;
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--text);
 }
 </style>

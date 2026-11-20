@@ -59,4 +59,25 @@ describe('Media gallery', () => {
     }
     expect(wrapper.find('img').attributes('alt')).toBe('')
   })
+
+  it('lists types with nothing completed in one summary tile instead of empty rows', async () => {
+    mocks.entries.mockImplementation((query: EntryQuery = {}) => ({
+      next: vi.fn().mockResolvedValue({
+        items: query.media_type === 'film' ? covers('film') : [],
+        done: true,
+      }),
+    }))
+
+    const wrapper = mount(Media, {
+      global: { stubs: { LoggedAt: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.media-grid')).toHaveLength(1)
+    const summary = wrapper.find('[aria-labelledby="media-empty-heading"]')
+    const listed = summary.findAll('.media-empty li').map((item) => item.text())
+    expect(listed).toEqual(['Anime', 'Manga', 'TV', 'Books', 'Comics', 'Albums', 'Tracks', 'Games', 'Other'])
+    // One populated tile leaves half a row, which the summary fills.
+    expect(summary.classes()).toContain('span-2')
+  })
 })

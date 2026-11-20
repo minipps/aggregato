@@ -84,7 +84,7 @@ onUnmounted(() => window.removeEventListener('keydown', keys))
           tabindex="0"
           @focus="active = index"
         >
-          <h2>{{ item.subject }} · {{ item.suggestion_kind ?? 'ambiguous match' }}</h2>
+          <h2 class="card__title">{{ item.subject }} · {{ item.suggestion_kind ?? 'ambiguous match' }}</h2>
           <p class="muted">Proposed: {{ item.proposed }}</p>
           <ol class="candidates">
             <li v-for="(candidate, candidateIndex) in item.candidates" :key="candidate.id">
