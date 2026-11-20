@@ -3,7 +3,7 @@
 :root {
   color-scheme: dark;
 
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Instrument Sans Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
   --space-1: 0.25rem;
@@ -14,10 +14,11 @@
   --space-8: 2rem;
 
   /* Shared grid gap keeps page gutters aligned. */
-  --gap: 1.5rem;
-  --radius: 1rem;
-  --radius-lg: 1.25rem;
-  --radius-xl: 1.5rem;
+  --gap: 1.25rem;
+  --radius-sm: 0.5rem;
+  --radius: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
   --radius-pill: 999px;
   --measure: 68ch;
 
@@ -46,18 +47,23 @@
   --bg: var(--ctp-crust);
   --surface: var(--ctp-base);
   --surface-raised: var(--ctp-surface0);
-  --border: var(--ctp-surface0);
+  --border: color-mix(in srgb, var(--ctp-surface0) 80%, var(--ctp-base));
   --border-strong: var(--ctp-surface1);
   --text: var(--ctp-text);
   --text-muted: var(--ctp-subtext0);
+  --text-label: var(--ctp-subtext1);
   --accent: var(--ctp-blue);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--ctp-base));
   --ok: var(--ctp-green);
   --warn: var(--ctp-yellow);
   --danger: var(--ctp-red);
   --focus: var(--ctp-lavender);
 
-  --shadow-hover: 0 8px 30px rgba(17, 17, 27, 0.55);
   --ease: cubic-bezier(0.16, 0.84, 0.44, 1);
+  --fast: 150ms;
+
+  accent-color: var(--accent);
+  scrollbar-color: var(--ctp-surface1) transparent;
 }
 
 *,
@@ -73,11 +79,19 @@ body {
   line-height: 1.55;
   background: var(--bg);
   color: var(--text);
+  caret-color: var(--accent);
+  -webkit-font-smoothing: antialiased;
 }
 
-.link-button { background: none; border: 0; color: inherit; cursor: pointer; padding: 0; font: inherit; text-align: left; }
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--ctp-text);
+}
+
+.link-button { min-height: 0; background: none; border: 0; color: inherit; cursor: pointer; padding: 0; font: inherit; text-align: left; }
+.link-button:hover:not(:disabled) { background: none; color: var(--accent); }
 .diagnostics { margin-top: var(--space-3); }
-.diagnostics pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; background: var(--ctp-mantle); padding: var(--space-3); border-radius: var(--radius); font-family: var(--font-mono); font-size: 0.8rem; }
+.diagnostics pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; }
 .diagnostics details { margin-top: var(--space-2); }
 
 /* ---------- Shell ---------- */
@@ -86,7 +100,8 @@ body {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--ctp-mantle);
+  background: color-mix(in srgb, var(--ctp-mantle) 92%, transparent);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
 
@@ -100,43 +115,49 @@ main {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-3) var(--space-4);
+  gap: var(--space-2) var(--space-6);
   padding: var(--space-3) 0;
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--text);
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   text-decoration: none;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
-  background: var(--surface-raised);
-  transition: background 0.2s ease-out, color 0.2s ease-out;
 }
 
-.brand:hover {
-  background: var(--accent);
-  color: var(--ctp-crust);
+.brand svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--accent);
+  transition: color var(--fast) ease-out;
+}
+
+.brand:hover svg {
+  color: var(--ctp-lavender);
 }
 
 .site-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .site-nav a {
   display: block;
-  padding: var(--space-1) var(--space-3);
+  padding: 0.3rem var(--space-3);
   border-radius: var(--radius-pill);
   color: var(--text-muted);
+  font-weight: 550;
   text-decoration: none;
-  transition: background 0.2s ease-out, color 0.2s ease-out;
+  transition: background var(--fast) ease-out, color var(--fast) ease-out;
 }
 
 .site-nav a:hover {
@@ -145,17 +166,27 @@ main {
 }
 
 .site-nav a[aria-current='page'] {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--accent-soft);
   color: var(--ctp-lavender);
-  font-weight: 650;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 main {
   padding: var(--gap) 0 var(--space-8);
 }
 
-section + section {
-  margin-top: var(--gap);
+/* Blocks stacked at the top level of a screen share the grid gutter, through a gap rather than
+   sibling margins: a margin on one tile of a row would push it out of line with its neighbours. */
+main,
+main > section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--gap);
+}
+
+.bento > * {
+  margin: 0;
 }
 
 h1,
@@ -164,18 +195,21 @@ h3 {
   line-height: 1.2;
   margin: 0 0 var(--space-3);
   letter-spacing: -0.015em;
+  text-wrap: balance;
 }
 
 h1 {
-  font-size: 1.9rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
 }
 
 h2 {
-  font-size: 1.15rem;
+  font-size: 1.125rem;
 }
 
 h3 {
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
 p {
@@ -184,6 +218,25 @@ p {
 
 a {
   color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  transition: color var(--fast) ease-out, text-decoration-color var(--fast) ease-out;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Links that are the row's content (titles in a list or table) read as text until pointed at. */
+:is(.plain, .ranked, td, th, .entry__title) a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+:is(.plain, .ranked, td, th, .entry__title) a:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 /* Visible focus ring for keyboard navigation. */
@@ -201,12 +254,6 @@ a {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-/* A screen with a header grid and a list grid keeps the same gutter between the two as inside them,
-   so the first row of the list is not flush against the tiles above it. */
-.bento + * {
-  margin-top: var(--gap);
 }
 
 .span-2 {
@@ -254,6 +301,8 @@ a {
 
 /* ---------- Card ---------- */
 
+/* Cards are containers, not controls: they do not move or light up under the pointer. Feedback
+   belongs to the link or button inside that was actually pointed at. */
 .card {
   display: flex;
   flex-direction: column;
@@ -263,41 +312,62 @@ a {
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   background: var(--surface);
-  transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease), border-color 0.25s var(--ease);
 }
-
-.card:hover {
-  transform: translateY(-4px) scale(1.01);
-  box-shadow: var(--shadow-hover);
-  border-color: var(--border-strong);
-}
-
-/* No press animation on the card itself: cards are containers, and shrinking one on mousedown moves
-   the link or button under the cursor so the click lands on nothing. Press feedback belongs to the
-   control that was actually pressed (see button:active). */
 
 .card > :first-child {
   margin-top: 0;
-}
-
-.card > h2,
-.card > h3 {
-  margin-bottom: 0;
 }
 
 .card p {
   margin: 0;
 }
 
-/* Featured cards use a gradient; keep their text full-strength for contrast. */
-.card--feature {
-  background: linear-gradient(150deg, var(--ctp-surface0), var(--ctp-base) 65%);
-  border-color: var(--border-strong);
+/* Every tile is named the same way: a small, tracked label. The content under it is what the eye
+   should land on, so the name stays quiet. */
+.card > h2,
+.card__head h2,
+.metric-label {
+  margin: 0;
+  color: var(--text-label);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 
+/* Tiles in a list whose heading is the item itself (a provider, a failure, a queue item). */
+.card .card__title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+/* The tile that names the screen: a flat tint of the accent, so it reads first without glowing. */
 .card--accent {
-  background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 24%, var(--ctp-base)), var(--ctp-base) 70%);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--ctp-base));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.card--accent p {
+  color: var(--ctp-subtext1);
+}
+
+.card--accent .card__head h1,
+.card--accent .card__head h2 {
+  color: var(--text);
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  text-transform: none;
+}
+
+/* A tile carrying the screen's main data gets the stronger edge, not a different surface. */
+.card--feature {
+  border-color: var(--border-strong);
 }
 
 .card--scroll {
@@ -305,34 +375,39 @@ a {
   max-height: 34rem;
 }
 
-/* Icon chip: reacts on its own when the card is hovered. */
 .card__icon {
   display: grid;
   place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
   flex: none;
-  border-radius: var(--radius);
-  background: var(--surface-raised);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
   color: var(--accent);
-  transition: transform 0.2s ease-out, background 0.2s ease-out, color 0.2s ease-out;
 }
 
 .card__icon svg {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1rem;
+  height: 1rem;
 }
 
-.card:hover .card__icon {
-  transform: scale(1.1);
+.card--accent .card__icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--ctp-crust);
+}
+
+.card--accent .card__icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
 }
 
 .card__head {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2) var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -342,20 +417,18 @@ a {
   margin: 0;
 }
 
-/* A single number is the whole point of a 1×1 tile. */
-.metric {
-  margin: 0;
-  font-size: 2.25rem;
-  font-weight: 700;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
+/* A single number is the whole point of a 1×1 tile: label on top, figure anchored to the floor. */
+.card:has(> .metric) {
+  justify-content: space-between;
 }
 
-.metric-label {
+.metric {
   margin: 0;
-  color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 2.75rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
 }
 
 /* ---------- Controls ---------- */
@@ -367,10 +440,25 @@ textarea {
   font: inherit;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: var(--surface-raised);
+  background: var(--ctp-mantle);
   color: var(--text);
   padding: var(--space-2) var(--space-3);
-  transition: all 0.2s ease-out;
+  transition:
+    background var(--fast) ease-out,
+    border-color var(--fast) ease-out,
+    color var(--fast) ease-out,
+    box-shadow var(--fast) ease-out,
+    transform var(--fast) var(--ease);
+}
+
+input:not([type='checkbox'], [type='radio'], [type='file']),
+select {
+  min-height: 2.5rem;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ctp-overlay1);
 }
 
 input:hover,
@@ -382,36 +470,68 @@ textarea:hover {
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
+  outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+input[type='file'] {
+  padding: var(--space-1);
+  max-width: 100%;
+}
+
+input[type='file']::file-selector-button {
+  margin-right: var(--space-3);
+  padding: 0.35rem var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 button {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.9rem;
   cursor: pointer;
+  font-size: 0.9rem;
   font-weight: 600;
   border-color: transparent;
+  background: var(--surface-raised);
 }
 
 button:hover:not(:disabled) {
   background: var(--ctp-surface1);
-  transform: translateY(-1px);
 }
 
 button:active:not(:disabled) {
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
-button[type='submit'] {
+/* One filled button per group: the thing this form or tile exists to do. */
+button[type='submit'],
+button.primary {
   background: var(--accent);
   color: var(--ctp-crust);
 }
 
-button[type='submit']:hover:not(:disabled) {
+button[type='submit']:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
   background: var(--ctp-lavender);
 }
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.45;
 }
 
 label {
@@ -433,7 +553,7 @@ fieldset {
 legend {
   padding: 0;
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   font-weight: 650;
 }
 
@@ -459,8 +579,34 @@ legend {
 }
 
 .field > label {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
   color: var(--text-muted);
+}
+
+progress {
+  appearance: none;
+  height: 0.5rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--ctp-surface0);
+  color: var(--accent);
+}
+
+progress::-webkit-progress-bar {
+  background: var(--ctp-surface0);
+}
+
+progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width 0.4s var(--ease);
+}
+
+progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
 }
 
 /* ---------- Data ---------- */
@@ -468,6 +614,7 @@ legend {
 table {
   width: 100%;
   border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
 }
 
 th,
@@ -475,13 +622,32 @@ td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-scroll :is(th, td) {
+  white-space: nowrap;
+}
+
+th:first-child,
+td:first-child {
+  padding-left: 0;
 }
 
 thead th {
-  font-weight: 650;
-  font-size: 0.85rem;
   color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+tbody th {
+  font-weight: 600;
 }
 
 tbody tr:last-child th,
@@ -495,7 +661,7 @@ tbody tr:last-child td {
 
 .mono {
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.875em;
 }
 
 .plain {
@@ -527,50 +693,84 @@ tbody tr:last-child td {
 }
 
 .badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   padding: 0.1rem 0.55rem;
   border-radius: var(--radius-pill);
   background: var(--surface-raised);
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 650;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* A status badge leads with a dot, so state reads by colour and shape before the word. */
+.badge--dot::before {
+  content: '';
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge--accent {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .badge--warn {
-  background: color-mix(in srgb, var(--warn) 20%, var(--ctp-base));
+  background: color-mix(in srgb, var(--warn) 16%, var(--ctp-base));
   color: var(--warn);
 }
 
 .badge--ok {
-  background: color-mix(in srgb, var(--ok) 20%, var(--ctp-base));
+  background: color-mix(in srgb, var(--ok) 16%, var(--ctp-base));
   color: var(--ok);
 }
 
 .badge--danger {
-  background: color-mix(in srgb, var(--danger) 20%, var(--ctp-base));
+  background: color-mix(in srgb, var(--danger) 16%, var(--ctp-base));
   color: var(--danger);
 }
 
-/* Inset notes use a tint without a border or elevation. */
+/* Inset notes use a tint and a hairline of the same hue, without elevation. */
 .note {
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface-raised);
+  background: var(--ctp-mantle);
+}
+
+.note p {
+  margin: 0;
+}
+
+.note > * + * {
+  margin-top: var(--space-1);
 }
 
 .note--warn {
-  background: color-mix(in srgb, var(--warn) 12%, var(--ctp-base));
+  border-color: color-mix(in srgb, var(--warn) 25%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, var(--ctp-base));
   color: var(--ctp-yellow);
 }
 
 .note--danger {
-  background: color-mix(in srgb, var(--danger) 12%, var(--ctp-base));
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 9%, var(--ctp-base));
   color: var(--ctp-red);
 }
 
 .note--ok {
-  background: color-mix(in srgb, var(--ok) 12%, var(--ctp-base));
+  border-color: color-mix(in srgb, var(--ok) 25%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, var(--ctp-base));
   color: var(--ctp-green);
+}
+
+:is(.note--warn, .note--danger, .note--ok) a {
+  color: inherit;
 }
 
 .note__title {
@@ -580,33 +780,42 @@ tbody tr:last-child td {
 
 /* A section boundary inside a card, drawn with a hairline rather than a nested box. */
 .subsection {
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
 
 details summary {
   cursor: pointer;
   color: var(--accent);
+  font-weight: 550;
 }
 
 pre {
   overflow-x: auto;
-  padding: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--ctp-mantle);
   font-family: var(--font-mono);
-  font-size: 0.85em;
+  font-size: 0.8rem;
+  line-height: 1.6;
 }
 
 .dialog {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-6);
-  border-radius: var(--radius-xl);
-  background: var(--surface-raised);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--ctp-mantle);
 }
 
 .dialog h2 {
+  margin: 0;
+}
+
+.dialog p {
   margin: 0;
 }
 
@@ -644,10 +853,7 @@ pre {
     animation-duration: 0.01ms !important;
   }
 
-  /* Lift and press are motion too: drop them rather than merely shortening them. */
-  .card:hover,
-  .card:hover .card__icon,
-  button:hover:not(:disabled),
+  /* Press is motion too: drop it rather than merely shortening it. */
   button:active:not(:disabled) {
     transform: none;
   }

@@ -47,6 +47,12 @@ function monthLabel(week: HeatmapCell[]): string {
   return first ? (MONTHS[Number(first.day.slice(5, 7)) - 1] ?? '') : ''
 }
 
+/** A row's count as a fraction of the largest in its list: the bar length under each row. */
+function share(count: number, items: { count: number }[] | undefined): number {
+  const most = Math.max(1, ...(items ?? []).map((item) => item.count))
+  return count / most
+}
+
 function reload(): void {
   void Promise.all([summary.reload(), works.reload(), creators.reload()])
 }
@@ -105,25 +111,34 @@ watch(includeSubunits, reload)
           </div>
         </div>
         <p class="muted">{{ yearTotal }} entries across {{ activeDays }} active days in {{ year }}.</p>
-        <div class="heatmap">
-          <div class="heatmap__days" aria-hidden="true">
-            <span>Mon</span><span>Wed</span><span>Fri</span><span>Sun</span>
-          </div>
-          <div class="heatmap__scroll">
-            <div class="heatmap__months" aria-hidden="true">
-              <span v-for="(week, index) in weeks" :key="index">{{ monthLabel(week) }}</span>
-            </div>
-            <div class="heatmap__grid">
-              <template v-for="(week, index) in weeks" :key="index">
-                <span
-                  v-for="(cell, row) in week"
-                  :key="cell?.day ?? `pad-${index}-${row}`"
-                  class="heatmap__cell"
-                  :class="cell ? `level-${cell.level}` : 'heatmap__cell--pad'"
-                  :title="cell ? `${cell.day}: ${cell.count}` : undefined"
-                />
-              </template>
-            </div>
+        <!-- One grid for labels and days alike, so month and weekday labels stay on the same tracks
+             as the squares however wide the tile is. -->
+        <div class="heatmap__scroll">
+          <div class="heatmap" :style="{ '--weeks': weeks.length }">
+            <span
+              v-for="(week, index) in weeks"
+              :key="`m-${index}`"
+              class="heatmap__label"
+              :style="{ gridColumn: index + 2, gridRow: 1 }"
+              aria-hidden="true"
+            >{{ monthLabel(week) }}</span>
+            <span
+              v-for="(day, row) in ['Mon', 'Wed', 'Fri', 'Sun']"
+              :key="day"
+              class="heatmap__label heatmap__label--day"
+              :style="{ gridColumn: 1, gridRow: row * 2 + 2 }"
+              aria-hidden="true"
+            >{{ day }}</span>
+            <template v-for="(week, index) in weeks" :key="index">
+              <span
+                v-for="(cell, row) in week"
+                :key="cell?.day ?? `pad-${index}-${row}`"
+                class="heatmap__cell"
+                :class="cell ? `level-${cell.level}` : 'heatmap__cell--pad'"
+                :style="{ gridColumn: index + 2, gridRow: row + 2 }"
+                :title="cell ? `${cell.day}: ${cell.count}` : undefined"
+              />
+            </template>
           </div>
         </div>
         <p class="heatmap__legend">
@@ -146,7 +161,12 @@ watch(includeSubunits, reload)
       </div>
       <LoadingState v-if="works.loading.value" label="Loading top works…" />
       <ErrorState v-else-if="works.error.value" :problem="works.error.value" retryable @retry="works.reload()" />
-      <ol v-else class="ranked"><li v-for="work in works.data.value?.items ?? []" :key="work.id"><RouterLink :to="{ name: 'work', params: { id: work.id } }">{{ work.label }}</RouterLink><span>{{ work.count }}</span></li></ol>
+      <ol v-else class="ranked">
+        <li v-for="work in works.data.value?.items ?? []" :key="work.id" :style="{ '--share': share(work.count, works.data.value?.items) }">
+          <RouterLink :to="{ name: 'work', params: { id: work.id } }">{{ work.label }}</RouterLink>
+          <span class="ranked__count">{{ work.count }}</span>
+        </li>
+      </ol>
     </section>
 
     <section class="card card--feature span-2 tall" aria-labelledby="top-creators-heading">
@@ -161,46 +181,83 @@ watch(includeSubunits, reload)
       </div>
       <LoadingState v-if="creators.loading.value" label="Loading top creators…" />
       <ErrorState v-else-if="creators.error.value" :problem="creators.error.value" retryable @retry="creators.reload()" />
-      <ol v-else class="ranked"><li v-for="creator in creators.data.value?.items ?? []" :key="creator.id"><RouterLink :to="{ name: 'creator', params: { id: creator.id } }">{{ creator.label }}</RouterLink><span>{{ creator.count }}</span></li></ol>
+      <ol v-else class="ranked">
+        <li v-for="creator in creators.data.value?.items ?? []" :key="creator.id" :style="{ '--share': share(creator.count, creators.data.value?.items) }">
+          <RouterLink :to="{ name: 'creator', params: { id: creator.id } }">{{ creator.label }}</RouterLink>
+          <span class="ranked__count">{{ creator.count }}</span>
+        </li>
+      </ol>
     </section>
 
     <template v-if="summary.data.value">
       <section class="card span-2" aria-labelledby="type-heading">
         <h2 id="type-heading">By media type</h2>
-        <dl class="pairs"><template v-for="[name, count] in mediaTypes" :key="name"><dt>{{ name }}</dt><dd>{{ count }}</dd></template></dl>
+        <dl class="ranked ranked--plain">
+          <div v-for="[name, count] in mediaTypes" :key="name" :style="{ '--share': share(count, mediaTypes.map(([, value]) => ({ count: value }))) }">
+            <dt>{{ name }}</dt>
+            <dd class="ranked__count">{{ count }}</dd>
+          </div>
+        </dl>
         <p v-if="!includeSubunits" class="muted">Sub-unit activity is excluded. Enable it above to include it.</p>
       </section>
       <section class="card span-2" aria-labelledby="provider-heading">
         <h2 id="provider-heading">By provider</h2>
-        <dl class="pairs"><template v-for="[name, count] in providers" :key="name"><dt>{{ name }}</dt><dd>{{ count }}</dd></template></dl>
+        <dl class="ranked ranked--plain">
+          <div v-for="[name, count] in providers" :key="name" :style="{ '--share': share(count, providers.map(([, value]) => ({ count: value }))) }">
+            <dt>{{ name }}</dt>
+            <dd class="ranked__count">{{ count }}</dd>
+          </div>
+        </dl>
       </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* Day heatmap: one square per day, seven rows (Mon–Sun) flowing into week columns. */
-.heatmap { --cell: 0.85rem; --cell-gap: 3px; display: flex; gap: var(--space-2); }
-.heatmap__scroll { overflow-x: auto; padding-bottom: var(--space-2); }
-.heatmap__grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, var(--cell)); grid-auto-columns: var(--cell); gap: var(--cell-gap); }
-.heatmap__months, .heatmap__days { display: grid; gap: var(--cell-gap); font-size: 0.7rem; color: var(--text-muted); }
-.heatmap__months { grid-auto-flow: column; grid-auto-columns: var(--cell); margin-bottom: var(--cell-gap); }
-/* Labels sit on rows 1/3/5/7 of the same seven-row rhythm as the grid, offset by the month strip. */
-.heatmap__days { grid-template-rows: repeat(7, var(--cell)); margin-top: calc(1rem + var(--cell-gap)); text-align: right; }
-.heatmap__days span:nth-child(2) { grid-row: 3; }
-.heatmap__days span:nth-child(3) { grid-row: 5; }
-.heatmap__days span:nth-child(4) { grid-row: 7; }
-.heatmap__cell { border-radius: 3px; background: color-mix(in srgb, var(--accent) var(--tint, 0%), var(--ctp-surface1)); }
+/* Day heatmap: one square per day, seven rows (Mon–Sun) flowing into week columns that share the
+   tile's full width. Below a usable square size the strip scrolls instead of shrinking further. */
+.heatmap__scroll { overflow-x: auto; padding-bottom: var(--space-1); }
+.heatmap {
+  display: grid;
+  grid-template-columns: 2rem repeat(var(--weeks), minmax(0.6rem, 1fr));
+  gap: 3px;
+  min-width: 38rem;
+}
+.heatmap__label { color: var(--text-muted); font-size: 0.7rem; line-height: 1; white-space: nowrap; align-self: end; padding-bottom: 0.3rem; }
+.heatmap__label--day { align-self: center; padding: 0; }
+.heatmap__cell { aspect-ratio: 1; border-radius: 3px; background: color-mix(in srgb, var(--accent) var(--tint, 0%), var(--ctp-surface0)); }
 .heatmap__cell--pad { background: none; }
-.level-1 { --tint: 25%; }
-.level-2 { --tint: 50%; }
-.level-3 { --tint: 75%; }
+.level-1 { --tint: 28%; }
+.level-2 { --tint: 52%; }
+.level-3 { --tint: 76%; }
 .level-4 { --tint: 100%; }
-.heatmap__legend { display: flex; align-items: center; gap: var(--cell-gap, 3px); font-size: 0.7rem; color: var(--text-muted); }
-.heatmap__legend .heatmap__cell { width: 0.85rem; height: 0.85rem; }
+.heatmap__legend { display: flex; align-items: center; gap: 3px; margin-top: var(--space-1) !important; font-size: 0.7rem; color: var(--text-muted); }
+.heatmap__legend .heatmap__cell { width: 0.75rem; height: 0.75rem; }
 .heatmap__legend span:first-of-type { margin-left: var(--space-2); }
+.heatmap__legend span:last-of-type { margin-right: var(--space-2); }
 .field--inline { margin-left: auto; }
 
-.ranked { margin: 0; padding-left: var(--space-6); }
-.ranked li { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) 0; font-variant-numeric: tabular-nums; }
+/* Ranked rows carry a hairline bar scaled to the top count, so the drop-off reads at a glance. */
+.ranked { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; counter-reset: rank; }
+.ranked > li, .ranked > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.35rem var(--space-3);
+  padding: var(--space-1) 0;
+  font-variant-numeric: tabular-nums;
+}
+.ranked > li { counter-increment: rank; grid-template-columns: 1.5rem minmax(0, 1fr) auto; }
+.ranked > li::before { content: counter(rank); color: var(--ctp-overlay1); font-size: 0.8rem; font-weight: 650; }
+.ranked > li::after, .ranked > div::after {
+  content: '';
+  grid-column: 1 / -1;
+  height: 2px;
+  width: calc(var(--share, 0) * 100%);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 40%, var(--ctp-surface0));
+}
+.ranked > li::after { grid-column: 2 / -1; }
+.ranked dt, .ranked dd { margin: 0; }
+.ranked__count { font-weight: 650; }
 </style>

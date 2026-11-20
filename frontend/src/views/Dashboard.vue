@@ -149,41 +149,44 @@ function liveProvider(id: string | undefined) {
 
     <section class="card span-4" aria-labelledby="per-provider-heading">
       <h2 id="per-provider-heading">Per provider</h2>
-      <table v-if="allProviders.length > 0">
-        <caption class="visually-hidden">Per-provider health</caption>
-        <thead>
-          <tr>
-            <th scope="col">Provider</th>
-            <th scope="col">Status</th>
-            <th scope="col">Last success</th>
-            <th scope="col">Failures</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="provider in allProviders" :key="provider.id ?? ''">
-            <th scope="row">
-              <RouterLink :to="{ name: 'providers' }">{{ provider.id ?? 'unknown' }}</RouterLink>
-            </th>
-            <td>
-              <ProviderStatus
-                v-if="liveProvider(provider.id)?.status"
-                :status="liveProvider(provider.id)!.status"
-              />
-              <ProviderStatus v-else-if="provider.status" :status="provider.status" />
-              <span v-else>unknown</span>
-            </td>
-            <td>
-              <LoggedAt
-                v-if="provider.last_success_at"
-                :at="provider.last_success_at"
-                precision="exact"
-              />
-              <span v-else class="muted">Never</span>
-            </td>
-            <td>{{ provider.consecutive_failures ?? 0 }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <!-- Scrolls inside the tile on a narrow screen instead of widening the page. -->
+      <div v-if="allProviders.length > 0" class="table-scroll">
+        <table>
+          <caption class="visually-hidden">Per-provider health</caption>
+          <thead>
+            <tr>
+              <th scope="col">Provider</th>
+              <th scope="col">Status</th>
+              <th scope="col">Last success</th>
+              <th scope="col">Failures</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="provider in allProviders" :key="provider.id ?? ''">
+              <th scope="row">
+                <RouterLink :to="{ name: 'providers' }">{{ provider.id ?? 'unknown' }}</RouterLink>
+              </th>
+              <td>
+                <ProviderStatus
+                  v-if="liveProvider(provider.id)?.status"
+                  :status="liveProvider(provider.id)!.status"
+                />
+                <ProviderStatus v-else-if="provider.status" :status="provider.status" />
+                <span v-else>unknown</span>
+              </td>
+              <td>
+                <LoggedAt
+                  v-if="provider.last_success_at"
+                  :at="provider.last_success_at"
+                  precision="exact"
+                />
+                <span v-else class="muted">Never</span>
+              </td>
+              <td>{{ provider.consecutive_failures ?? 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <EmptyState
         v-else-if="!status.loading.value"
         title="No providers configured"

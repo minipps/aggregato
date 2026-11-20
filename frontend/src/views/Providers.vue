@@ -274,7 +274,7 @@ onUnmounted(() => {
         :class="['card', index === 0 ? 'span-4' : 'span-2']"
       >
         <div class="card__head">
-          <h2>{{ provider.name }}</h2>
+          <h2 class="card__title">{{ provider.name }}</h2>
           <!-- Drop-in providers are marked as unreviewed. -->
           <span v-if="!provider.reviewed" class="badge badge--warn">unreviewed</span>
           <ProviderStatus :status="liveProvider(provider.id)?.status ?? provider.status" />
@@ -400,34 +400,34 @@ onUnmounted(() => {
           </ul>
         </fieldset>
 
-        <p v-if="readonlyAccess === false" class="actions">
-          <button type="button" :disabled="busy !== ''" @click="toggle(provider.id, !provider.enabled)">
-            {{ provider.enabled ? 'Disable' : 'Enable' }}
-          </button>
-          <button
-            type="button"
-            :disabled="busy !== '' || provider.last_check?.status === 'pending'"
-            @click="check(provider.id)"
-          >
-            Check provider
-          </button>
-          <button type="button" :disabled="busy !== '' || !provider.enabled" @click="sync(provider.id)">
-            Sync now
-          </button>
-          <button
-            type="button"
-            :disabled="busy !== '' || !provider.enabled"
-            :title="`Fetch all history currently exposed by ${provider.name}, ignoring the saved cursor`"
-            @click="fullResync(provider.id)"
-          >
-            Full resync
-          </button>
-          <button type="button" :disabled="busy !== ''" @click="showConfigSchema(provider.id)">
-            {{ configSchemas[provider.id] ? 'Hide configuration' : 'Configure provider' }}
-          </button>
-        </p>
-
-        <p class="actions">
+        <!-- One action row, pinned to the tile floor so paired tiles line their buttons up. -->
+        <p class="actions provider-actions">
+          <template v-if="readonlyAccess === false">
+            <button type="button" :disabled="busy !== ''" @click="toggle(provider.id, !provider.enabled)">
+              {{ provider.enabled ? 'Disable' : 'Enable' }}
+            </button>
+            <button
+              type="button"
+              :disabled="busy !== '' || provider.last_check?.status === 'pending'"
+              @click="check(provider.id)"
+            >
+              Check provider
+            </button>
+            <button type="button" class="primary" :disabled="busy !== '' || !provider.enabled" @click="sync(provider.id)">
+              Sync now
+            </button>
+            <button
+              type="button"
+              :disabled="busy !== '' || !provider.enabled"
+              :title="`Fetch all history currently exposed by ${provider.name}, ignoring the saved cursor`"
+              @click="fullResync(provider.id)"
+            >
+              Full resync
+            </button>
+            <button type="button" :disabled="busy !== ''" @click="showConfigSchema(provider.id)">
+              {{ configSchemas[provider.id] ? 'Hide configuration' : 'Configure provider' }}
+            </button>
+          </template>
           <button type="button" :disabled="busy !== ''" @click="showLatestRun(provider.id)">
             Show latest sync run
           </button>
@@ -507,6 +507,11 @@ onUnmounted(() => {
 
 .pinned p {
   margin: 0 0 var(--space-2);
+}
+
+.provider-actions {
+  margin-top: auto;
+  padding-top: var(--space-2);
 }
 
 .notice {

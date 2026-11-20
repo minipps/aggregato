@@ -83,28 +83,34 @@ function ratingText(rating: Rating | null | undefined): string {
     />
 
     <div v-else-if="detail.data.value" class="bento">
-      <section class="card card--feature span-2 tall">
-        <!--
-          The API supplies a local cache path. The adjacent title makes the artwork decorative, and
-          this view already shows its poster above the entry list.
-        -->
-        <img
-          v-if="detail.data.value.image"
-          class="poster"
-          :src="detail.data.value.image"
-          alt=""
-          width="120"
-          height="180"
-          decoding="async"
-        />
-        <h1>{{ detail.data.value.title }}</h1>
-        <p class="muted">
-          {{ detail.data.value.media_type }} · {{ detail.data.value.media_family }}
-          <template v-if="detail.data.value.release_year"> · {{ detail.data.value.release_year }}</template>
-          <template v-if="detail.data.value.original_title">
-            · originally {{ detail.data.value.original_title }}
-          </template>
-        </p>
+      <section class="card card--accent span-2 tall">
+        <div class="work-hero">
+          <!--
+            The API supplies a local cache path. The adjacent title makes the artwork decorative, and
+            this view already shows its poster above the entry list.
+          -->
+          <img
+            v-if="detail.data.value.image"
+            class="poster"
+            :src="detail.data.value.image"
+            alt=""
+            width="120"
+            height="180"
+            decoding="async"
+          />
+          <span v-else class="poster poster--empty" aria-hidden="true">{{ detail.data.value.title.charAt(0) }}</span>
+          <div class="work-hero__text">
+            <h1>{{ detail.data.value.title }}</h1>
+            <p class="work-hero__meta">
+              <span class="badge badge--accent">{{ detail.data.value.media_type }}</span>
+              <span class="badge">{{ detail.data.value.media_family }}</span>
+              <span v-if="detail.data.value.release_year" class="badge">{{ detail.data.value.release_year }}</span>
+            </p>
+            <p v-if="detail.data.value.original_title" class="muted">
+              Originally {{ detail.data.value.original_title }}
+            </p>
+          </div>
+        </div>
 
         <p v-if="detail.data.value.parent">
           Part of
@@ -199,25 +205,28 @@ function ratingText(rating: Rating | null | undefined): string {
 
       <section class="card span-2" aria-labelledby="identifiers-heading">
         <h2 id="identifiers-heading">Identifiers</h2>
-        <table v-if="detail.data.value.external_ids?.length">
-          <caption class="visually-hidden">External identifiers for this work</caption>
-          <thead>
-            <tr>
-              <th scope="col">Namespace</th>
-              <th scope="col">Value</th>
-              <th scope="col">Source</th>
-              <th scope="col">Confidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="id in detail.data.value.external_ids" :key="`${id.namespace}:${id.value}`">
-              <td>{{ id.namespace }}</td>
-              <td class="mono">{{ id.value }}</td>
-              <td>{{ id.source }}</td>
-              <td>{{ id.confidence }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <!-- Scrolls inside the tile on a narrow screen instead of widening the page. -->
+        <div v-if="detail.data.value.external_ids?.length" class="table-scroll">
+          <table>
+            <caption class="visually-hidden">External identifiers for this work</caption>
+            <thead>
+              <tr>
+                <th scope="col">Namespace</th>
+                <th scope="col">Value</th>
+                <th scope="col">Source</th>
+                <th scope="col">Confidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="id in detail.data.value.external_ids" :key="`${id.namespace}:${id.value}`">
+                <td>{{ id.namespace }}</td>
+                <td class="mono">{{ id.value }}</td>
+                <td>{{ id.source }}</td>
+                <td>{{ id.confidence }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <EmptyState v-else title="No identifiers" detail="Nothing to match this work by yet." />
       </section>
 
@@ -237,15 +246,50 @@ function ratingText(rating: Rating | null | undefined): string {
 </template>
 
 <style scoped>
-/* Block above the title rather than floated: a float here would bleed past the header into the
-   rest of the tile on a narrow screen. */
+/* Poster beside the title on a wide tile; stacked above it once the tile is phone-narrow. */
+.work-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-4) var(--space-6);
+}
+
+.work-hero__text {
+  display: grid;
+  gap: var(--space-3);
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.work-hero__text h1 {
+  margin: 0;
+}
+
+.work-hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .poster {
   display: block;
+  flex: none;
   width: 120px;
   height: 180px;
   object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-radius: var(--radius);
   background: var(--surface-raised);
+}
+
+.poster--empty {
+  display: grid;
+  place-items: center;
+  background: var(--ctp-mantle);
+  color: var(--ctp-surface2);
+  font-size: 3rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .pairs {
@@ -258,6 +302,7 @@ function ratingText(rating: Rating | null | undefined): string {
 }
 
 .review {
+  margin-top: var(--space-2) !important;
   white-space: pre-wrap;
 }
 </style>

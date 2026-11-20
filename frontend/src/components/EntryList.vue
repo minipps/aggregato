@@ -80,24 +80,38 @@ function subject(ref: SubjectRef | null | undefined): string {
 }
 
 /* Rows, not cards: this list lives inside a Bento card, so each row is a hairline-separated line
-   rather than another rounded surface. */
+   rather than another rounded surface. The hover wash bleeds into the card padding so the text
+   column stays aligned with the tile heading. */
 .entry {
-  padding: var(--space-3);
-  border-radius: var(--radius);
   /* Flex rather than grid: with no poster the body is the only item, so no empty column indents
      rows that have no artwork. */
   display: flex;
   gap: var(--space-3);
-  align-items: start;
-  transition: background 0.2s ease-out;
+  align-items: center;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  transition: background var(--fast) ease-out;
 }
 
 .entry + .entry {
-  box-shadow: 0 -1px 0 var(--border);
+  position: relative;
+}
+
+.entry + .entry::before {
+  content: '';
+  position: absolute;
+  inset: 0 var(--space-3) auto;
+  border-top: 1px solid var(--border);
 }
 
 .entry:hover {
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--ctp-surface0) 55%, transparent);
+}
+
+.entry:hover::before,
+.entry:hover + .entry::before {
+  border-color: transparent;
 }
 
 .entry__body {
@@ -111,7 +125,7 @@ function subject(ref: SubjectRef | null | undefined): string {
   width: 40px;
   height: 60px;
   object-fit: cover;
-  border-radius: var(--space-2);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
 }
 
@@ -121,8 +135,9 @@ function subject(ref: SubjectRef | null | undefined): string {
 }
 
 .entry__meta {
-  margin: var(--space-1) 0 0;
+  margin: 0.15rem 0 0;
   color: var(--text-muted);
-  font-size: 0.9em;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
 }
 </style>

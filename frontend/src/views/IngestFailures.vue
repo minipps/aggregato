@@ -65,7 +65,7 @@ async function replay(id: number): Promise<void> {
           :key="failure.id"
           :class="['card', index === 0 ? 'span-4' : 'span-2']"
         >
-          <h2>{{ failure.provider_id }} · {{ failure.stage }}</h2>
+          <h2 class="card__title">{{ failure.provider_id }} · {{ failure.stage }}</h2>
           <p class="note note--danger">{{ failure.error }}</p>
           <details>
             <summary>Stored payload</summary>
