@@ -17,7 +17,7 @@ FROM frontend-build AS development
 EXPOSE 80
 
 # --- Stage 3: production static server ---------------------------------------------------------
-FROM nginx:1.31.8-alpine-slim@sha256:4c734d33ee731135dc9f2349914a34551c920f4451fca8bb05bf5880eb9079e8 AS production
+FROM nginx:1.31.10-alpine-slim@sha256:c293b28729906d97fa5302fce3bd79bd27a3ea9a5d9604e21c6ff0ebf14549fc AS production
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 
